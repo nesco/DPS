@@ -1,0 +1,1498 @@
+"""
+Mask of connected commponents of a grid are represented into programs.
+First start with one coordinate of the connected component,
+then map the entire component using graph traversal to a branching freeman chain code.
+The branched Freeman chain code is factorized when it reduces bit lenght using a very simple language.
+This language not being very expressive, it's sumple to evaluate the resulting bit length / kolmogorov complexity.
+
+# Naming conventions
+# "nvar" == "var_new"
+# "cvar" == "var_copy"
+"""
+DEBUG_RESOLVE = False
+DEBUG_UNSYMBOLIZE = False
+DEBUG_NODELIST = False
+DEBUG_ROOT = False
+DEBUG = False
+DEBUG_ASTMAP = False
+
+from dataclasses import dataclass, asdict
+from typing import Any, List, Union, Optional, Iterator, Callable, Set, Tuple, Dict
+from helpers import DIRECTIONS, MOVES, argmin_by_len, extract
+from helpers import available_transitions, copy, Coord, Trans
+
+from time import sleep
+
+#### Abstract Syntax Tree Structure
+
+directions = {
+    '0': (-1, 0), '1': (0, -1), '2': (1, 0), '3': (0, 1),
+    '4': (1, -1), '5': (1, 1), '6': (-1, 1), '7': (-1, -1)
+}
+
+@dataclass
+class Node:
+    """
+    Abstract Node class used to stuff inherited methods.
+    """
+
+    def __len__(self) -> int:
+           return 3  # Base length for node type (3 bits) because <= 8 types
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, self.__class__):
+            return False
+        return self.__class__.__name__ == other.__class__.__name__ and hash(self) == hash(other)
+
+    def __repr__(self) -> str:
+            return str(asdict(self))
+
+    def __hash__(self) -> int:
+        return hash(repr(self))
+
+    def __add__(self, other) -> 'ASTNode':
+        if isinstance(other, NodeList):
+            return NodeList([self] + other.nodes)
+        elif isinstance(other, (Variable, Root)):
+            return NotImplemented
+        elif issubclass(other.__class__, Node):
+            return NodeList([self, other])
+        else:
+            return NotImplemented
+
+    def depth_iter(self) -> Iterator['ASTNode']:
+        return iter(())
+
+    def breadth_iter(self) -> Iterator['ASTNode']:
+        return iter(())
+
+    def copy(self) -> 'ASTNode':
+        return Node()
+    # Return the node in the reverse order
+    def reverse(self) -> 'ASTNode':
+        return self
+
+@dataclass
+class Moves(Node):
+    """
+    Moves store litteral non branching parts of a Freeman code Chain.
+    It's a container for a string of octal digits, each indicating a direction in 8-cconectivity.
+    The directions are defined by:
+        directions = {
+            '0': (-1, 0), '1': (0, -1), '2': (1, 0), '3': (0, 1),
+            '4': (1, -1), '5': (1, 1), '6': (-1, 1), '7': (-1, -1)
+        }
+    """
+
+    moves: str  #0, 1, 2, 3, 4, 5, 6, 7 (3 bits)
+
+    def simplify_repetitions1(self):
+        moves_ls = [Moves(k) for k in self.moves]
+        simplified = []
+        i = 0
+        while i < len(moves_ls):
+            pattern, count, reverse = find_repeating_pattern(moves_ls[i:], 0)
+            if pattern is None or count <= 1:
+                # No repeating pattern found, add the current move and continue
+                simplified.append(moves_ls[i])
+                i += 1
+            else:
+                if len(pattern) == 1:
+                    node = pattern[0]
+                else:
+                    node = Moves(''.join(m.moves for m in pattern))
+                if reverse:
+                    simplified.append(Repeat(node, -count))
+                else:
+                    simplified.append(Repeat(node, count))
+                i += len(pattern) * count
+
+        if len(simplified) == 1:
+            return simplified[0]
+        else:
+            result = []
+            curr = simplified[0]
+            for i in range(1, len(simplified)):
+                next_node = simplified[i]
+                match (curr, next_node):
+                    case (Moves(m1), Moves(m2)):
+                        curr.moves += m2
+                    case _:
+                        result.append(curr)
+                        curr = next_node
+            result.append(curr)
+            return NodeList(simplified) if len(simplified)>1 else simplified[0]
+
+    def simplify_repetitions(self):
+        moves_ls = [Moves(k) for k in self.moves]
+        simplified = []
+        i = 0
+        while i < len(moves_ls):
+            pattern, count, reverse = find_repeating_pattern(moves_ls[i:], 0)
+            if pattern is None or count <= 1:
+                # No repeating pattern found, add the current move and continue
+                simplified.append(moves_ls[i])
+                i += 1
+            else:
+                if len(pattern) == 1:
+                    node = pattern[0]
+                else:
+                    node = Moves(''.join(m.moves for m in pattern))
+                if reverse:
+                    simplified.append(Repeat(node, -count))
+                else:
+                    simplified.append(Repeat(node, count))
+                i += len(pattern) * count
+
+        if len(simplified) == 1:
+            return simplified[0]
+        else:
+            result = []
+            curr = simplified[0]
+            for i in range(1, len(simplified)):
+                next_node = simplified[i]
+                if isinstance(curr, Moves) and isinstance(next_node, Moves):
+                    curr = Moves(curr.moves + next_node.moves)
+                else:
+                    result.append(curr)
+                    curr = next_node
+            result.append(curr)
+
+            # If after concatenation we're left with a single Moves object
+            # that's identical to self, return self
+            if len(result) == 1 and isinstance(result[0], Moves) and result[0].moves == self.moves:
+                return self
+
+            return NodeList(result) if len(result) > 1 else result[0]
+
+    def __len__(self) -> int:
+        return super().__len__() + 3 * len(self.moves) # Assuming 8-coinnectivity 3bits per move
+    def __str__(self) -> str:
+        return self.moves
+    def __hash__(self) -> int:
+        return hash(self.__repr__())
+    def __add__(self, other): # right addition
+        match other:
+            case str():
+                return Moves(self.moves + other)
+            case Moves():
+                return encode_run_length(Moves(self.moves + other.moves))
+            case _:
+                return super().__add__(other)
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.moves)
+    def iter_path(self, start) -> Iterator[tuple]:
+        """
+        Iterator over the path
+        """
+        row, col = start
+        for move in self.moves:
+            row += DIRECTIONS[move][0]
+            col += DIRECTIONS[move][1]
+            yield (row, col)
+    def copy(self) -> 'ASTNode':
+        return Moves(self.moves)
+    def reverse(self) -> 'ASTNode':
+        return Moves(self.moves[::-1])
+
+@dataclass
+class Repeat(Node):
+    node: 'ASTNode'
+    count: Union[int, 'Variable']  # should be an int between 2 and 17 (4 bits) ideally
+
+    def __len__(self) -> int:
+        return super().__len__() + len(self.node) + 4#self.count.bit_length()
+    def __eq__(self, other) -> bool:
+        match other:
+            case Repeat(node=n, count=c):
+                 return (self.node == n and self.count == c)
+            case _:
+                return False
+    def __str__(self):
+            return f"({str(self.node)})*{{{self.count}}}"
+    def __iter__(self) -> Iterator['ASTNode']:
+        if self.node is not None:
+            if isinstance(self.count, Variable):
+                raise ValueError("An abstract Repeat cannot be expanded")
+            # Handle negative values as looping
+            elif self.count < 0:
+                return (self.node if i%2==0 else self.node.reverse() for i in range(-self.count))
+            else:
+                return (self.node for _ in range(self.count))
+        return iter(())
+    def __hash__(self) -> int:
+        return hash(self.__repr__())
+    def __add__(self, other):
+        match (self, other):
+            case (Repeat(node=n1, count=c1), Repeat(node=n2, count=c2)) if n1==n2:
+                return Repeat(node=n1, count=c1+c2)
+            case (Repeat(node=n1, count=c1), _) if n1 == other:
+                return Repeat(node=n1, count=c1+1)
+            case _:
+                return super().__add__(other)
+    def depth_iter(self) -> Iterator['ASTNode']:
+        yield self.node
+        if isinstance(self.node, (Branch, Repeat, NodeList)):
+            yield from self.node.depth_iter()
+    def breadth_iter(self) -> Iterator['ASTNode']:
+        yield self.node
+        if isinstance(self.node, (Branch, Repeat, NodeList)):
+            yield from self.node.breadth_iter()
+    def copy(self):
+        return Repeat(self.node.copy(), self.count)
+    def reverse(self):
+        return Repeat(self.node.reverse(), self.count)
+
+class NodeList:
+    """
+    NodeList is a container representing a possibly Branching Freeman Code chain
+    where subparts are encoded AST Nodes.
+    As an abstract container designed to replace List() with an object having the right methods,
+    it doesn't count for the length.
+    """
+    def __init__(self, nodes: List['ASTNode']):
+        #if DEBUG_NODELIST:
+        #    print(f"Trying to initialize a NodeList with nodes:")
+        #for i, n in enumerate(nodes):
+            #if DEBUG_NODELIST:
+            #    print(f"Node n°{i}: {n}")
+        # Concatening Moves
+        self.nodes = []
+        current, nnodes = nodes[0], nodes[1:]
+        while nnodes:
+            next, nnodes = nnodes[0], nnodes[1:]
+
+            ## Structural Pattern Matching
+            match (current, next):
+                case (Root(), _):
+                    raise NotImplementedError("Trying to initialise a node list with : " + ','.join(str(n) for n in nodes))
+                case (Moves(), Moves()): # Concatening Moves
+                    current += next
+                case (_, Repeat(node=n1, count=c1)) if current == n1:
+                    current = Repeat(n1, c1+1)
+                case (NodeList(), _): #Flattening NodeList
+                    self.nodes.extend(current)
+                    current = next
+                case (Repeat(node=n1, count=c1), Repeat(node=n2, count=c2)) if n1 == n2 and isinstance(c1, int) and isinstance(c2, int):  #Concatening Repeats
+                    current.count += c2
+                # There can be nothing after a Branch, because it becomes implicitely a branch
+                case (Branch(), _):
+                    while nnodes:
+                        if isinstance(next, Branch):
+                            current.sequences.extend(next.sequences)
+                            next, nnodes = nnodes[0], nnodes[1:]
+                        else:
+                            current.sequences.append(NodeList([next] + nnodes))
+                            nnodes = None
+                    break  # Exit the main loop after processing the Branch (even though it should exit already)
+                case _:
+                    self.nodes.append(current)
+                    current = next
+        if isinstance(current, Moves):
+            current = encode_run_length(current)
+        if isinstance(current, NodeList):
+            self.nodes.extend(current)
+        else:
+            self.nodes.append(current)
+
+    def __len__(self) -> int:
+        return sum(len(node) for node in self.nodes) # Sequence doesn't add bits
+    def __str__(self) -> str:
+        return "".join(str(node) for node in self.nodes)
+    def __repr__(self) -> str:
+        return self.__class__.__name__ + "(nodes=" + self.nodes.__repr__() +")"
+    def __hash__(self) -> int:
+        return hash(self.__repr__())
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, NodeList):
+            return False
+        return len(self.nodes) == len(other.nodes) and all(
+            s1 == s2 for s1, s2 in zip(self.nodes, other.nodes)
+        )
+    def __add__(self, other):
+        if isinstance(other, NodeList):
+            return NodeList(self.nodes + other.nodes)
+        elif isinstance(other, str):
+            return self.__add__(Moves(other))
+        elif isinstance(other, Moves):
+            if self.nodes and isinstance(self.nodes[-1], Node):
+                nnodes = self.nodes[:-1] + [self.nodes[-1]+other]
+            else:
+                nnodes = self.nodes + [other]
+            return NodeList(nnodes)
+        elif isinstance(other, Repeat):
+            if self.nodes and isinstance(self.nodes[-1], Repeat) and \
+            self.nodes[-1].node == other.node:
+                nnodes = self.nodes[:-1] + [Repeat(other.node, self.nodes[-1].count + other.count)]
+                return NodeList(nnodes)
+            else:
+                return NodeList(self.nodes + [other])
+        elif isinstance(other, Branch):
+            return NodeList(self.nodes + [other])
+        else:
+            return NotImplemented
+    def __iter__(self) -> Iterator['ASTNode']:
+        return (node for node in self.nodes if node is not None)
+    def depth_iter(self) -> Iterator['ASTNode']:
+        for node in self.nodes:
+            yield node
+            if isinstance(node, (Branch, Repeat, NodeList)):
+                yield from node.depth_iter()
+    def breadth_iter(self) -> Iterator['ASTNode']:
+        iterators = []
+        for node in self.nodes:
+            yield node
+            if isinstance(node, (Branch, Repeat, NodeList)):
+                iterators.append(node.breadth_iter())
+        for it in iterators:
+            yield from it
+
+    def copy(self):
+        return NodeList([node.copy() for node in self.nodes])
+    def reverse(self) -> 'ASTNode':
+        reverse_list = self.nodes[::-1]
+        nnodes = [node.reverse() for node in reverse_list]
+        return NodeList(nnodes)
+
+class Branch(Node):
+    """
+    Represents branching of the traversal of a connected component.
+    As a single freeman code chain can't represent all connected components,
+    it needs to have branching parts. This node encode the branching.
+
+    As a branch is never a single node, it can be used to encode iterators through a Repeat.
+    If a Branch contains a single repeat, then it will act like a positive or negative iterator
+    """
+    def __init__(self, sequences: List['ASTNode']):
+        self.sequences = []
+        # Done to better handle crosses like : (2, 2):[00,11,22,33]
+        for seq in sequences:
+            curr = seq
+            if isinstance(curr, Moves):
+                curr = encode_run_length(curr)
+            self.sequences.append(curr)
+    def check_iterators(self):
+        # if the sequences can be represented as a Repeat repurposed as an iterator
+        self.sequences = get_iterator(self.sequences)
+    def __len__(self) -> int:
+        return super().__len__() + sum(len(sequence) for sequence in self.sequences)
+    def __str__(self) -> str:
+        if len(self.sequences) == 1 and isinstance(self.sequences[0], Repeat):
+            return "[+" + str(self.sequences[0]) + "]"
+        return "[" + ",".join(str(sequence) for sequence in self.sequences) +"]"
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, Branch):
+            return False
+        return len(self.sequences) == len(other.sequences) and all(
+            s1 == s2 for s1, s2 in zip(self.sequences, other.sequences)
+        )
+    def __add__(self, other):
+        if isinstance(other, Branch):
+            return Branch(self.sequences+other.sequences)
+        else:
+            return super().__add__(other)
+    def __iter__(self) -> Iterator['ASTNode']:
+        # It needs to handle the repeat used as an iterator case
+        if len(self.sequences) == 1 and isinstance(self.sequences[0], Repeat):
+            n = self.sequences[0].node
+            count = self.sequences[0].count
+
+            if isinstance(count, Variable):
+                raise ValueError("An abstract Repeat cannot be expanded")
+
+            i=1
+            if isinstance(count, int) and count < 0:
+                i=-1
+                count = -count
+            return (shift_moves(k*i, n) for k in range(count))
+        return iter(self.sequences)
+    def __repr__(self) -> str:
+        return f"Branch(sequences={self.sequences!r})"
+    def __hash__(self) -> int:
+        return hash(self.__repr__())
+    def depth_iter(self) -> Iterator['ASTNode']:
+        for node in self.sequences:
+            yield node
+            if isinstance(node, (Branch, Repeat, NodeList)):
+                yield from node.depth_iter()
+    def breadth_iter(self) -> Iterator['ASTNode']:
+        iterators = []
+        for node in self.sequences:
+            yield node
+            if isinstance(node, (Branch, Repeat, NodeList)):
+                iterators.append(node.breadth_iter())
+        for it in iterators:
+            yield from it
+    def copy(self):
+        return Branch([ seq.copy() for seq in self.sequences])
+    def reverse(self) -> 'ASTNode':
+        reverse_list = self.sequences[::-1]
+        nsequences = [node.reverse() for node in reverse_list]
+        return Branch(nsequences)
+
+@dataclass
+class Variable(Node):
+    """
+    This Node serves to reminds where SymbolicNodes parameters need to be pasted.
+    """
+    index: int # The hash of the replacement pattern to know it will replace this
+
+    def __len__(self):
+        return super().__len__() + 3
+
+    def __str__(self):
+        return f"Var({self.index})"
+
+    def __repr__(self):
+        return self.__class__.__name__
+
+    def __hash__(self):
+        return hash(self.__repr__())
+    def __eq__(self, other):
+        return isinstance(other, Variable)
+    def copy(self):
+        return Variable(self.index)
+
+@dataclass
+class SymbolicNode(Node):
+    """
+    To make the AST representations of branching code chains powerful,
+    it needs to be able to compress efficiently code chains,
+    with the possibility to memorize reoccuring patterns,
+    be their constants or abstracted as functions of single parameters.
+    The pattern needs to be stored independently in a list of patterns, index is the index of the pattern in this list
+    """
+    index: int # should not be more than 8 so 3 bits
+    param: Any # for repeats
+
+    def __len__(self) -> int:
+        len_param = len(self.param) if isinstance(self.param, ASTNode) else 1 #int == -1
+        return  super().__len__() + 3 + len_param # Not the super, it's a placeholder for something that already counts the +2
+    def __str__(self) -> str:
+        if self.param:
+            return f" s_{self.index}({self.param}) "
+        return f" s_{self.index} "
+    def __hash__(self) -> int:
+        return hash(self.__repr__())
+
+    def __reverse(self) -> 'ASTNode':
+        param = self.param
+        if isinstance(param, ASTNode):
+            param = param.reverse()
+        return SymbolicNode(self.index, param)
+
+    def copy(self):
+        return SymbolicNode(self.index, self.param.copy() if isinstance(self.param, ASTNode) else self.param)
+
+@dataclass
+class Root(Node):
+    """
+    Node representing a path root. Note that the branches here can possibly lead to overlapping paths
+    """
+    start: Union[Coord, Variable]
+    colors: Union[Set, Variable]
+    node: Optional['ASTNode']
+
+    def __post_init_(self):
+        if DEBUG_ROOT:
+            match self.node:
+                case Root(_):
+                    print(f"Trying to initialize {self.__repr__()} with another root")
+                    print(f"Root: {self.node}")
+                case SymbolicNode(i, p) if isinstance(p, Root):
+                    print(f"Trying to initialize {self.__repr__()} with another root")
+                    print(f"Root: {p}")
+    def __len__(self):
+        # 10 bits for x and y going from 0 to 32 max on the grids + 4 bits for each color (10 choices)
+        len_node = len(self.node) if self.node is not None else 0
+        return 10 + len(self.colors)*4 + len_node
+    def __add__(self, other):
+        match other:
+            case Variable():
+                return NotImplemented
+            case Root(start=(row, col), colors=c, child=n) if not isinstance(self.start, Variable):
+                if self.start[0] == row and self.start[1] == col:
+                    if self.colors != c or isinstance(self.colors, Variable) or isinstance(c, Variable):
+                        raise NotImplementedError()
+                    return Root((row, col), c, Branch([self.node, n]))
+                return Branch([self, other])
+            case Root(start=s, colors=c, child=n) if  (isinstance(self.start, Variable) or isinstance(s, Variable)):
+                raise NotImplementedError()
+        return Root(self.start, self.colors, Branch([self.node, other]))
+    def __str__(self):
+        return f"{self.colors}->{self.start}:" + str(self.node)
+    #def __repr__(self):
+    #    return f"{self.__class__.__name__}(start={self.start.__repr__()}, colors={str(self.colors)}, node={self.node.__repr__()})"
+    def __hash__(self):
+        return hash(self.__repr__())
+    def __eq__(self, other):
+        if not isinstance(other, Root):
+            return False
+        #if isinstance(self.start, Variable):
+        #    return (self.colors==other.colors) and (self.node == other.node)
+        return (self.start == other.start) and (self.colors==other.colors) \
+        and (self.node == other.node)
+
+    def depth_iter(self) -> Iterator['ASTNode']:
+        if self.node is None:
+            return iter(())
+        yield self.node
+        if isinstance(self.node, (Branch, Repeat, NodeList)):
+            yield from self.node.depth_iter()
+
+    def breadth_iter(self) -> Iterator['ASTNode']:
+        if self.node is None:
+            return iter(())
+        yield self.node
+        if isinstance(self.node, (Branch, Repeat, NodeList)):
+            yield from self.node.breadth_iter()
+
+    def copy(self):
+        cnode = self.node.copy() if self.node is not None else None
+        return Root(self.start, self.colors, cnode)
+
+    def reverse(self):
+        node = self.node.reverse() if self.node is not None else None
+        return Root(self.start, self.colors, node)
+
+# Strategy diviser pour régner avec marginalisation + reconstruction
+@dataclass
+class UnionNode(Node):
+    """
+    Represent a connected component by reconstructing it with the best set of single color programs.
+    After marginalisation comes reconstruction, divide and conquer.
+    """
+    #background: Dict['ASTNode', 'ASTNode']
+    codes: Set['ASTNode']
+
+    def __len__(self):
+        len_codes = 0
+        if self.codes is None:
+            return 0
+        return sum([len(code) for code in self.codes])
+    def __add__(self, other):
+        raise NotImplemented
+    def __str__(self):
+        if self.codes is None:
+            return 'Ø'
+        return 'U'.join([f"{{{code}}}" for code in self.codes])
+    def __repr__(self):
+        codes_repr = ','.join(code.__repr__() for code in self.codes)
+        return f"{self.__class__.__name__}(codes={codes_repr})"
+    def __hash__(self):
+        return hash(self.__repr__())
+
+## Types
+
+ASTNode = Union[Root, Moves, NodeList, Branch, Repeat, SymbolicNode, Variable, Node]
+ASTFunctor = Callable[[ASTNode], Optional[ASTNode]]
+ASTTerminal = Callable[[ASTNode, Optional[bool]], None]
+
+#### Functions required to construct ASTs
+def node_from_list(nodes: List[ASTNode]) -> Optional[ASTNode]:
+    if not nodes:
+        return None
+    elif len(nodes) == 1:
+        return nodes[0]
+    return NodeList(nodes)
+def encode_run_length(moves: Moves):
+    """
+    Run-Length Encoding (RLE) is used to compress Moves into Repeats of Moves.
+    It's an elementary compression method used directly at the creation of AST representin branching chain codes.
+    As it's very simple, it does not lead to risk of over optimisation
+    """
+    def create_node(move, count):
+        if count >= 3:
+            return Repeat(Moves(move), count)
+        return Moves(move*count)
+
+    seq = moves.moves
+    if len(seq) <= 2:
+        return Moves(seq)
+
+    sequence = []
+    move_prev = seq[0]
+    move_current = seq[1]
+    count = 2 if move_current == move_prev else 1
+    non_repeat_moves = move_prev if move_current != move_prev else ""
+
+    # Iterating over the 3-character sequences
+    for move_next in seq[2:]:
+        if move_next == move_current: # _, A, A case
+            count += 1
+        else: # *, A, B
+            if count >= 3: # *, A, A, A, B case
+                if non_repeat_moves: # Saving previous non-repeating moves
+                    sequence.append(Moves(non_repeat_moves))
+                    non_repeat_moves = ""
+                sequence.append(create_node(move_current, count)) # storing the repetition
+            else: # *, C, _, A, B case
+                non_repeat_moves += move_current * count
+            count = 1
+        move_current = move_next
+
+    # Last segment
+    if count >= 3:
+        if non_repeat_moves:
+            sequence.append(Moves(non_repeat_moves))
+        sequence.append(create_node(move_current, count))
+    else:
+        non_repeat_moves += move_current * count
+        sequence.append(Moves(non_repeat_moves))
+
+    return node_from_list(sequence)
+
+def factorize_moves(node: ASTNode):
+    if not isinstance(node, (Moves, NodeList)):
+        return node
+    if isinstance(node, NodeList):
+        if len(node.nodes) == 1:
+            return node.nodes[0]
+        return node
+
+    if len(node.moves) < 3:
+        return node
+    factorized = node.simplify_repetitions()
+    return factorized
+    #match factorized:
+    #    case Repeat(n, c) if isinstance(n, Moves):
+    #        return Repeat(encode_run_length(n), c)
+    #    case Moves(m):
+    #        return encode_run_length(factorized)
+    #    case _:
+    #        return factorized
+    #        raise ValueError
+
+
+def shift_moves(i: int, node):
+    match node:
+        case Moves(moves):
+            return Moves(''.join([str((int(m)+i)%8) for m in moves]))
+        case Root(s, c, node):
+            return Root(s, c, shift_moves(i, node))
+        case Repeat(node, c):
+            return Repeat(shift_moves(i, node),c)
+        case SymbolicNode(index, param) if isinstance(param, ASTNode):
+            return SymbolicNode(index, shift_moves(i, param))
+        case NodeList(nodes=nodes):
+            return NodeList([shift_moves(i, n) for n in nodes])
+        case Branch(sequences=nodes):
+            return Branch([shift_moves(i, n) for n in nodes])
+        case _:
+            return node
+def get_iterator(node_ls) -> List[ASTNode]:
+    """
+    This function tries to find iterators to encode as a single Repeat at the root of Branch or NodeList
+    It use the fact that Branch or NodeList can't have a single Repeat as a child to assign a double meaning to it
+    Yes, it's a bit hacky but it helps to increase the language expressiveness cost free by compressing
+    enumerations
+    """
+    if not (1 < len(node_ls) <= 7):
+        return node_ls
+
+    prev = node_ls[0]
+    curr = node_ls[1]
+
+    increment = 1
+
+    # To get an iterator, it should either iterate in a the direct or reverse sense
+    if curr == shift_moves(-1, prev):
+        increment=-1
+    elif curr != shift_moves(1, prev):
+        return node_ls
+
+    for i in range(2, len(node_ls)):
+        prev = node_ls[i-1]
+        curr = node_ls[i]
+        if curr != shift_moves(increment, prev):
+            return node_ls
+
+    # if we got this far, we got our iterator
+    return [Repeat(node_ls[0], increment*len(node_ls))]
+
+### Functions on ASTs
+def get_depth(ast):
+    depth=1
+    match ast:
+        case None:
+            return 0
+        case Root(_, _, n) | Repeat(n, _):
+            depth += get_depth(n)
+        case Branch(seq=ls) | NodeList(nodes=ls):
+            depth += max([get_depth(n) for n in ls])
+        case SymbolicNode(_, param=p) if isinstance(p, ASTNode):
+            depth += get_depth(p)
+    return depth
+def is_symbolic(ast):
+    match ast:
+        case SymbolicNode():
+            return True
+        case Repeat(n, _) | Root(_, _, n):
+            return is_symbolic(n)
+        case Branch(sequences=nls) | NodeList(nodes=nls):
+            return any([is_symbolic(n) for n in nls])
+        case _:
+            return False
+def get_symbols(ast):
+    match ast:
+        case SymbolicNode(i, n):
+            return get_symbols(n) + [i]
+        case Repeat(n, _) | Root(_, _, n):
+            return get_symbols(n)
+        case Branch(sequences=nls) | NodeList(nodes=nls):
+            return [item for n in nls for item in get_symbols(n)]
+        case _:
+            return []
+
+
+def ast_map(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
+    """
+    Map a function from an single ASTNode to an single AST node to an entire AST.
+    :param f: function to map
+    :param node:
+    """
+    match node:
+        case None:
+            return None
+        case Root(start=s, colors=c, node=n):
+            nnode = ast_map(f, n)
+            return f(Root(s, c, nnode))
+        case Branch(sequences = seqs):
+            nsequences = [nnode for seq in seqs if (nnode := ast_map(f, seq)) is not None]
+            return f(Branch(nsequences))
+        case NodeList(nodes = node_ls):
+            try:
+                nnodes = [nnode for n in node_ls if (nnode := ast_map(f, n)) is not None]
+                return f(NodeList(nnodes))
+            except NotImplementedError as e:
+                print(f"Caught a NotImplementedError: {e}")
+                print(f"List of subnodes: ")
+                for n in node_ls:
+                    print(f"Node: {n}")
+            return NotImplemented
+        case UnionNode(codes = codes):
+            ncodes = [ncode for n in codes if (ncode := ast_map(f, n)) is not None]
+            return f(UnionNode(ncodes))
+        case Repeat(node=n, count=c):
+            nnode = ast_map(f, n)
+            if nnode is not None:
+                return f(Repeat(nnode, c)) #if nnode is not None else None
+            else:
+                return None
+        case SymbolicNode(index=i, param=p) if isinstance(p, ASTNode):
+            nnode = ast_map(f, p)
+            return f(SymbolicNode(i, nnode))
+        case _:
+            return f(node)
+
+### Helper functions to compress ASTs
+
+def find_repeating_pattern(nodes: List[ASTNode], offset):
+    """
+    Find repeating node patterns of any size at the given start index,
+    including alternating patterns, given it compresses the code
+    """
+    best_pattern, best_count, best_bit_gain, best_reverse = None, 0, 0, False
+    length_pattern_max = (len(nodes) - offset + 1) // 2  # At least two occurrences are needed
+    for length_pattern in range(1, length_pattern_max + 1):
+        noffset = offset + length_pattern
+        pattern = nodes[offset:noffset]
+        for reverse in [False, True]:
+            count = 1
+            i = noffset
+            while i < len(nodes):
+                if i + length_pattern > len(nodes):
+                    break
+
+                match = True
+                for j in range(length_pattern):
+                    if reverse and count % 2 == 1:
+                        if nodes[offset + j] != nodes[i + length_pattern - 1 - j]:
+                            match = False
+                            break
+                    elif nodes[offset + j] != nodes[i + j]:
+                        match = False
+                        break
+
+                if match:
+                    count += 1
+                    i += length_pattern
+                else:
+                    break
+
+            if count > 1:
+                len_original = sum(len(node) for node in pattern) * count
+                len_compressed = len(Repeat(node=NodeList(nodes=pattern), count=-count if reverse else count))
+                bit_gain = len_original - len_compressed
+                if best_bit_gain < bit_gain:
+                    best_pattern = pattern
+                    best_count = count
+                    best_bit_gain = bit_gain
+                    best_reverse = reverse
+
+    return best_pattern, best_count, best_reverse
+
+def factorize_nodelist(ast_node):
+    """
+    Detect patterns inside a NodeList and factor them in Repeats.
+    It takes a general AST Node parameter, as it makes it possible to construct a
+    structural inducing version with ast_map
+    """
+
+    if not isinstance(ast_node, (NodeList, Branch)):
+        return ast_node
+    elif isinstance(ast_node, Branch):
+        ast_node.check_iterators()
+        return ast_node
+
+    nodes = ast_node.nodes
+    nnodes = []
+    i = 0
+    while i < len(nodes):
+        pattern, count, reverse = find_repeating_pattern(nodes, i)
+        # Use the square to make sure it's also ok for negative counts
+        if count > 1:
+            node = pattern[0] if len(pattern) == 1 else NodeList(nodes=pattern)
+            if reverse:
+                nnodes.append(Repeat(node, -count))
+            else:
+                nnodes.append(Repeat(node, count))
+            i += len(pattern)*count
+        else:
+            nnodes.append(nodes[i])
+            i += 1
+
+    return NodeList(nodes=nnodes)
+
+def functionalized(node):
+    """
+    Return a functionalized version of the node and a parameter.
+    As the parameter count of Repeat is not a ASTNode, it's functionalized version
+    is 0 to mark it needs to be replaced, -index once replaced
+    """
+    match node:
+        case Branch(sequences=sequences):
+            max_sequence = max(sequences, key=len)
+            nsequences = [seq if seq != max_sequence else Variable(-1) for seq in sequences]
+            return [(Branch(nsequences), max_sequence)]
+        case NodeList(nodes=nodes):
+            max_node = max(nodes, key=len)
+            nnodes = [nnode if nnode != max_node else Variable(-1)for nnode in nodes]
+            return [(NodeList(nnodes), max_node)]
+        case Repeat(node=nnode, count=count):
+            functions = []
+            if not isinstance(nnode, Variable) and not isinstance(count, Variable):
+                functions = [(Repeat(Variable(-1), count), nnode), (Repeat(nnode, Variable(-1)), count)]
+            return functions
+        case Root(start=s, colors=c, node=n):
+            functions = []
+            if not isinstance(s, Variable) and not isinstance(n, Variable) and not isinstance(c, Variable):
+                functions = [
+                    (Root(Variable(-1), c, n), s),
+                    (Root(s, c, Variable(-1)), n)
+                ]
+                if len(c) == 1:
+                    functions.append((Root(s, Variable(-1), n), c))
+            return functions
+        case _:
+            return []
+def copy_ast(node):
+    return ast_map(lambda node: node, node)
+### Other helper functions
+### Main functions
+def update_symbol(node, nindex):
+    match node:
+        case Repeat(node=n, count=Variable(index=h)):
+            return Repeat(n, count=Variable(nindex)) # count is -(index+1) because 0 is code word for "to replace"
+        case Root(start=Variable(index=h), colors=c, node=n):
+            return Root(start=Variable(nindex), colors=c, node=n)
+        case Root(start=s, colors=Variable(index=h), node=n):
+            return Root(start=s, colors=Variable(nindex), node=n)
+        case Variable(index=h):
+            return Variable(nindex)
+        case _:
+            return node.copy()
+def update_node_i_by_j(node: ASTNode, i, j):
+    match node:
+        case SymbolicNode(index, param) if index == i:
+            return SymbolicNode(j, param)
+        case _:
+            return node
+
+    #return node.copy()
+def update_node(node, mapping):
+    match node:
+        case SymbolicNode(i, param):
+            if DEBUG_ASTMAP:
+                print("\n")
+                print(f"Mapping node: {node}")
+                print(f"to {SymbolicNode(mapping[i], param)}")
+                print(f"With the mapping: {i} -> {mapping[i]}")
+            #if isinstance(param, ASTNode):
+            #    param = ast_map(lambda node: update_node(node, mapping), param)
+            return SymbolicNode(mapping[i], param)
+
+    return node.copy()
+def construct_node(coordinates, is_valid: Callable[[Coord], bool], traversal="dfs"):
+    seen = set([coordinates])
+    def transitionsTower(coordinates):
+        return available_transitions(is_valid, coordinates, MOVES[:4])
+    def transitionsBishop(coordinates):
+        return available_transitions(is_valid, coordinates, MOVES[4:])
+
+    def add_move_left(move, node: Optional[ASTNode]):
+        if not node:
+            return Moves(move)
+        else:
+            return Moves(move) + node
+
+    def dfs(coordinates) -> Optional[ASTNode]:
+        branches = []
+        branches_simplified = []
+        for move, ncoordinates in transitionsTower(coordinates):
+            if ncoordinates not in seen:
+                seen.add(ncoordinates)
+                node = dfs(ncoordinates)
+                nnode = add_move_left(move, node)
+                branches.append(nnode)
+        for move, ncoordinates in transitionsBishop(coordinates):
+            if ncoordinates not in seen:
+                seen.add(ncoordinates)
+                node = dfs(ncoordinates)
+                nnode = add_move_left(move, node)
+                branches.append(nnode)
+
+        for node in branches:
+            if isinstance(node, Moves):
+                branches_simplified.append(encode_run_length(node))
+            else:
+                branches_simplified.append(node)
+
+        if len(branches_simplified) > 1:
+            return Branch(branches_simplified)
+        elif len(branches_simplified) == 1:
+            return branches_simplified[0]
+        else:
+            return None
+
+    def bfs(coordinates):
+        queue = []
+        branches = []
+        branches_simplified = []
+        queue_tower = []
+        queue_bishop = []
+        for move, ncoordinates in transitionsTower(coordinates):
+            if ncoordinates not in seen:
+                seen.add(ncoordinates)
+                queue_tower.append((move, ncoordinates))
+        for move, ncoordinates in transitionsBishop(coordinates):
+            if ncoordinates not in seen:
+                seen.add(ncoordinates)
+                queue_bishop.append((move, ncoordinates))
+        for queue in (queue_tower, queue_bishop):
+            for move, ncoordinates in queue:
+                node = bfs(ncoordinates)
+                nnode = add_move_left(move, node)
+                branches.append(nnode)
+
+        for node in branches:
+            if isinstance(node, Moves):
+                # Run-Lenght Encoding
+                branches_simplified.append(encode_run_length(node))
+            else:
+                branches_simplified.append(node)
+
+        if len(branches_simplified) > 1:
+            return Branch(branches_simplified)
+        elif len(branches_simplified) == 1:
+            return branches_simplified[0]
+        else:
+            return None
+
+    node = bfs(coordinates) if traversal=="bfs" else dfs(coordinates)
+    return ast_map(factorize_nodelist, node)
+def symbolize_next(ast_ls, refs):
+    # co_symbolize a list of ast
+    pattern_encountered = {}
+
+    def register_node(pattern, param=None):
+        if param:
+            len_param = len(param) if isinstance(param, ASTNode) else 3 # let's say a int is 3 bits
+        else:
+            len_param = 1
+        if pattern in pattern_encountered:
+            pattern_encountered[pattern] = (pattern_encountered[pattern][0] + 1, \
+                pattern_encountered[pattern][1], pattern_encountered[pattern][2] + len_param)
+        else:
+            pattern_encountered[pattern] = (1, len(pattern), len_param)
+    def discover_node(node):
+        """
+        Add a node to the dictionary of node, and its functionalized variants
+        """
+        if not isinstance(node, (SymbolicNode, Variable)): #the not Variable is probably not useful
+            register_node(node)
+        funs = functionalized(node)
+
+        for fun, parameter in funs:
+            register_node(fun, parameter)
+
+    def add_symbol(symb):
+        index = len(refs) # we are adding a new symbol at the end
+
+        def precize_symb(node):
+            return update_symbol(node, index)#, -1) #Var(-1) ande Repeat(_, 0) marks unupdated node
+
+        symb_precized = ast_map(precize_symb, symb)
+        refs.append(symb_precized)
+        return symb_precized
+
+    # For each ast and templates already in the symbol table, discover every node
+    for node in (ast_ls + refs):
+        if node is not None:
+            discover_node(node)
+            for n in node.breadth_iter():
+                discover_node(n)
+
+    # 6: cost of a symbolic node
+    def bit_gained(value, count):
+        value_symb = len(SymbolicNode(-1, None))
+        compression = count*value - (count-1)*value_symb - value
+        return compression#original - compressed
+
+    compressable =[(node, bit_gained(value, count)) \
+    for node, (count, value, value_param) in pattern_encountered.items() if bit_gained(value, count) > 0 and node not in refs]
+
+    if not compressable:
+        return ast_ls, False
+
+    max_symb, _ = max(compressable, key=lambda x: x[1])
+    symb_precized = add_symbol(max_symb)
+
+    def replace_by_symbol(node, symb):
+        index = len(refs) - 1
+
+        # If the symbol is a constant, and equal to the current node repl
+        # Replace the current node by the symbol
+        if node == max_symb:
+            return SymbolicNode(index, None)
+
+        # Else, propragate the symbolic node
+        match node:
+            case Branch(sequences=sequences):
+                node = Branch([replace_by_symbol(n, max_symb) for n in sequences])
+            case NodeList(nodes=nodes):
+                node = NodeList([replace_by_symbol(n, max_symb) for n in nodes])
+            case Repeat(node=n, count=c):
+                node = Repeat(replace_by_symbol(n, max_symb), c)
+            case Root(start=s, colors=c, node=n):
+                node = Root(s, c, replace_by_symbol(n, max_symb))
+
+
+        funs = functionalized(node)
+        # And test for functions
+        for fun, parameter in funs:
+            if fun == max_symb:
+                return SymbolicNode(index, parameter)
+
+        return node
+
+    def replace_symb(node):
+        return replace_by_symbol(node, symb_precized)
+
+    for ref in refs:
+        match ref:
+            case Branch(sequences=seqs):
+                ref.sequences = [replace_symb(n) for n in seqs]
+            case NodeList(nodes=node_ls):
+                ref.nodes = [replace_symb(n) for n in node_ls]
+            case Repeat(node=n, count=c):
+                ref.node = replace_symb(n)
+            case Root(start=s, colors=c, node=n):
+                ref.node = replace_symb(n)
+
+    # Note you can only replace one at a time because a same node can be part of several 1-form
+    return [replace_symb(node) for node in ast_ls], True
+def symbolize(ast_ls, refs):
+    """Symbolize ast_ls as much as possible"""
+    ast_ls, changed = symbolize_next(ast_ls, refs)
+    while changed:
+        ast_ls, changed = symbolize_next(ast_ls, refs)
+    return ast_ls
+def resolve_symbolic(node, refs):
+    def replace_parameter(node, param, index):
+        """Replace a variable by the right parameter"""
+        match node:
+            case Variable(index=i) if i==index:
+                if DEBUG_RESOLVE:
+                    print(f"Replacing variable {node} by {param}")
+                return param
+            case Repeat(node=n, count=Variable(index=i)) if i == index:
+                if DEBUG_RESOLVE:
+                    print(f"Replacing repeat's count {node.count} by {param}")
+                return Repeat(n, param)
+            case Root(start=Variable(index=i), colors=c, node=n) if i == index:
+                if DEBUG_RESOLVE:
+                    print(f"Replacing roots's start {node.start} by {param}")
+                return Root(param, c, n)
+            case Root(start=s, colors=Variable(index=i), node=n) if i == index:
+                if DEBUG_RESOLVE:
+                    print(f"Replacing roots's color {node.colors} by {param}")
+                return Root(s, param, n)
+        return node
+    def resolve_symbolic_node(node: ASTNode):
+        """Replace a SymbolicNode by the ASTNode it represents"""
+        if not isinstance(node, SymbolicNode):
+            return node
+
+        index = node.index
+        param = node.param
+        if param is None:
+            if DEBUG_RESOLVE:
+                print(f"Replacing node {node} by {refs[index]}")
+            return refs[index]
+        else:
+            # First resolve param:
+            param = ast_map(resolve_symbolic_node, param) if isinstance(param, ASTNode) else param
+            if DEBUG_RESOLVE:
+                print(f"Replacing node {node} by {refs[index]} where {param} replaces Variable({index})")
+            template = refs[index]
+            # First resolve param:
+            #param = ast_map(resolve_symbolic_node, param)
+            replace_param = lambda node: replace_parameter(node, param, index)
+            nnode = ast_map(replace_param, template)
+            if DEBUG_RESOLVE:
+                print(f"New node: {nnode}")
+            return nnode
+    return ast_map(resolve_symbolic_node, node)
+def unsymbolize(ast_ls, refs):
+    """
+    Unsymbolize an AST: eliminates all Symbolic Nodes.
+
+    1. First eliminates Symbolic Nodes from the symbol table refs: expand each symbol
+    2. The Replace each SymbolicNode within each AST
+    """
+    # Copy the symbol table
+    crefs = [copy_ast(ref) for ref in refs]
+
+    # Define the resolve function on the copy
+    def resolve(node):
+        resolved = resolve_symbolic(node, crefs)
+        #if is_symbolic(resolved):
+        #            return resolve(resolved)  # Handle nested SymbolicNodes
+        return resolved
+
+    if DEBUG_UNSYMBOLIZE:
+        print("\n")
+        print("Original Symbol Table")
+        for ref in crefs:
+            print("Code: ", ref)
+            print("Repr: ", ref.__repr__())
+            print("---------------")
+        print("\n")
+    # Resolve the copy, crefs need to be updated at each iterations, otherwise further iterations
+    # will used outdated refs which contains symbols
+    for i, ref in enumerate(crefs):
+        if DEBUG_UNSYMBOLIZE:
+            print(f"Index: {i}, Ref: {ref}")
+        crefs[i] = resolve(ref)
+        if DEBUG_UNSYMBOLIZE:
+            print(f"New ref: {crefs[i]}")
+    #crefs = [resolve(ref) for ref in crefs]
+
+    if DEBUG_UNSYMBOLIZE:
+        print("\n")
+        print("New Symbol Table")
+        for ref in crefs:
+            print("Code: ", ref)
+            print("Repr: ", ref.__repr__())
+            print("---------------")
+        print("\n")
+
+    # Resolved each ASTs using the resolved copy
+    return [ast_map(resolve, ast) for ast in ast_ls]
+def populate(grid, node, coordinates=(0,0), color=1, construction = None):
+    # if the node is a rot with valid coord, then it takes the lead
+
+    if DEBUG:
+        print("\n")
+        print("Call to populate() with following parameters:")
+        print(f"Node: {node}")
+        print(f"color: {color}")
+        print(f"coordinates: {coordinates}")
+
+    if node is None:
+        return coordinates
+
+    if isinstance(node, UnionNode):
+        if DEBUG:
+            print("Node dected as UnionNode")
+        for code in node.codes:
+            populate(grid, code, coordinates, color, construction)
+        return coordinates
+
+    if isinstance(node, Root):
+        if DEBUG:
+            print("Node dected as Root")
+        if not isinstance(node.start, Variable):
+            if DEBUG:
+                print(f"Start set to {node.start}")
+            coordinates = node.start
+        if len(node.colors)==1:
+            if DEBUG:
+                print(f"Color set to {node.colors}")
+            color = list(node.colors)[0]
+        if DEBUG:
+            print(f"New node is {node.node}")
+
+        node = node.node
+
+    row, col = coordinates
+    ncoordinates = coordinates
+    grid[row][col] = color
+    if isinstance(node, Moves):
+        if DEBUG:
+            print("Node dected as Moves")
+            print(f"Coloring with color {color} the path {node.moves}")
+        for row, col in node.iter_path(coordinates):
+          grid[row][col] = color
+          ncoordinates = (row, col)
+    if isinstance(node, (Repeat, NodeList)):
+        if DEBUG:
+            print("Node dected as Repeat or NodeList")
+        for nnode in node:
+            ncoordinates = populate(grid, nnode, ncoordinates, color, construction)
+    if isinstance(node, Branch):
+        if DEBUG:
+            print("Node dected as Branch")
+        for nnode in node:
+            populate(grid,nnode, ncoordinates, color, construction)
+
+    if construction is not None:
+        construction.append(copy(grid))
+    return ncoordinates
+def factor_by_refs(node, refs):
+    """A non-factorize node of an AST in an lattice could possibly match a symbol learned from another lattice.
+    Thus it's necessary to check if each node doen't match a an already exiting symbol
+    That was added in the symbol table by another lattice.
+    """
+
+    # Here the order is very important, for every symbol,
+    # the functionalized version of the node as to be first tested against the symbol
+    # before goin to the next symbol.
+    # Otherwise it won't match the first symbolization process'
+
+    def factor_node_by_ref(node, ref_index):
+        if node == refs[ref_index]:
+            return SymbolicNode(ref_index, None)
+        funs = functionalized(node)
+        for fun, parameter in funs:
+            if fun == refs[ref_index]:
+                return SymbolicNode(ref_index, parameter)
+        return node
+
+    def factor_node(node):
+        # If the symbol is a constant, and equal to the current node repl
+        # Replace the current node by the symbol
+        for i in range(len(refs)):
+            nnode = factor_node_by_ref(node, i)
+            if isinstance(nnode, SymbolicNode):
+                return nnode
+        return node
+
+    return ast_map(factor_node, node)
+def map_refs(refs, refs_common):
+    mapping_ref = {}
+    mapping = []
+
+    # Checking first non symbolic
+    while len(mapping_ref) < len(refs):
+        for i, ref in enumerate(refs):
+            if ref in mapping_ref:
+                break
+            # Treat the node if all symbols it's referencing have been treated'
+            subsymbols = set(get_symbols(ref))
+            if all([symb in mapping_ref for symb in subsymbols]):
+                ref_updated = ref
+                # First update all the sub symbolic node referencing the previously treated node
+                for ss in subsymbols:
+                    ref_updated = ast_map(lambda node: update_node_i_by_j(node, ss, mapping_ref[ss]), ref_updated)
+                # The check if it already exist in the common symbol table
+                # If yes then reference the new index
+                if ref_updated in refs_common:
+                    mapping_ref[i] = refs_common.index(ref_updated)
+                # Else update it's index and add it to the common table
+                else:
+                    mapping_ref[i] = len(refs_common)
+                    ref_updated = ast_map(lambda node: update_symbol(node, mapping_ref[i]), ref_updated)
+                    refs_common.append(ref_updated)
+    mapping = sorted([(i,j) for i, j in mapping_ref.items()], key=lambda x: x[0])
+    mapping = [x[1] for x in mapping]
+    return mapping, refs_common
+def fuse_refs(refs_ls):
+    nrefs_ls = [[symbol.copy() for symbol in refs] for refs in refs_ls]
+    def map_symbols(refs, refs_common):
+        # First update the variable references
+        # For each symbol either it's already there from another symbol table
+        # Or it needs to be added to the common symbol tables
+        # then the  new index is added to the mapping from the old table to the common table
+        # And the variable references to the previous nodes needs to be uodated
+        mapping = []
+        mapping_ref = {}
+
+        to_do = []
+
+        for ref in refs:
+            # Updating the reference with the current mapping
+            if ref in refs_common:
+                nindex = nrefs.index(ref)
+            else:
+                nindex = len(refs_common)
+                update = lambda node: update_symbol(node, nindex)
+                ref_updated = ast_map(update, ref)
+                #ref_updated = ast_map(lambda node: update_node(node, mapping), ref)
+                #refs_common.append(ref_updated)
+            mapping_ref[ref] = nindex
+
+        #
+            #mapping.append(nindex)
+        # First find the mapping then update the nodes
+        return reversed(mapping)
+
+    nrefs = []
+    mappings = []
+    for refs in nrefs_ls:
+        # Map the new symbol table and fill with placeholders
+        mapping, nrefs = map_refs(refs, nrefs)
+        mappings.append(mapping)
+    return nrefs, mappings
+def update_asts(ast_ls, nrefs, mapping):
+
+    if DEBUG_ASTMAP:
+        nast_ls = []
+        print(f"\n")
+        for i, ast in enumerate(ast_ls):
+            print(f"----------------------")
+            print(f"Updating AST n°{i}: {ast}")
+            nast = ast_map(lambda node: update_node(node, mapping), ast)
+            print(f"New AST: {nast}")
+            nast_ls.append(nast)
+
+        return nast_ls
+
+    # First update refs by refs
+    ast_ls = [ast_map(lambda node: update_node(node, mapping), ast) for ast in ast_ls]
+    # Then check if a ref added from another node factorize some code
+    ast_ls = [factor_by_refs(ast, nrefs) for ast in ast_ls]
+    return ast_ls
+
+def construct_union_TO_DO_LATED_FOR_BACKGROUND_NORMALISATION(code: Root, subcodes: List[UnionNode], refs):
+    # Checking for Nones, it should not happen but just in case
+    subcodes = [sc for sc in subcodes if sc is not None]
+    unsymb = unsymbolize(subcodes, refs)
+    code_unsymb = unsymbolize([code], refs)[0]
+
+    # First extract subroots:
+    subroots = []
+    subunions = []
+    for i, subcode in enumerate(subcodes):
+        match unsymb[i]:
+            case Root(s, colors, n) if len(colors) == 1:
+                subroots.append(subcode)
+            case Root(_, _, _):
+                raise ValueError("Root with more than one color propagated in UnionNode")
+            case UnionNode():
+                subunions.append(subcode)
+            case _:
+                raise ValueError("UnionNode initialized with a node which isn't Root or UnionNode")
+
+    # First check if the unions are pairwise compatible
+    for i in range(len(subunions)):
+        for i in range(len(subunions)):
+            pass
+def construct_union(codes: List[Root], refs):
+    codes = [c for c in codes if c is not None]
+    unsymb = unsymbolize(codes, refs)
+
+    subcodes = []
+    for i, code in enumerate(codes):
+        match unsymb[i]:
+            case Root(s, colors, n) if len(colors) == 1:
+                subcodes.append(code)
+            case Root(_, _, _):
+                raise ValueError("Root with more than one color propagated in UnionNode")
+            case _:
+                raise ValueError("UnionNode initialized with a node which isn't Root")
+    return UnionNode(set(subcodes))
+
+def hide_position(node):
+    match node:
+        case Root(s, c, n):
+            return Root(Variable(-1), c, n)
+        case SymbolicNode(i, p) if isinstance(p, tuple):
+            return SymbolicNode(i, Variable(-1))
+
+    return node
+
+def hide_position_with_params(node):
+    match node:
+        case Root(s, c, n):
+            return (Root(Variable(-1), c, n), s)
+        case SymbolicNode(i, p) if isinstance(p, tuple):
+            return (SymbolicNode(i, Variable(-1)), p)
+
+    return node
+
+def get_hidden_pos(union_ls, node):
+    pos = []
+    for union in union_ls:
+        for nnode in union.codes:
+            if hide_position(nnode) == node:
+                match nnode:
+                    case Root(s, c, n):
+                        pos.append(s)
+                    case SymbolicNode(i, p) if isinstance(p, tuple):
+                        pos.append(p)
+    return pos
+
+def get_invariants1(union1, union2):
+    # First get constant programs then tried relative/hidden position programs
+    invariants = set()
+    seen = set()
+    codes1_rel = [hide_position(code) for code in union1.codes]
+    codes2_rel = [hide_position(code) for code in union2.codes]
+    for code in union1.codes:
+        # First tried constant / fixed position, and mark the relative one as seen so it won't get
+        # double counted'
+        if code in union2.codes:
+            invariants.add(code)
+            seen.add(hide_position(code))
+
+    for code in codes1_rel:
+        if code in codes2_rel and code not in seen:
+            invariants.add(code)
+
+    return invariants
+
+def get_invariants(unions):
+    # First get constant programs then tried relative/hidden position programs
+    invariants = set()
+    seen = set()
+    codes = [[code for code in union.codes] for union in unions]
+    codes_rel = [[hide_position(code) for code in union.codes] for union in unions]
+
+    # Get the common programs
+    codes = set.intersection(*map(set, codes))
+    codes_rel = set.intersection(*map(set, codes_rel))
+
+    # First tried constant / fixed position,
+    # and mark the relative one as seen so it won't get double counted
+    for code in codes:
+        invariants.add(code)
+        seen.add(hide_position(code))
+
+    # Then add the relative programs if the constant version/excat match is not there
+    for code in codes_rel:
+        if code not in seen:
+            invariants.add(code)
+
+    return invariants
