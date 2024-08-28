@@ -1,9 +1,13 @@
 """
-Mask of connected commponents of a grid are represented into programs.
-First start with one coordinate of the connected component,
-then map the entire component using graph traversal to a branching freeman chain code.
-The branched Freeman chain code is factorized when it reduces bit lenght using a very simple language.
-This language not being very expressive, it's sumple to evaluate the resulting bit length / kolmogorov complexity.
+Grid can be totally or partially encoded in a lossless fashion into Asbract Syntax Trees.
+The lossless part is essential here because ARC Corpus sets the problem into the low data regime.
+First grids are marginalized into connected components of N colors.
+Those connected components are then represented through their graph traversals using branching freeman chain codes.
+
+The lossless encoding used is basic pattern matching for (meta) repetitions through Repeat and SymbolicNode.
+The language formed by ASTs are simple enough an approximate version of kolmogorov complexity can be computed.
+It helps choosing the most efficient encoding, which is the closest thing to a objective  proper representation
+of the morphology.
 
 # Naming conventions
 # "nvar" == "var_new"
@@ -18,8 +22,8 @@ DEBUG_ASTMAP = False
 
 from dataclasses import dataclass, asdict
 from typing import Any, List, Union, Optional, Iterator, Callable, Set, Tuple, Dict
-from helpers import DIRECTIONS, MOVES, argmin_by_len, extract
-from helpers import available_transitions, copy, Coord, Trans
+from helpers import DIRECTIONS, MOVES, argmin_by_len, extract, zeros, points_to_grid_colored
+from helpers import available_transitions, copy, Coord, Trans, Point, Grid, Points
 
 from time import sleep
 
@@ -85,43 +89,6 @@ class Moves(Node):
     """
 
     moves: str  #0, 1, 2, 3, 4, 5, 6, 7 (3 bits)
-
-    def simplify_repetitions1(self):
-        moves_ls = [Moves(k) for k in self.moves]
-        simplified = []
-        i = 0
-        while i < len(moves_ls):
-            pattern, count, reverse = find_repeating_pattern(moves_ls[i:], 0)
-            if pattern is None or count <= 1:
-                # No repeating pattern found, add the current move and continue
-                simplified.append(moves_ls[i])
-                i += 1
-            else:
-                if len(pattern) == 1:
-                    node = pattern[0]
-                else:
-                    node = Moves(''.join(m.moves for m in pattern))
-                if reverse:
-                    simplified.append(Repeat(node, -count))
-                else:
-                    simplified.append(Repeat(node, count))
-                i += len(pattern) * count
-
-        if len(simplified) == 1:
-            return simplified[0]
-        else:
-            result = []
-            curr = simplified[0]
-            for i in range(1, len(simplified)):
-                next_node = simplified[i]
-                match (curr, next_node):
-                    case (Moves(m1), Moves(m2)):
-                        curr.moves += m2
-                    case _:
-                        result.append(curr)
-                        curr = next_node
-            result.append(curr)
-            return NodeList(simplified) if len(simplified)>1 else simplified[0]
 
     def simplify_repetitions(self):
         moves_ls = [Moves(k) for k in self.moves]
@@ -564,6 +531,7 @@ class UnionNode(Node):
     """
     #background: Dict['ASTNode', 'ASTNode']
     codes: Set['ASTNode']
+    background: Optional['ASTNode'] = None
 
     def __len__(self):
         len_codes = 0
@@ -731,6 +699,19 @@ def is_symbolic(ast):
             return is_symbolic(n)
         case Branch(sequences=nls) | NodeList(nodes=nls):
             return any([is_symbolic(n) for n in nls])
+        case _:
+            return False
+
+def is_function(ast):
+    match ast:
+        case Variable():
+            return True
+        case SymbolicNode(_, param) if isinstance(param, ASTNode):
+            return is_function(param)
+        case Repeat(n, _) | Root(_, _, n):
+            return is_function(n)
+        case Branch(sequences=nls) | NodeList(nodes=nls):
+            return any([is_function(n) for n in nls])
         case _:
             return False
 def get_symbols(ast):
@@ -1118,6 +1099,7 @@ def symbolize(ast_ls, refs):
     while changed:
         ast_ls, changed = symbolize_next(ast_ls, refs)
     return ast_ls
+
 def resolve_symbolic(node, refs):
     def replace_parameter(node, param, index):
         """Replace a variable by the right parameter"""
@@ -1210,7 +1192,7 @@ def unsymbolize(ast_ls, refs):
 
     # Resolved each ASTs using the resolved copy
     return [ast_map(resolve, ast) for ast in ast_ls]
-def populate(grid, node, coordinates=(0,0), color=1, construction = None):
+def populate_old(grid, node, coordinates=(0,0), color=1, construction = None):
     # if the node is a rot with valid coord, then it takes the lead
 
     if DEBUG:
@@ -1227,7 +1209,7 @@ def populate(grid, node, coordinates=(0,0), color=1, construction = None):
         if DEBUG:
             print("Node dected as UnionNode")
         for code in node.codes:
-            populate(grid, code, coordinates, color, construction)
+            populate_old(grid, code, coordinates, color, construction)
         return coordinates
 
     if isinstance(node, Root):
@@ -1260,12 +1242,12 @@ def populate(grid, node, coordinates=(0,0), color=1, construction = None):
         if DEBUG:
             print("Node dected as Repeat or NodeList")
         for nnode in node:
-            ncoordinates = populate(grid, nnode, ncoordinates, color, construction)
+            ncoordinates = populate_old(grid, nnode, ncoordinates, color, construction)
     if isinstance(node, Branch):
         if DEBUG:
             print("Node dected as Branch")
         for nnode in node:
-            populate(grid,nnode, ncoordinates, color, construction)
+            populate_old(grid,nnode, ncoordinates, color, construction)
 
     if construction is not None:
         construction.append(copy(grid))
@@ -1424,7 +1406,7 @@ def construct_union(codes: List[Root], refs):
                 raise ValueError("UnionNode initialized with a node which isn't Root")
     return UnionNode(set(subcodes))
 
-def hide_position(node):
+def hide_position(node: ASTNode) -> ASTNode:
     match node:
         case Root(s, c, n):
             return Root(Variable(-1), c, n)
@@ -1442,7 +1424,7 @@ def hide_position_with_params(node):
 
     return node
 
-def get_hidden_pos(union_ls, node):
+def get_hidden_pos(union_ls: List[UnionNode], node: ASTNode) -> List[Coord]:
     pos = []
     for union in union_ls:
         for nnode in union.codes:
@@ -1473,7 +1455,7 @@ def get_invariants1(union1, union2):
 
     return invariants
 
-def get_invariants(unions):
+def get_invariants(unions: UnionNode) -> Set[ASTNode]:
     # First get constant programs then tried relative/hidden position programs
     invariants = set()
     seen = set()
@@ -1496,3 +1478,72 @@ def get_invariants(unions):
             invariants.add(code)
 
     return invariants
+
+def shift_ast(shift: Coord, node: ASTNode):
+    def displace(node):
+        match node:
+            case Root(s, c, n) if isinstance(s, tuple):
+                return Root((s[0] + shift[0], s[1] + shift[1]), c, n)
+            case SymbolicNode(i, p) if isinstance(p, tuple):
+                return SymbolicNode(i, (p[0] + shift[0], p[1] + shift[1]))
+        return node
+    return ast_map(displace, node)
+
+def decode(node: Optional[ASTNode], coordinates: Coord =(0,0), color: int = 1) -> Tuple[Coord, Points]:
+    """
+    Decode asts into grid without having a particular grid imposed.
+    The AST should not be symbolic, it has to have its symbols resolved first.
+    It shouldn't either be a parametrized symbol, i.e. of a function of Vars
+    It enables to dynamically decide of the resulting grid proportions downstream.
+    """
+    if is_function(node):
+        raise ValueError("A function cannot be decoded")
+    if is_symbolic(node):
+        raise ValueError("Trying to decode a node containing symbols. Please resolve it's symbols first")
+
+    if node is None:
+        return coordinates, set()
+
+    # First search for top-level nodes: UnionNode and Root
+    match node:
+        case UnionNode(codes):
+            # Returning the points of every code
+            # later should be merged with the points of the background
+            # by overwriting them in case of conflicts
+            points = set([point for code in codes for point in decode(code)[1]])
+            return coordinates, points
+        case Root(start, colors, nnode):
+            # Switching to the root node, and setting appropriate parameters
+            if not isinstance(start, Variable):
+                coordinates = start
+            if not isinstance(colors, Variable) and len(colors) == 1:
+                color = list(colors)[0]
+            node = nnode
+
+    # Then continue with traditional nodes
+    row, col = coordinates
+    ncoordinates = coordinates
+
+    # Start point
+    points = [(row, col, color)]
+
+    # Searching and processing the non-symbolic traditional nodes
+    match node:
+        case Moves(moves):
+            for row, col in node.iter_path(coordinates):
+                points.append((row, col, color))
+                ncoordinates = (row, col)
+        case NodeList() | Repeat():
+            for nnode in node:
+                ncoordinates, npoints = decode(nnode, ncoordinates, color)
+                points.extend(npoints)
+        case Branch():
+            for nnode in node:
+                _, npoints = decode(nnode, ncoordinates, color)
+                points.extend(npoints)
+
+    return ncoordinates, set(points)
+
+def node_to_grid(node: ASTNode) -> Grid:
+    _, points = decode(node)
+    return points_to_grid_colored(points)

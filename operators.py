@@ -18,11 +18,11 @@ from helpers import *
 ### Constants
 # Topological constants
 # The Manhattan / 4-connectivity kernel is a cross
-kernel_manhattan = [[0, 1, 0], [1, 1, 1], [0, 1, 0]]
+kernel_manhattan = [[False, True, False], [True, True, True], [False, True, False]]
 directions_manhattan = {'0': (-1, 0), '1': (0, -1), '2': (1, 0), '3': (0, 1)}
 
 # The Chebyshev / 8-connectivity kernel is a square
-kernel_chebyshev = [[1, 1, 1], [1, 1, 1], [1, 1, 1]]
+kernel_chebyshev = [[True, True, True], [True, True, True], [True, True, True]]
 directions_chebyshev = {
     "0": (-1, 0), "2": (0, -1), "4": (1, 0), "6": (0, 1),
     "1": (-1, -1), "3": (1, -1), "5": (1, 1), "7": (-1, 1)
@@ -33,38 +33,44 @@ def flatten(mask):
     height, width = proportions(mask)
     return [mask[row][col] for row in range(height) for col in range(width)]
 
-def fill_unary(mask, condition):
+def fill_unary(mask: Mask, condition: Callable[[bool], bool]) -> Mask:
     height, width = proportions(mask)
-    mask_new = zeros(height, width)
+    mask_new = falses(height, width)
     for row in range(height):
         for col in range(width):
             mask_new[row][col] = condition(mask[row][col])
     return mask_new
 
-def fill_binary(mask1, mask2, condition):
+def fill_binary(mask1: Mask, mask2: Mask, condition: Callable[[bool, bool], bool]) -> Mask:
     height, width = proportions(mask1)
-    mask_new = zeros(height, width)
+
+    if proportions(mask2) != (height, width):
+        msg = f"Applying binary filling to masks of incompatble dimensions: {(height, width)} vs {proportions(mask2)}"
+        msg += f"\n mask n°1: {mask1}, mask n°2 {mask2}"
+        raise ValueError(msg)
+
+    mask_new = falses(height, width)
     for row in range(height):
         for col in range(width):
             if condition(mask1[row][col], mask2[row][col]):
-                mask_new[row][col] = 1
+                mask_new[row][col] = True
     return mask_new
 
 ## Set operators
 # Set Mapping
-def cardinal(mask):
+def cardinal(mask: Mask) -> int:
     return sum(flatten(mask))
 
-def intersection(mask1, mask2):
+def intersection(mask1: Mask, mask2: Mask) -> Mask:
     """Intersection of two similar sized masks"""
-    return fill_binary(mask1, mask2, lambda a, b: (a == 1) and (b == 1))
+    return fill_binary(mask1, mask2, lambda a, b: a and b)
 
-def union(mask1, mask2):
+def union(mask1: Mask, mask2: Mask) -> Mask:
     """Union of two similar sized canals"""
-    return fill_binary(mask1, mask2, lambda a, b: (a == 1) or (b == 1))
+    return fill_binary(mask1, mask2, lambda a, b: a or b)
 
-def complement(mask):
-    return fill_unary(mask, lambda a: 0 if (a == 1) else 1)
+def complement(mask: Mask) -> Mask:
+    return fill_unary(mask, lambda a: False if a else True)
 # Set test
 def set_contains(mask_larger, mask_smaller):
     return intersection(mask_larger, mask_smaller) == mask_smaller
@@ -93,6 +99,7 @@ def jaccard_resized(mask1, mask2):
     submask2 = create_centered_padded(mask2, max_height, max_width)
 
     return jaccard(submask1, submask2)
+
 ## Geometric operators
 def transpose(mask):
     height, width = proportions(mask)
@@ -120,7 +127,7 @@ def rotational_symmetries(mask, box):
        return 2
     return 0
 ## Morphological operators
-def morphological_dilatation(mask_object, mask_kernel):
+def morphological_dilatation(mask_object: Mask, mask_kernel: Mask):
     """Returns the mask of the cropped morphological dilatation (~Minkowski addition) of an object and a structuring element """
     object_height, object_width = proportions(mask_object)
     kernel_height, kernel_width = proportions(mask_kernel)
@@ -128,29 +135,29 @@ def morphological_dilatation(mask_object, mask_kernel):
     # The new mask will have the dimension of the object's mask
     # It's the only asymetry between "object" and "kernel"
     # Whereas traditional Minkowski addition treats them equally
-    mask_new = zeros(object_height, object_width)
+    mask_new = falses(object_height, object_width)
 
     for row in range(object_height):
         for col in range(object_width):
-            if mask_object[row][col] == 1:
+            if mask_object[row][col]:
                 for i in range(kernel_height):
                     for j in range(kernel_width):
                         k = row + i - kernel_height // 2
                         l = col + j - kernel_width // 2
 
                         if 0 <= k < object_height and 0 <= l < object_width:
-                            if mask_kernel[i][j] == 1:
-                                mask_new[k][l] = 1
+                            if mask_kernel[i][j]:
+                                mask_new[k][l] = True
     return mask_new
 
 
-def morphological_erosion(mask_object, mask_kernel):
+def morphological_erosion(mask_object: Mask, mask_kernel: Mask):
     """Returns the mask of the morphological erosion of an object using a structuring element."""
     object_height, object_width = proportions(mask_object)
     kernel_height, kernel_width = proportions(mask_kernel)
 
     # The new mask will have the dimension of the object's mask
-    mask_new = zeros(object_height, object_width)
+    mask_new = falses(object_height, object_width)
 
     for row in range(object_height):
         for col in range(object_width):
@@ -162,7 +169,7 @@ def morphological_erosion(mask_object, mask_kernel):
                     l = col + j - kernel_width // 2
 
                     if 0 <= k < object_height and 0 <= l < object_width:
-                        if mask_kernel[i][j] == 1 and mask_object[k][l] == 0:
+                        if mask_kernel[i][j] and not mask_object[k][l]:
                             fits = False
                             break
                     else:
@@ -172,25 +179,25 @@ def morphological_erosion(mask_object, mask_kernel):
                     break
 
             if fits:
-                mask_new[row][col] = 1
+                mask_new[row][col] = True
             else:
-                mask_new[row][col] = 0
+                mask_new[row][col] = False
 
     return mask_new
 
-def morphological_opening(mask_object, mask_kernel):
+def morphological_opening(mask_object: Mask, mask_kernel: Mask):
     return morphological_dilatation(morphological_erosion(mask_object, mask_kernel), mask_kernel)
 
-def morphological_closing(mask_object, mask_kernel):
+def morphological_closing(mask_object: Mask, mask_kernel: Mask):
     return morphological_erosion(morphological_dilatation(mask_object, mask_kernel), mask_kernel)
 ## Topological operators
 # Topological mappings
-def dilatation(mask, chebyshev = True):
+def dilatation(mask: Mask, chebyshev = True):
     if chebyshev:
         return morphological_dilatation(mask, kernel_chebyshev)
     return morphological_dilatation(mask, kernel_manhattan)
 
-def erosion(mask, chebyshev = True):
+def erosion(mask: Mask, chebyshev = True):
     if chebyshev:
         return morphological_erosion(mask, kernel_chebyshev)
     return morphological_erosion(mask, kernel_manhattan)
@@ -222,10 +229,10 @@ def is_exterior(mask_connected_component, chebyshev = True):
     def check_adjacent_cells(row, col):
         for i in range(3):
             for j in range(3):
-                if kernel[i][j] == 1:
+                if kernel[i][j]:
                     adj_i, adj_j = row+i-1, col+j-1
                     if 0 <= adj_i < height and 0 <= adj_j < width:
-                        if mask[adj_i][adj_j] == 1:
+                        if mask[adj_i][adj_j]:
                             return True
 
     # Check top and bottom borders
@@ -241,20 +248,20 @@ def is_exterior(mask_connected_component, chebyshev = True):
     return False
 
 # Topological complex function
-def connected_components(mask, chebyshev=False):
+def connected_components(mask: Mask, chebyshev=False):
     """Extract connex components.
         Chebyshev: if True then 8-connexity is used instead of 4-connexity
     """
     component_number = 0
     height, width = proportions(mask)
-    distribution = zeros(height, width)
+    distribution = falses(height, width)
     to_see = [(i,j) for j in range(width) for i in range(height)]
     seen = set()
     components = {}
 
     for i,j in to_see:
         # Check if there is something to do
-        if (i,j) in seen or mask[i][j] == 0:
+        if (i,j) in seen or not mask[i][j]:
             continue
 
         # New component found, increase the count and initiate queue
@@ -294,6 +301,51 @@ def connected_components(mask, chebyshev=False):
         components[component_number]['box'] = ((min_row, min_col), (max_row, max_col))
 
     return component_number, distribution, components
+
+def connected_components_coords(coords: Coords, props: Proportions, chebyshev=False):
+    """Extract connex components.
+        Chebyshev: if True then 8-connexity is used instead of 4-connexity
+    """
+    height, width = props
+    component_number = 0
+    to_see = coords.copy()
+    seen = set()
+    components = {}
+
+    for i,j in to_see:
+        # Check if there is something to do
+        if (i,j) in seen or (i,j) not in coords:
+            continue
+
+        # New component found, increase the count and initiate queue
+        component_number += 1
+        components[component_number] = {'mask': set()}
+        queue = [(i, j)]
+
+        while queue:
+            k, l = queue.pop(0)  # Correctly manage the queue
+            if (k, l) in seen:
+                continue
+
+            components[component_number]['mask'].add((k,l))
+            seen.add((k, l))
+
+            # Add all 4-connex neighbors
+            for dk, dl in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+                nk, nl = k + dk, l + dl
+                if 0 <= nk < height and 0 <= nl < width and (nk,nl) in coords and (nk, nl) not in seen:
+                    queue.append((nk, nl))
+
+            if chebyshev:
+                # Add diagonal neighbors
+                for dk, dl in [(-1, -1), (-1, 1), (1, -1), (1, 1)]:
+                    nk, nl = k + dk, l + dl
+                    if 0 <= nk < height and 0 <= nl < width and (nk, nl) in coords and (nk, nl) not in seen:
+                        queue.append((nk, nl))
+
+
+    return component_number, components
+
 
 def partition(mask_connected_component, chebyshev=False):
     """Assuming the mask is one of a connected component of the grid / A single grid object

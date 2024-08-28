@@ -1,14 +1,22 @@
 """
 Repository of helper functions.
+
+It sets basics operations on grids on two possible representations.
+Either a functional one:
+    - Grid: List[List[int]], (row, column) -> value
+Or a set-centric one:
+    - Points: Set[Point], {(row, column, value)} / (row, column, value) -> {True, False}
 """
 import os
 import json
 from re import X
 import time
 from pathlib import Path
+from itertools import combinations
+
 
 from dataclasses import dataclass, asdict
-from typing import Any, List, Union, Optional, Iterator, Callable, Tuple, Set
+from typing import Any, List, Union, Optional, Iterator, Callable, Tuple, Set, Dict
 
 ## Constants
 # Define ANSI escape codes for the closest standard terminal colors
@@ -34,11 +42,30 @@ MOVES = "01234567"
 
 DATA = "../ARC-AGI/data"
 
-# Types
-Coord = Tuple[int, int] # Coordinates
-Trans = Tuple[str, Coord] # Transition
+## Types
+# Proportions is equivalent data-wise to Coord but different meaning
+# Beware of the off-by-one error
+# A grid of bottom-right corner (max_row, max_col) will have proportions (height = max_row+1, width = max_col+1)
 
+# Point is basically an unfolded (point: Point, value: int) into a trouple
+GridColored = List[List[int]] # Functional representation of a grid: (row, col) -> val
+Mask = List[List[bool]]
+Grid = Union[GridColored, Mask]
+
+Color = int
+
+Coord = Tuple[int, int] # Coordinates
+Coords = Set[Coord]
+Box = Tuple[Coord, Coord]
+
+Proportions = Tuple[int, int]
+
+Point = Tuple[int, int, int] # Coordinates + color value
+Points = Set[Point] # Set representation of a grid: {(row, col, val)} / (row, col, val) -> {True, False}
+
+Trans = Tuple[str, Coord] # Transition
 #
+
 
 def coordinate_shift(transformation_ls: List[Tuple[Coord, Coord]]) -> Optional[Coord]:
     "Given a list of coordinate changes, find if there is a unique shift"
@@ -130,44 +157,6 @@ class ColorTopology():
             neighbours.append((str(colour), colour))
         return neighbours
 
-def bfs(coordinates, topology):
-    queue = [('', coordinates)]
-    seen = set([coordinates])
-    traversal = []
-
-    while queue:
-        path, element = queue.pop(0)
-        traversal.append((path, element))
-        # First Tower then Bishop
-        for move, ncoordinates in topology.transitionsTower(element):
-            if ncoordinates not in seen:
-                seen.add(ncoordinates)
-                queue.append((path + move, ncoordinates))
-        for move, ncoordinates in topology.transitionsBishop(element):
-            if ncoordinates not in seen:
-                seen.add(ncoordinates)
-                queue.append((path + move, ncoordinates))
-
-    return traversal, seen
-
-def dfs(coordinates, topology):
-    stack = [('', coordinates)]
-    seen = set([coordinates])  # Mark the starting point as seen immediately
-    traversal = []
-    while stack:
-        path, element = stack.pop()  # Use pop() instead of pop(0) for DFS
-        traversal.append((path, element))
-        # First Tower then Bishop
-        for move, ncoordinates in reversed(topology.transitionsBishop(element)):  # Reverse to maintain original order
-            if ncoordinates not in seen:
-                seen.add(ncoordinates)  # Mark as seen as soon as we discover it
-                stack.append((path + move, ncoordinates))
-        for move, ncoordinates in reversed(topology.transitionsTower(element)):  # Reverse to maintain original order
-            if ncoordinates not in seen:
-                seen.add(ncoordinates)  # Mark as seen as soon as we discover it
-                stack.append((path + move, ncoordinates))
-
-    return traversal, seen
 
 def list_to_grid(height, width, coordinates_ls):
     grid = zeros(height, width)
@@ -178,57 +167,136 @@ def grid_to_list(grid):
     height, width = proportions(grid)
     return [(i, j) for i in range(height) for j in range(width) if grid[i][j] == 1]
 
-def construct_grid(start, node, topology):
-    grid = zeros(topology.height, topology.width)
-    populate(grid, start, node)
-    return grid
-
-def ast_to_grid(start, node, topology, show_construction = False):
-    """
-    Note: The show construction follows a DFS order, making a bfs path looks sloppy
-    """
-    grid = zeros(topology.height, topology.width)
-    construction = [] if show_construction else None
-    populate(grid, start, node, construction)
-    if construction:
-        animate_grid(construction)
-    return grid
-## Function
-# Research
-def extract_coordinates(grid):
-    height, width = proportions(grid)
-    return [((i, j), grid[i][j]) for i in range(height) for j in range(width)]
-
-def marginalize(coordinates_ls):
-    dimensions = len(coordinates_ls[0])
-    margin_spaces = []
-    for dim in range(dimensions):
-        space_dim = {}
-        for i, coordinates in enumerate(coordinates_ls):
-            ncoordinates = coordinates[:dim] + coordinates[dim+1:]
-            if len(ncoordinates) == 1:
-                ncoordinates = ncoordinates[0]
-            if coordinates[dim] in space_dim:
-                space_dim[coordinates[dim]] += [ncoordinates]
-            else:
-                space_dim[coordinates[dim]] = [ncoordinates]
-        margin_spaces.append(space_dim)
-    return margin_spaces
-
-    #seen =
+### Function
 
 
-# Simple grid creations
-def zeros(height, width):
+#region Grid Basics
+# Elementary GridColored constructors
+def zeros(height: int, width: int) -> GridColored:
     return [[0 for _ in range(width)] for _ in range(height)]
-
-def ones(height, width):
+def ones(height: int, width: int) -> GridColored:
     return [[1 for _ in range(width)] for _ in range(height)]
-def copy(grid):
+def identity(height: int, width: int) -> GridColored:
+    return [[1 if col == row else 0 for col in range(width)] for row in range(height)]
+# Elementary grid functions
+def proportions(grid: Grid) -> Proportions:
+    height, width = len(grid), len(grid[0])
+    return height, width
+def copy(grid: Grid) -> Grid:
     height, width = proportions(grid)
     return [[grid[row][col] for col in range(width)] for row in range(height)]
-def identity(height, width):
-    return [[1 if col == row else 0 for col in range(width)] for row in range(height)]
+# Elementary Mask constructors:
+def falses(height: int, width:int) -> Mask:
+    return [[False for _ in range(width)] for _ in range(height)]
+def trues(height: int, width:int) -> Mask:
+    return [[True for _ in range(width)] for _ in range(height)]
+#endregion
+
+#region Grid functors
+def map_grid_colored(grid: GridColored, f: Callable[[int], int]) -> GridColored:
+    height, width = proportions(grid)
+    return [[f(grid[row][col]) for col in range(width)] for row in range(height)]
+
+def map_mask(mask: Mask, f: Callable[[bool], bool]) -> Mask:
+    height, width = proportions(mask)
+    return [[f(mask[row][col]) for col in range(width)] for row in range(height)]
+#endregion
+
+# Grid <-> Points functors and their own helper functions
+# As Points is only construtced from Grid, it has no separate constructor
+def grid_to_points(grid: GridColored) -> Points:
+    height, width = proportions(grid)
+    return set([(row, col, grid[row][col]) for col in range(width) for row in range(height)])
+
+def populate_grid_colored(grid: GridColored, points: Points) -> None:
+    try:
+        for row, col, val in points:
+            grid[row][col] = val
+    except IndexError as e:
+        raise ValueError("The given list of points do not fit within the grid")
+def proportions_points(points: Points) -> Proportions:
+    rows, cols, _ = zip(*points)
+
+    # Check for invalid values
+    if any( row < 0 for row in rows) or any( col < 0 for col in cols):
+        raise ValueError('Some points have negative rows or cols')
+
+    # Get the proportions of the grid, beware of the off-by-one error
+    height = max(rows) + 1
+    width = max(cols) + 1
+    return (height, width)
+
+def proportions_coords(coords: Coords) -> Proportions:
+    rows, cols = zip(*coords)
+
+    # Check for invalid values
+    if any( row < 0 for row in rows) or any( col < 0 for col in cols):
+        raise ValueError('Some points have negative rows or cols')
+
+    # Get the proportions of the grid, beware of the off-by-one error
+    height = max(rows) + 1
+    width = max(cols) + 1
+    return (height, width)
+
+def points_to_grid_colored(points: Points, height: Optional[int] = None, width: Optional[int] = None) -> GridColored:
+    """
+    Fit the points either in a given grid size, or in the smallest grid possible.
+    """
+    rows, cols, vals = zip(*points)
+
+    # Check for invalid values
+    if any( row < 0 for row in rows) or any( col < 0 for col in cols):
+        raise ValueError('Some points have negative rows or cols')
+
+    if not all( 0 <= val < 9 for val in vals ):
+        raise ValueError('Some points have a color outside the [0, 9] range')
+
+    # Get the proportions of the grid, beware of the off-by-one error
+    nheight = max(rows) + 1
+    nwidth = max(cols) + 1
+
+    match (height, width):
+        case None, None:
+            height, width = nheight, nwidth
+        case None, _:
+            if width < nwidth:
+                raise ValueError(f"Given width: {width} is too small, it should be at least: {nwidth}")
+            height = nheight
+        case _, None:
+            if height < nheight:
+                raise ValueError(f"Given height: {height} is too small, it should be at least: {nheight}")
+            width = nwidth
+        case _, _:
+            if width < nwidth:
+                raise ValueError(f"Given width: {width} is too small, it should be at least: {nwidth}")
+            if height < nheight:
+                raise ValueError(f"Given height: {height} is too small, it should be at least: {nheight}")
+
+    # Constructing the scaffold, and filling it with the extracted points
+    grid = zeros(height, width)
+    populate_grid_colored(grid, points)
+
+    return grid
+
+#region Box basics
+# Box constructors
+def points_to_box(points: Points) -> Box:
+    rows, cols , _ = zip(*points)
+    row_min, row_max = min(rows), max(rows)
+    col_min, col_max = min(cols), max(cols)
+    return (row_min, col_min),  (row_max, col_max)
+
+def grid_to_box(grid: Grid) -> Box:
+    return proportions_to_box(proportions(grid))
+def proportions_to_box(prop: Proportions, corner_top_right: Coord = (0, 0)):
+    row_min, col_min = corner_top_right
+    height, width = prop
+    return (row_min, col_min), (row_min + height-1, col_min + width-1)
+def box_to_proportions(box: Box):
+    (row_min, col_min), (row_max, col_max) = box
+    return (row_max - row_min + 1, col_max - col_min + 1)
+
+
 
 # indice work
 def get_indices(height, width, bit, pos):
@@ -252,12 +320,6 @@ def set_val(grid, indice_ls, val=1):
     for i, j in indice_ls:
         grid[i][j] = 1
 # Simple perators on grids
-def proportions(grid):
-    height, width = len(grid), len(grid[0])
-    return height, width
-def prop_box(box):
-    (row1, col1), (row2, col2) = box
-    return (row2 - row1, col2 - col1)
 
 def extract(grid, box):
     if box == None:
@@ -293,6 +355,36 @@ def create_centered_padded(grid, new_height, new_width):
             grid_new[row + pad_top][col + pad_left] = grid[row][col]
     return grid_new
 
+# Distance in grids represented as List[List[int]]
+def distance_jaccard_grid(grid1: Grid, grid2: Grid):
+    points1, points2 = grid_to_points(grid1), grid_to_points(grid2)
+    return distance_jaccard(points1, points2)
+
+def distance_jaccard_optimal_grid(grid1: Grid, grid2: Grid):
+    return distance_jaccard_optimal(grid_to_points(grid1), grid_to_points(grid2))
+# Distances in grids represented as Points
+def distance_jaccard(points1: Points, points2: Points) -> float:
+    intersection = len(points1 & points2)
+    union = len(points1 | points2)
+    return 1 - intersection / union if union else 0
+
+def distance_jaccard_optimal(points1: Points, points2: Points) -> float:
+    min_distance = float('inf')
+
+    # Founding the bounding
+    _, (row_max1, col_max1) = points_to_box(points1)
+    _, (row_max2, col_max2) = points_to_box(points2)
+
+    # Sliding grid2 over grid1
+    for drow in range(-row_max2, row_max1+1):
+        for dcol in range(-col_max2, col_max1+1):
+            # Shift grid2
+            shifted_points2 = {(row+drow, col+dcol, val) for row, col, val in points2}
+            distance = distance_jaccard(points1, shifted_points2)
+            min_distance = min(min_distance, distance)
+
+    return min_distance
+
 def mask_colors(grid, mask):
     color_set = set()
     height_grid, width_grid = proportions(grid)
@@ -308,15 +400,76 @@ def mask_colors(grid, mask):
                 color_set.add(grid[row][col])
     return color_set
 
-def colors_extract(grid):
+def mask_to_coords(mask: Mask) -> Coords:
+    height, width = proportions(mask)
+    return set([(row, col) for row in range(height) for col in range(width) if mask[row][col]])
+
+def populate_mask(mask: Mask, coords: Coords) -> None:
+    try:
+        for row, col in coords:
+            mask[row][col] = True
+    except IndexError as e:
+        raise ValueError("The given list of points do not fit within the grid")
+def coords_to_mask(coords: Coords, height: Optional[int] = None, width: Optional[int] = None) -> Mask:
+    nheight, nwidth = proportions_coords(coords)
+
+    match (height, width):
+        case None, None:
+            height, width = nheight, nwidth
+        case None, _:
+            if width < nwidth:
+                raise ValueError(f"Given width: {width} is too small, it should be at least: {nwidth}")
+            height = nheight
+        case _, None:
+            if height < nheight:
+                raise ValueError(f"Given height: {height} is too small, it should be at least: {nheight}")
+            width = nwidth
+        case _, _:
+            if width < nwidth:
+                raise ValueError(f"Given width: {width} is too small, it should be at least: {nwidth}")
+            if height < nheight:
+                raise ValueError(f"Given height: {height} is too small, it should be at least: {nheight}")
+
+    # Constructing the scaffold, and filling it with the extracted points
+    mask = falses(height, width)
+    populate_mask(mask, coords)
+
+    return mask
+
+def mask_to_grid(mask: Mask, color_map: Tuple[Color, Color] = (1, 0)) -> Grid:
+    """
+    Returns the first color if Truen the second if false
+    """
+    height, width = proportions(mask)
+    return [[color_map[0] if mask[row][col] else color_map[1] for col in range(width)] for row in range(height)]
+
+def grid_to_color_coords(grid: Grid) -> Dict[Color, Coords]:
     height, width = proportions(grid)
-    colors_unique = set()
-    for row in range(height):
-        for col in range(width):
-            colors_unique.add(grid[row][col])
+    colors = set([grid[row][col] for row in range(height) for col in range(width)])
+    colors_coords = {}
+    for color in colors:
+        color_coords = set()
+        for row in range(height):
+            for col in range(width):
+                if grid[row][col] == color:
+                    color_coords.add((row, col))
+        colors_coords[color] = color_coords
 
-    return colors_unique
+    return colors_coords
+def points_to_color_coords(points: Points) -> Dict[Color, Coords]:
+    _, _, colors = zip(*points)
+    return {color: {(row, col) for row, col, value in points if value == color} for color in colors}
 
+def ncolors_coords(colors_coords, min_n=2, max_n=10):
+    colors = list(colors_coords.keys())
+    return {
+            frozenset(combo): set.union(*(colors_coords[c] for c in combo))
+            for n in range(min_n, min(max_n, len(colors)) + 1)
+            for combo in combinations(colors, n)
+        }
+
+def coords_to_points(coords: Coords, color: Color = 1):
+    return set([(row, col, color) for row, col in coords])
 
 def filter_by_color(grid, color):
     height, width = proportions(grid)
@@ -331,7 +484,7 @@ def filter_by_color(grid, color):
 
 
 
-def split_by_color(grid):
+def split_by_color_deprecated(grid):
     """Create for each color a mask, i.e a binary map of the grid"""
     grids = {}
     for color in range(10):
@@ -339,29 +492,6 @@ def split_by_color(grid):
     return grids
 
 ## Display
-def print_dict(dictionary):
-    def get_string(val, shift_amount=0):
-        string = ""
-        shift = '\t' * shift_amount
-
-        if isinstance(val, list):
-            string += "\n"
-            for el in val:
-                if isinstance(el, dict):
-                    string += shift + get_string(el, shift_amount+1) + "\n"
-                else:
-                    string += shift + str(el) + "\n"
-        if isinstance(val, dict):
-            for key, value in val.items():
-                if isinstance(value, dict):
-                    string_row = shift + "- "  + str(key) + "\n"
-                    string_row += get_string(value, shift_amount+1)
-                    string += string_row
-                else:
-                    string += shift + key + ":" + get_string(value) + "\n"
-        return string
-    print(get_string(dictionary))
-
 def print_colored_grid(grid):
     height = len(grid)
     width = len(grid[0])
@@ -399,123 +529,6 @@ def printf_binary_grid(grid):
     reset = '\033[0m'
     for row in grid:
         print(' '.join(f'{bold}1{reset}' if cell else '0' for cell in row))
-
-## Serialization
-def extract_serialized_elements(chain_code):
-    start, code = chain_code.split(':') if ':' in chain_code else (chain_code, "")
-    start_row, start_col = None, None if start == "" else map(int, start.split(","))
-    return (start_row, start_col), code
-
-def serialize(mask_connected, chebyshev=True):
-    """
-    Serialize a connected component into a Freeman Chain Code representation.
-
-    Args:
-        mask_connected (List[List[int]]): 2D binary mask representing the connected component.
-        chebyshev (bool): If True, use 8-connectivity; otherwise, use 4-connectivity.
-
-        Returns:
-        str: Freeman Chain Code representation of the connected component.
-
-    Thus the encoding use to represent the directions are:
-    4-connectivity:
-          0
-        1 • 3
-          2
-
-    8-connectivity:
-        1 0 7
-        2 • 6
-        3 4 5
-    """
-    height, width = proportions(mask_connected)
-    visited = zeros(height, width)
-    moves = "0123" if not chebyshev else "01234567"
-    #directions = directions_chebyshev if chebyshev else directions_manhattan
-    directions = {
-            '0': (-1, 0), '1': (0, -1), '2': (1, 0), '3': (0, 1),
-            '4': (1, -1), '5': (1, 1), '6': (-1, 1), '7': (-1, -1)
-    }
-
-    def find_start():
-        return next(
-            ((row, col) for row in range(height) for col in range(width)
-             if mask_connected[row][col] == 1),
-            None
-        )
-
-
-    def is_valid(row, col):
-           return (0 <= row < height and 0 <= col < width and
-                   mask_connected[row][col] == 1 and visited[row][col] == 0)
-
-    def get_inverse_move(move):
-        return str((int(move) + (4 if chebyshev else 2)) % len(moves))
-
-    def dfs(row, col):
-        visited[row][col] = 1
-        paths = []
-        for move in moves:
-            nrow, ncol = row + directions[move][0], col + directions[move][1]
-            if is_valid(nrow, ncol):
-                path, backtrack = dfs(nrow, ncol)
-                paths.append(([move] + path, backtrack + [get_inverse_move(move)]))
-
-        if not paths:
-            return [], []
-
-        paths.sort(key=lambda x: len(x[1]), reverse=True)
-        main_path, main_backtrack = paths[0]
-        other_paths = [path + backtrack for path, backtrack in paths[1:]]
-
-        return sum(other_paths, []) + main_path, main_backtrack
-
-    start = find_start()
-    if not start:
-        return ""
-
-    encoding, _ = dfs(*start)
-    return f"{start[0]},{start[1]}:{''.join(encoding)}"
-
-def unserialize(mask, chain_code, chebyshev=True):
-    (start_row, start_col), code = extract_serialized_elements(chain_code)
-
-    directions = {
-            '0': (-1, 0), '1': (0, -1), '2': (1, 0), '3': (0, 1),
-            '4': (1, -1), '5': (1, 1), '6': (-1, 1), '7': (-1, -1)
-    }
-    curr_row, curr_col = start_row, start_col
-    mask[curr_row][curr_col] = 1
-    for move in code:
-        drow, dcol = directions[move]
-        curr_row += drow
-        curr_col += dcol
-        mask[curr_row][curr_col] = 1
-def code_compression(code):
-    if not code:
-        return '', ''
-
-    morphology = code[0]
-    coordinates = ''
-    count = 1
-
-    for i in range(1, len(code)):
-        if code[i] == code[i-1]:
-            count += 1
-        else:
-            coordinates += str(count)
-            morphology += code[i]
-            count = 1
-
-    coordinates += str(count)
-    return morphology, coordinates
-
-def uncompress(morphology, coordinates):
-    code = ''
-    for i, direction in enumerate(morphology):
-        code += direction * int(coordinates[i])
-
-    return code
 ## Data
 def read_path(path):
     with open(os.path.join(DATA, path), 'r') as file:
@@ -534,3 +547,9 @@ def get_all():
         with open(path, 'r') as file:
             data.append(json.load(file))
     return data, uuids
+
+def load(task = "2dc579da.json"):
+    data = read_path('training/' + task)
+    inputs = [el['input'] for el in data['train']]
+    outputs = [el['output'] for el in data['train']]
+    return inputs, outputs

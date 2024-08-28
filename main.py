@@ -236,7 +236,7 @@ def print_lattice(grid, lattice):
         for el in lattice['successors']:
             print_lattice(grid, el)
 
-def load(task = "2dc579da.json"):
+def load1(task = "2dc579da.json"):
     data = read_path('training/' + task)
     inputs = [el['input'] for el in data['train']]
     outputs = [el['output'] for el in data['train']]
@@ -461,7 +461,7 @@ def test_functionalized():
     print(f"Root: {fun == res}")
 
 def test_update_asts():
-    inputs, outputs, tree = load()
+    inputs, outputs = load()
     lattices = [input_to_lattice(input) for input in inputs]
     codes = [l.codes for l in lattices]
 

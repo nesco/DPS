@@ -159,13 +159,13 @@ refs1 = lattice1.refs
 refs2 = lattice2.refs
 nrefs, mappings = fuse_refs([refs1, refs2])
 ncodes2 = update_asts(lattice2.codes, nrefs, mappings[1])
-align_lattice1([lattice1, lattice2])
+symbolize_together([lattice1, lattice2])
 
 [0]
 ####
 inputs, outputs, tree = load()
 lattices = [input_to_lattice(input) for input in inputs]
-align_lattice1(lattices)
+symbolize_together(lattices)
 lattice1 = lattices[0]
 unsymb = unsymbolize(lattice1.codes, lattice1.refs)
 lattice1.nodes[7]['value']
@@ -189,7 +189,7 @@ a[r]
 ####
 inputs, outputs, tree = load()
 lattices = [input_to_lattice(input) for input in inputs]
-align_lattice1(lattices)
+symbolize_together(lattices)
 lattice1 = lattices[0]
 unsymb = unsymbolize(lattice1.codes, lattice1.refs)
 lattice1.nodes[7]['value']
@@ -207,7 +207,7 @@ animate_grid(construction, delay=0.3)
 ###
 inputs, outputs, tree = load()
 lattices = [input_to_lattice(input) for input in inputs]
-align_lattice1(lattices)
+symbolize_together(lattices)
 for lattice in lattices:
     lattice.update_unions()
 
@@ -268,7 +268,7 @@ if len(starts)>=1:
 ###
 inputs, outputs, tree = load()
 lattices = [input_to_lattice(input) for input in inputs]
-#align_lattice1(lattices)
+#symbolize_together(lattices)
 lattice1 = lattices[0]
 g = lattice_to_grid(lattice1)
 print_colored_grid(g)
@@ -308,7 +308,7 @@ u = unsymbolize(lattice2.codes, lattice2.refs)
 print(u[6])
 
 
-align_lattice1(lattices)
+symbolize_together(lattices)
 lattice1 = lattices[0]
 lattice2 = lattices[1]
 lattice3 = lattices[2]
@@ -332,7 +332,7 @@ u = unsymbolize(lattice2.codes, lattice2.refs)
 #print(u[6])
 
 
-align_lattice1(lattices)
+symbolize_together(lattices)
 lattice1 = lattices[0]
 lattice2 = lattices[1]
 lattice3 = lattices[2]
@@ -355,7 +355,7 @@ for i, l in enumerate(codes):
 
 inputs, outputs, tree = load()
 lattices = [input_to_lattice(input) for input in inputs]
-align_lattice1(lattices)
+symbolize_together(lattices)
 for lattice in lattices:
     grid = lattice_to_grid(lattice)
     print_colored_grid(grid)
@@ -398,7 +398,7 @@ lattice1 = lattices[0]
 inputs, outputs, tree = load()
 l_inputs = [input_to_lattice(input) for input in inputs]
 l_outputs = [input_to_lattice(output) for output in outputs]
-align_lattice1(l_inputs)
+symbolize_together(l_inputs)
 l_input=l_inputs[0]
 l_output=l_outputs[0]
 
@@ -415,7 +415,7 @@ for l in l_input:
     print(l.unions[l.supremum])
 
 l = l_inputs+l_outputs
-align_lattice1(l)
+symbolize_together(l)
 
 # Program search:
 for i in range(3):
@@ -437,7 +437,7 @@ inputs, outputs, tree = load()
 l_inputs = [input_to_lattice(input) for input in inputs]
 l_outputs = [input_to_lattice(output) for output in outputs]
 l = l_inputs+l_outputs
-align_lattice1(l)
+symbolize_together(l)
 
 for latt in l:
     latt.update_unions()
@@ -488,25 +488,7 @@ Branch([Moves('1'), Repeat(Moves('2'), 3), Moves('3'), Moves('4')]))
 
 
 ####
-inputs, outputs, tree = load()
-l_inputs = [input_to_lattice(input) for input in inputs]
-l_outputs = [input_to_lattice(output) for output in outputs]
-l = l_inputs+l_outputs
-#align_lattice2(l)
-align_lattice1(l)
-
-for i, la in enumerate(l):
-    print(f"Lattice n°{i}:")
-    la.update_unions()
-    for code in la.unions[la.supremum].codes:
-        print(code)
-
-inputs, outputs, tree = load()
-l_inputs = [input_to_lattice(input) for input in inputs]
-l_outputs = [input_to_lattice(output) for output in outputs]
-l = l_inputs+l_outputs
-#align_lattice2(l)
-align_lattice1(l)
+symbolize_together
 
 for i, la in enumerate(l):
     print(f"Lattice n°{i}:")
@@ -521,3 +503,40 @@ for i, la in enumerate(l):
 
 [cat for cat in l if cat == "else"]
 len([cat for cat in l if cat == "else"])
+
+######
+inputs, outputs = load()
+l_inputs = [input_to_lattice(input) for input in inputs]
+l_outputs = [input_to_lattice(output) for output in outputs]
+l = l_inputs+l_outputs
+symbolize_together(l)
+
+
+for i in range(3):
+    print(f'Problem n°{i}')
+    out = l[i+3].nodes[l[i+3].supremum]['value']
+    dist = [(j, distance(inp['value'], out, l[i].refs)) for j, inp in enumerate(l[i].nodes)]
+    dist_min = min(dist, key=lambda x: x[1])
+    print(f"Min: {dist_min}")
+
+l[2].refs
+
+###
+code = l[2].unions[l[2].supremum]
+code = unsymbolize([code], l[2].refs)[0]
+
+
+###
+inputs, outputs = load()
+l_inputs = [input_to_lattice(input) for input in inputs]
+l_outputs = [input_to_lattice(output) for output in outputs]
+l = l_inputs+l_outputs
+symbolize_together(l)
+
+for i, la in enumerate(l):
+    print(f"Lattice n°{i}:")
+    grid = lattice_to_grid(la)
+    print_colored_grid(grid)
+
+###
+set([1, 2]) in set([1, 2, 3])
