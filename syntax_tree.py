@@ -453,6 +453,38 @@ class SymbolicNode(Node):
         return SymbolicNode(self.index, self.param.copy() if isinstance(self.param, ASTNode) else self.param)
 
 @dataclass
+class BiSymbolicNode(Node):
+    """
+    Test to enable products, lots of things are product, particularly squares
+    """
+    index: int
+    param1: Any
+    param2: Any
+
+    def __len__(self) -> int:
+        len_param1 = len(self.param1) if isinstance(self.param1, ASTNode) else 1 #int == -1
+        len_param2 = len(self.param2) if isinstance(self.param2, ASTNode) else 1 #int == -1
+        return  super().__len__() + 3 + len_param1 + len_param2
+
+    def __str__(self) -> str:
+        return f" s_{self.index}({self.param1}, {self.param2}) "
+    def __hash__(self) -> int:
+        return hash(self.__repr__())
+
+    def __reverse(self) -> 'ASTNode':
+        param1 = self.param1
+        if isinstance(param1, ASTNode):
+            param1 = param1.reverse()
+        param2 = self.param2
+        if isinstance(param1, ASTNode):
+            param2 = param2.reverse()
+        return BiSymbolicNode(self.index, param1, param2)
+
+    def copy(self):
+        return BiSymbolicNode(self.index, self.param1.copy() if isinstance(self.param1, ASTNode) else self.param1 \
+            , self.param2.copy() if isinstance(self.param2, ASTNode) else self.param2)
+
+@dataclass
 class Root(Node):
     """
     Node representing a path root. Note that the branches here can possibly lead to overlapping paths
@@ -551,6 +583,7 @@ class UnionNode(Node):
     def __hash__(self):
         return hash(self.__repr__())
 
+############## TEST : NEW FREEMAN STRUCTURE ###########
 @dataclass
 class FreemanNode():
     path: str
@@ -612,7 +645,7 @@ class RepeatNode():
         return self.count * len(self.node) if self.count > 0 else -self.count*len(self.node)
 
 CompressedFreeman = Union[RepeatNode, CompressedNode]
-
+############
 ## Types
 ASTNode = Union[Root, Moves, NodeList, Branch, Repeat, SymbolicNode, Variable, Node]
 ASTFunctor = Callable[[ASTNode], Optional[ASTNode]]
@@ -948,6 +981,8 @@ def get_symbols(ast):
     match ast:
         case SymbolicNode(i, n):
             return get_symbols(n) + [i]
+        case BiSymbolicNode(i, n1, n2):
+            return get_symbols(n1) + get_symbols(n2) + [i]
         case Repeat(n, _) | Root(_, _, n):
             return get_symbols(n)
         case Branch(sequences=nls) | NodeList(nodes=nls):
@@ -982,7 +1017,7 @@ def ast_map(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
                     print(f"Node: {n}")
             return NotImplemented
         case UnionNode(codes = codes):
-            ncodes = [ncode for n in codes if (ncode := ast_map(f, n)) is not None]
+            ncodes = set([ncode for n in codes if (ncode := ast_map(f, n)) is not None])
             return f(UnionNode(ncodes))
         case Repeat(node=n, count=c):
             nnode = ast_map(f, n)
@@ -993,6 +1028,17 @@ def ast_map(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
         case SymbolicNode(index=i, param=p) if isinstance(p, ASTNode):
             nnode = ast_map(f, p)
             return f(SymbolicNode(i, nnode))
+        case BiSymbolicNode(index=i, param1=p1, param2=p2) if isinstance(p1, ASTNode) \
+        and isinstance(p2, ASTNode):
+            nnode1 = ast_map(f, p1)
+            nnode2 = ast_map(f, p2)
+            return f(BiSymbolicNode(i, nnode1, nnode2))
+        case BiSymbolicNode(index=i, param1=p1, param2=p2) if isinstance(p1, ASTNode):
+            nnode1 = ast_map(f, p1)
+            return f(BiSymbolicNode(i, nnode1, p2))
+        case BiSymbolicNode(index=i, param1=p1, param2=p2) if isinstance(p1, ASTNode):
+            nnode2 = ast_map(f, p2)
+            return f(BiSymbolicNode(i, p1, nnode2))
         case _:
             return f(node)
 
@@ -1075,7 +1121,7 @@ def factorize_nodelist(ast_node):
 
     return NodeList(nodes=nnodes)
 
-def functionalized(node):
+def functionalized1(node):
     """
     Return a functionalized version of the node and a parameter.
     As the parameter count of Repeat is not a ASTNode, it's functionalized version
@@ -1107,11 +1153,44 @@ def functionalized(node):
             return functions
         case _:
             return []
+
+def functionalized(node):
+    """
+    Return a functionalized version of the node and a parameter.
+    As the parameter count of Repeat is not a ASTNode, it's functionalized version
+    is 0 to mark it needs to be replaced, -index once replaced
+    """
+    match node:
+        case Branch(sequences=sequences):
+            max_sequence = max(sequences, key=len)
+            nsequences = [seq if seq != max_sequence else Variable(0) for seq in sequences]
+            return [(Branch(nsequences), max_sequence)]
+        case NodeList(nodes=nodes):
+            max_node = max(nodes, key=len)
+            nnodes = [nnode if nnode != max_node else Variable(0)for nnode in nodes]
+            return [(NodeList(nnodes), max_node)]
+        case Repeat(node=nnode, count=count):
+            functions = []
+            if not isinstance(nnode, Variable) and not isinstance(count, Variable):
+                functions = [(Repeat(Variable(0), count), nnode), (Repeat(nnode, Variable(0)), count)]
+            return functions
+        case Root(start=s, colors=c, node=n):
+            functions = []
+            if not isinstance(s, Variable) and not isinstance(n, Variable) and not isinstance(c, Variable):
+                functions = [
+                    (Root(Variable(0), c, n), s),
+                    (Root(s, c, Variable(0)), n)
+                ]
+                if len(c) == 1:
+                    functions.append((Root(s, Variable(0), n), c))
+            return functions
+        case _:
+            return []
 def copy_ast(node):
     return ast_map(lambda node: node, node)
 ### Other helper functions
 ### Main functions
-def update_symbol(node, nindex):
+def update_symbol_deprecated(node, nindex):
     match node:
         case Repeat(node=n, count=Variable(index=h)):
             return Repeat(n, count=Variable(nindex)) # count is -(index+1) because 0 is code word for "to replace"
@@ -1127,6 +1206,8 @@ def update_node_i_by_j(node: ASTNode, i, j):
     match node:
         case SymbolicNode(index, param) if index == i:
             return SymbolicNode(j, param)
+        case BiSymbolicNode(index, param1, param2) if index == i:
+            return BiSymbolicNode(j, param1, param2)
         case _:
             return node
 
@@ -1251,7 +1332,7 @@ def symbolize_next(ast_ls, refs):
         index = len(refs) # we are adding a new symbol at the end
 
         def precize_symb(node):
-            return update_symbol(node, index)#, -1) #Var(-1) ande Repeat(_, 0) marks unupdated node
+            return node#update_symbol(node, 0)#index)#, -1) #Var(-1) ande Repeat(_, 0) marks unupdated node
 
         symb_precized = ast_map(precize_symb, symb)
         refs.append(symb_precized)
@@ -1370,7 +1451,7 @@ def resolve_symbolic(node, refs):
             template = refs[index]
             # First resolve param:
             #param = ast_map(resolve_symbolic_node, param)
-            replace_param = lambda node: replace_parameter(node, param, index)
+            replace_param = lambda node: replace_parameter(node, param, 0)#index)
             nnode = ast_map(replace_param, template)
             if DEBUG_RESOLVE:
                 print(f"New node: {nnode}")

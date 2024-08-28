@@ -557,3 +557,6 @@ node1 = encode_connected_component(mask, start, is_valid, method="dfs")
 node2 = encode_connected_component(mask, start, is_valid, method="bfs")
 encode_rl(node1)
 encode_rl(node2)
+
+
+unsymbolize([u], la.refs)[0]
