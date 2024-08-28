@@ -21,9 +21,10 @@ DEBUG = False
 DEBUG_ASTMAP = False
 
 from dataclasses import dataclass, asdict
+from collections import deque
 from typing import Any, List, Union, Optional, Iterator, Callable, Set, Tuple, Dict
 from helpers import DIRECTIONS, MOVES, argmin_by_len, extract, zeros, points_to_grid_colored
-from helpers import available_transitions, copy, Coord, Trans, Point, Grid, Points
+from helpers import available_transitions, copy, Coord, Trans, Point, Grid, Points, Coords
 
 from time import sleep
 
@@ -550,13 +551,242 @@ class UnionNode(Node):
     def __hash__(self):
         return hash(self.__repr__())
 
-## Types
+@dataclass
+class FreemanNode():
+    path: str
+    branches: frozenset['FreemanNode'] # Branches are always separate
 
+    def __len__(self) -> int:
+        return 3*len(self.path) + sum([len(node) for node in self.branches])
+
+    def __eq__(self, other) -> bool:
+        if isinstance(other, 'FreemanNode'):
+            return self.path == other.path and self.branches == other.branches
+        return False
+
+    def __hash__(self) -> int:
+        return hash(self.__repr__())
+
+Segment = Tuple[str, int]
+
+@dataclass
+class PatternNode():
+    patterns: List[Union['PatternNode', Segment]]
+    count: int
+
+    def __len__(self) -> int:
+        return 3 + sum(len(pattern) for pattern in self.patterns)
+
+    def __eq__(self, other) -> bool:
+        return self.count == other.count and self.patterns == other.patterns
+
+@dataclass
+class CompressedNode():
+    path: List[PatternNode]
+    branches: Set['CompressedFreeman']
+
+    def __len__(self):
+        # 3 bits for the move
+        # 4 for the count (16 rep max?)
+        return sum([3*4 for _ in self.path]) + sum([len(node) for node in self.branches])
+
+    def __hash__(self) -> int:
+        return hash(self.__repr__())
+
+@dataclass
+class RepeatNode():
+    node: 'CompressedFreeman'
+    count: int
+
+    def __eq__(self, other) -> bool:
+        match other:
+            case RepeatNode(node, count):
+                return self.node == node and self.count == count
+            case CompressedNode():
+                return False
+        return False
+
+    def __iter__(self):
+        pass
+    def __len__(self):
+        return self.count * len(self.node) if self.count > 0 else -self.count*len(self.node)
+
+CompressedFreeman = Union[RepeatNode, CompressedNode]
+
+## Types
 ASTNode = Union[Root, Moves, NodeList, Branch, Repeat, SymbolicNode, Variable, Node]
 ASTFunctor = Callable[[ASTNode], Optional[ASTNode]]
 ASTTerminal = Callable[[ASTNode, Optional[bool]], None]
 
 #### Functions required to construct ASTs
+
+def encode_connected_component(coords: Coords, start: Coord, is_valid: Callable[[Coord], bool], method="dfs") -> FreemanNode:
+    seen = set()
+
+    def transitionsTower(coordinates: Coord) -> List[Trans]:
+        return available_transitions(is_valid, coordinates, MOVES[:4])
+
+    def transitionsBishop(coordinates: Coord) -> List[Trans]:
+        return available_transitions(is_valid, coordinates, MOVES[4:])
+
+    def concatenate(move, node):
+        if not node.branches:
+            return FreemanNode(move + node.path, frozenset())
+        elif len(node.branches) == 1:
+            child = next(iter(node.branches))
+            return FreemanNode(move + node.path + child.path, child.branches)
+        else:
+            return FreemanNode(move + node.path, node.branches)
+
+    def bfs_traversal(start: Coord) -> FreemanNode:
+        queue = deque([(start)])
+        to_process = []
+        seen.add(start)
+        branches = set()
+
+        while queue:
+            coord = queue.popleft()
+            transitions = transitionsTower(coord) + transitionsBishop(coord)
+
+            for move, ncoord in transitions:
+                if ncoord not in seen:
+                    seen.add(ncoord)
+                    to_process.append((move, ncoord))
+
+        for move, ncoord in to_process:
+            branches.add(concatenate(move, bfs_traversal(ncoord)))
+        return concatenate('', FreemanNode('', frozenset(branches)))
+
+    def dfs_traversal(coord: Coord) -> FreemanNode:
+        seen.add(coord)
+        transitions = transitionsTower(coord) + transitionsBishop(coord)
+        branches = set()
+
+        for move, ncoord in transitions:
+            if ncoord not in seen:
+                nnode = concatenate(move, dfs_traversal(ncoord))
+                branches.add(nnode)
+
+        return concatenate('', FreemanNode('', frozenset(branches)))
+
+    if method == "bfs":
+        return bfs_traversal(start)
+    else:
+        return dfs_traversal(start)
+
+def compress_freeman(node: FreemanNode):
+    best_pattern, best_count, best_bit_gain, best_reverse = None, 0, 0, False
+
+def encode_rl(node: FreemanNode) -> CompressedNode:
+    path = node.path
+    segments = []
+
+    if path:
+        curr, count = path[0], 1
+
+        for i in range(1, len(path)):
+            next = path[i]
+            if curr == next:
+                count += 1
+            else:
+                segments.append((curr, count))
+                curr, count = next, 1
+
+        segments.append(PatternNode((curr, count), 1))
+
+    return CompressedNode(segments, set(encode_rl(nnode) for nnode in node.branches))
+
+def find_patterns_offset(node: Union[PatternNode, Segment], offset):
+    """
+    Find repeating node patterns of any size at the given start index,
+    including alternating patterns, given it compresses the code
+    """
+    best_pattern, best_count, best_bit_gain, best_reverse = None, 0, 0, False
+
+    path = node.patterns
+    length_pattern_max = (len(path) - offset + 1) // 2  # At least two occurrences are needed
+    for length_pattern in range(1, length_pattern_max + 1):
+        noffset = offset + length_pattern
+        pattern = path[offset:noffset]
+        for reverse in [False, True]:
+            count = 1
+            i = noffset
+            while i < len(path):
+                if i + length_pattern > len(path):
+                    break
+
+                match = True
+                for j in range(length_pattern):
+                    if reverse and count % 2 == 1:
+                        if path[offset + j] != path[i + length_pattern - 1 - j]:
+                            match = False
+                            break
+                    elif path[offset + j] != path[i + j]:
+                        match = False
+                        break
+
+                if match:
+                    count += 1
+                    i += length_pattern
+                else:
+                    break
+
+            if count > 1:
+                len_original = sum(len(node) for node in pattern) * count
+                len_compressed = len(RepeatNode(node=CompressedNode(pattern, set()), count=-count if reverse else count))
+                bit_gain = len_original - len_compressed
+                if best_bit_gain < bit_gain:
+                    best_pattern = pattern
+                    best_count = count
+                    best_bit_gain = bit_gain
+                    best_reverse = reverse
+
+    return best_pattern, best_count, best_reverse
+
+def simplify_repetitions(node: PatternNode):
+    simplified = []
+    path = node.patterns
+    i = 0
+    while i < len(path):
+        pattern, count, reverse = find_patterns_offset(path[i:], 0)
+        if pattern is None or count <= 1:
+            # No repeating pattern found, add the current move and continue
+            simplified.append(path[i])
+            i += 1
+        else:
+            if len(pattern) == 1:
+                node = pattern[0]
+            else:
+                node = Moves(''.join(m.moves for m in pattern))
+            if reverse:
+                simplified.append(Repeat(node, -count))
+            else:
+                simplified.append(Repeat(node, count))
+            i += len(pattern) * count
+
+    if len(simplified) == 1:
+        return simplified[0]
+    else:
+        result = []
+        curr = simplified[0]
+        for i in range(1, len(simplified)):
+            next_node = simplified[i]
+            if isinstance(curr, Moves) and isinstance(next_node, Moves):
+                curr = Moves(curr.moves + next_node.moves)
+            else:
+                result.append(curr)
+                curr = next_node
+        result.append(curr)
+
+        # If after concatenation we're left with a single Moves object
+        # that's identical to self, return self
+        if len(result) == 1 and isinstance(result[0], Moves) and result[0].moves == self.moves:
+            return self
+
+        return NodeList(result) if len(result) > 1 else result[0]
+
+
+#### AST
 def node_from_list(nodes: List[ASTNode]) -> Optional[ASTNode]:
     if not nodes:
         return None

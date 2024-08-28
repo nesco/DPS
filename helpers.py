@@ -286,6 +286,13 @@ def points_to_box(points: Points) -> Box:
     col_min, col_max = min(cols), max(cols)
     return (row_min, col_min),  (row_max, col_max)
 
+def coords_to_box(coords: Coords) -> Box:
+    rows, cols = zip(*coords)
+    row_min, row_max = min(rows), max(rows)
+    col_min, col_max = min(cols), max(cols)
+    return (row_min, col_min),  (row_max, col_max)
+
+
 def grid_to_box(grid: Grid) -> Box:
     return proportions_to_box(proportions(grid))
 def proportions_to_box(prop: Proportions, corner_top_right: Coord = (0, 0)):
@@ -368,8 +375,9 @@ def distance_jaccard(points1: Points, points2: Points) -> float:
     union = len(points1 | points2)
     return 1 - intersection / union if union else 0
 
-def distance_jaccard_optimal(points1: Points, points2: Points) -> float:
+def distance_jaccard_optimal(points1: Points, points2: Points) -> Tuple[float, Coord]:
     min_distance = float('inf')
+    min_shift = (0, 0)
 
     # Founding the bounding
     _, (row_max1, col_max1) = points_to_box(points1)
@@ -381,9 +389,11 @@ def distance_jaccard_optimal(points1: Points, points2: Points) -> float:
             # Shift grid2
             shifted_points2 = {(row+drow, col+dcol, val) for row, col, val in points2}
             distance = distance_jaccard(points1, shifted_points2)
-            min_distance = min(min_distance, distance)
+            if distance < min_distance:
+                min_distance = distance
+                min_shift = (drow, dcol)
 
-    return min_distance
+    return min_distance, min_shift
 
 def mask_colors(grid, mask):
     color_set = set()

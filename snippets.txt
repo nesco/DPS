@@ -433,7 +433,7 @@ for i in range(3):
     print(set(inp.codes) & set(out.codes))
 
 ###
-inputs, outputs, tree = load()
+inputs, outputs = load()
 l_inputs = [input_to_lattice(input) for input in inputs]
 l_outputs = [input_to_lattice(output) for output in outputs]
 l = l_inputs+l_outputs
@@ -540,3 +540,20 @@ for i, la in enumerate(l):
 
 ###
 set([1, 2]) in set([1, 2, 3])
+[la.supremum]
+
+#####
+inputs, outputs = load()
+input = inputs[1]
+masks = extract_masks_bicolors(input)
+component_ls = list_components(masks, proportions(input))
+mask_list = [component['mask'] for component in component_ls]
+mask = mask_list[5]
+is_valid = lambda x: valid_coordinates(*proportions(input), mask, x)
+#construct_node(start, is_valid, method)
+start = next(iter(mask), None)
+
+node1 = encode_connected_component(mask, start, is_valid, method="dfs")
+node2 = encode_connected_component(mask, start, is_valid, method="bfs")
+encode_rl(node1)
+encode_rl(node2)

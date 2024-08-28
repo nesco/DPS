@@ -9,26 +9,6 @@ from operators import *
 from syntax_tree import *
 
 
-def extract_masks_bicolors1(grid):
-    """
-    Returns a dict of all masks comprised of union of two colours
-    """
-    height, width = proportions(grid)
-    colors_unique = list(set([grid[row][col] for row in range(height) for col in range(width)]))
-    #colors_unique = list(grid_to_color_coords(grid))
-    #masks_colors = split_by_color(grid)
-    color_coords = grid_to_color_coords(grid)
-
-    masks_bicolors = {}
-    for i in range(len(colors_unique)):
-        color_i = colors_unique[i]
-        for j in range(i):
-            color_j = colors_unique[j]
-            masks_bicolors[(color_i, color_j)] = coords_to_mask(color_coords[color_i] | color_coords[color_j], height, width)
-
-        masks_bicolors[(color_i, color_i)] = coords_to_mask(color_coords[color_i], height, width)
-
-    return masks_bicolors
 
 def extract_masks_bicolors(grid):
     """
@@ -50,31 +30,6 @@ def extract_masks_bicolors(grid):
         masks_bicolors[(color_i, color_i)] = color_coords[color_i]
 
     return masks_bicolors
-def list_components1(mask_dict, chebyshev = False):
-    """
-    list_components creates a list of unique connected components extracted
-    from a dictionnary of masks.
-    The resulting list of connected components should all have distinct masks over the grid.
-
-    :param dict mask_dict: The dictionnary of masks from which to extract connected components
-    chebyshev : boolean
-        Wether to use the Chebyshev topology (8-connectivity/L_{inf}),
-        instead of the manhattan topology (4-connectivity/L_{1})
-
-    Returns
-    -------
-    component_list : list
-        The list of unique connected components extracted from `mask_dict`
-    """
-    component_list = []
-    for key in mask_dict:
-        mask = mask_dict[key]
-        masks_components_seen = [component['mask'] for component in component_list]
-        component_number, distribution, components = connected_components(mask, chebyshev=chebyshev)
-        component_list += [component for component in components.values()
-            if component['mask'] not in masks_components_seen]
-    return component_list
-
 def list_components(mask_dict: Dict[Any, Coords], proportions: Proportions, chebyshev = False):
     """
     list_components creates a list of unique connected components extracted
@@ -102,40 +57,6 @@ def list_components(mask_dict: Dict[Any, Coords], proportions: Proportions, cheb
                 components_seen.append(component)
 
     return components_seen
-
-def rank_components1(component_list):
-    mask_list = [component['mask'] for component in component_list]
-    size = len(mask_list)
-    map_contains = zeros(size, size)
-    depth_map = {}
-
-    # First a tabular representation of the "contains" relation
-    # on the connected components is created
-    for row in range(size):
-        for col in range(size):
-            map_contains[row][col] = set_contains(mask_list[row], mask_list[col])
-
-    # Then connected components are ranked by the number of other components they are in
-    map_contained = transpose(map_contains)
-    # Rising sea-level algorithm for depth
-    depth_level = 1
-    depth_map = {}
-    current_depth = [indice for indice in range(size) if sum(map_contained[indice]) == 1]
-
-    # While there is some nodes at current depth
-    while current_depth:
-        depth_map[depth_level] = current_depth
-        # removing the current node from map contained:
-        for row in range(size):
-            for col in current_depth:
-                map_contained[row][col] = 0
-
-        depth_level += 1
-        current_depth = [indice for indice in range(size) if sum(map_contained[indice]) == 1]
-
-
-    return depth_map, map_contains
-
 def rank_components(component_list):
     mask_list = [component['mask'] for component in component_list]
     size = len(mask_list)
@@ -168,135 +89,9 @@ def rank_components(component_list):
 
 
     return depth_map, map_contains
-def component_to_object1(grid, component, chebyshev = False):
-    color_set = mask_colors(grid, component['mask'])
-    _, _, component_partition = partition(component['mask'], chebyshev=chebyshev)
-    euler = euler_characteristic(component_partition)
-    rsymmetries = rotational_symmetries(component['mask'], component['box'])
-    component['colors'] = color_set
-    component['euler'] = euler
-    component['rsymmetries'] = rsymmetries
-
 def component_to_object(grid, component, chebyshev = False):
     color_set = set([grid[row][col] for row, col in component['mask']])
     component['colors'] = color_set
-
-def construct_object_lattice1(grid, chebyshev=False): #deprecated
-    height, width = proportions(grid)
-    masks_bicolors = extract_masks_bicolors(grid)
-    #components = {'manhattan': None, 'chebyshev': None}
-    # objects = {mask, boundaries, children}
-
-    components = list_components(masks_bicolors, chebyshev=chebyshev)
-    # Remove a grid object if it already exist for bi colored grid:
-    components = [component for component in components if cardinal(component['mask']) < height*width]
-
-    depth_map, map_contains = rank_components(components)
-
-    # Remove a grid object if it already exist for bi colored grid:
-    grid_mask = ones(height, width)
-    grid_box = ((0, 0), (height-1, width-1))
-    grid_object = {'mask': grid_mask, 'box': grid_box}
-
-    nodes = []
-    for i, component in enumerate(components):
-        component_to_object(grid, component)
-        nodes.append({'value': component, 'successors': [], 'predecessors': []})
-
-    supremum = {'value': grid_object, 'successors': [], 'predecessors': []}
-    supremum['successors'] = [(indice, nodes[indice]) for indice in depth_map[1]]
-    grid_object['colors'] = mask_colors(grid, grid_mask)
-    #grid_object['euler'] = sum([node['value']['euler'] for _, node in supremum['successors']
-    #    if node['value'] is not None])
-
-
-    def complete_tree(children, depth):
-        if depth not in depth_map:
-            return None
-
-        indices = depth_map[depth]
-        for indice, node in children:
-            # children are nodes of next rank included in it
-            children_indice = [(i, nodes[i]) for i in indices if map_contains[indice][i]]
-            node['successors'] = children_indice
-            for _, node_successor in children_indice:
-                node_successor['predecessors'] += node
-            complete_tree(children_indice, depth+1)
-
-        return children
-    complete_tree(supremum['successors'], 2)
-
-    def clean_of_indice(tree):
-        if tree['successors'] is not None:
-            for _, child in tree['successors']:
-                clean_of_indice(child)
-            tree['successors'] = [child for _, child in tree['successors']]
-
-
-    clean_of_indice(supremum)
-    return supremum
-
-def construct_object_lattice(grid, chebyshev=False): #deprecated
-    height, width = proportions(grid)
-    masks_bicolors = extract_masks_bicolors(grid)
-    components = list_components(masks_bicolors, proportions(grid), chebyshev=chebyshev)
-    components = [component for component in components if len(component['mask']) < height*width]
-
-    depth_map, map_contains = rank_components(components)
-
-    # Remove a grid object if it already exist for bi colored grid:
-    grid_mask = ones(height, width)
-    grid_box = ((0, 0), (height-1, width-1))
-    grid_object = {'mask': grid_mask, 'box': grid_box}
-
-    nodes = []
-    for i, component in enumerate(components):
-        component_to_object(grid, component)
-        nodes.append({'value': component, 'successors': [], 'predecessors': []})
-
-    supremum = {'value': grid_object, 'successors': [], 'predecessors': []}
-    supremum['successors'] = [(indice, nodes[indice]) for indice in depth_map[1]]
-    grid_object['colors'] = mask_colors(grid, grid_mask)
-
-
-    def complete_tree(children, depth):
-        if depth not in depth_map:
-            return None
-
-        indices = depth_map[depth]
-        for indice, node in children:
-            # children are nodes of next rank included in it
-            children_indice = [(i, nodes[i]) for i in indices if map_contains[indice][i]]
-            node['successors'] = children_indice
-            for _, node_successor in children_indice:
-                node_successor['predecessors'] += node
-            complete_tree(children_indice, depth+1)
-
-        return children
-    complete_tree(supremum['successors'], 2)
-
-    def clean_of_indice(tree):
-        if tree['successors'] is not None:
-            for _, child in tree['successors']:
-                clean_of_indice(child)
-            tree['successors'] = [child for _, child in tree['successors']]
-
-
-    clean_of_indice(supremum)
-    return supremum
-def construct_lattice_ends1(grid):
-    height, width = proportions(grid)
-    mask_supremum = ones(height, width)
-    mask_infinmum = zeros(height, width)
-
-    box_supremum = ((0, 0), (height-1, width-1))
-    #colors_supremum = mask_colors(grid, mask_supremum)
-
-    component_supremum = {'mask': mask_supremum, 'box': box_supremum}#, 'euler':None, 'colors': colors_supremum}
-    component_infimum = {'mask': mask_infinmum, 'box': None}#, 'euler':1, 'colors': None}
-
-    return component_supremum, component_infimum
-
 def construct_lattice_ends(grid):
     height, width = proportions(grid)
     mask_supremum = set([(row, col) for row in range(height) for col in range(width)])
@@ -351,106 +146,6 @@ def get_potential_starting_points(coordinates: List[Coord]) -> List[Coord]:
     return list(dict.fromkeys(starts))
 
 class Lattice():
-
-    def __init__1(self, grid, mask_dict):
-        self.grid = grid
-        self.height, self.width = proportions(grid)
-        self.area = self.height * self.width
-        self.refs = []
-
-        # Retrieve all the connected components, except the entire grid if it is in
-        component_ls = list_components1(mask_dict)
-        components = list(filter(lambda x: cardinal(x['mask']) < self.area, component_ls))
-
-
-        # Adding the supremum and the infimum as fake component
-        component_supremum, component_infimum = construct_lattice_ends1(grid)
-        #components += [component_supremum, component_infimum]
-        components += [component_supremum]
-
-        self.depth_to_indices, self.map_contains = rank_components(components)
-        self.depth = max(self.depth_to_indices)
-        self.indice_to_depth = {}
-        for depth, indices in self.depth_to_indices.items():
-            for indice in indices:
-                self.indice_to_depth[indice] = depth
-
-
-        self.nodes = []
-        self.codes = []
-
-        for component in components:
-            component_to_object(grid, component)
-            self.nodes.append({'value': component, 'successors': [], 'predecessors': []})
-
-        #TO-DO: supremum should be at depth 0, correct rank_component
-        #self.supremum  = len(self.nodes)-2 # Should be depth = 1
-        #self.infimum = len(self.nodes)-1 # Should be depth = self.depth
-        if component_supremum in self.nodes:
-            self.supremum = self.nodes.index(component_supremum)
-        else:
-            self.supremum = len(self.nodes)-1
-            self.nodes[self.supremum]['successors'] = self.depth_to_indices[2]
-
-        for i in self.depth_to_indices[2]:
-            self.nodes[i]['predecessors'] = [self.supremum]
-
-        self.infimum = -1
-
-        def complete_lattice(successors, depth):
-            if depth not in self.depth_to_indices:
-                return None
-
-            indices = self.depth_to_indices[depth]
-            for indice in successors:
-                # children are nodes of next rank included in it
-                successors_indice = [i for i in indices if self.map_contains[indice][i]]
-                self.nodes[indice]['successors'] = successors_indice
-                for i in successors_indice:
-                    self.nodes[i]['predecessors'].append(indice)
-                complete_lattice(successors_indice, depth+1)
-
-            return successors
-
-        complete_lattice(self.nodes[self.supremum]['successors'], 3)
-
-        def argmin_by_len_and_depth(lst):
-            def key_func(node):
-                return len(node) + 3*get_depth(node)
-            return min(range(len(lst)), key=lambda i: key_func(lst[i]))
-
-        # Fetch codes for each nodes and add the current index at the same time
-        for i, node in enumerate(self.nodes):
-
-            node['index'] = i
-            mask_list = grid_to_list(node['value']['mask'])
-            is_valid = lambda x: valid_coordinates(self.height, self.width, set(mask_list), x)
-
-            start, ast = None, None
-            starts = get_potential_starting_points(mask_list)
-            if len(starts)>=1:
-                # Trying several combinations of start pos and dfs/bfs
-                # choose the best option by iterating overstart points and dfs/bfs
-                asts=[]
-                for start in starts:
-                    for method in ["dfs", "bfs"]:
-                        ast = Root(start, node['value']['colors'], construct_node(start, is_valid, method))
-                        asts.append(ast)
-                        #asts.append(ast_map(factorize_moves, ast))
-
-                # Getting the smallest, regularized by the depth to avoid pathological cases
-                asts = sorted(asts, key=len)
-                asts = asts[:3]
-                i = argmin_by_len_and_depth(asts)#symbolize(asts, []))
-                ast = asts[i]
-
-                #ast = Root(start, node['value']['colors'], construct_node(start, is_valid, "dfs"))
-
-            node['value']['ast'] = ast
-
-            self.codes.append(ast)
-        self.unions = []
-        self.update_unions()
 
     def __init__(self, grid, mask_dict):
         self.grid = grid
@@ -664,8 +359,6 @@ def symbolize_together(lattices):
         l.refs = nrefs
         l.codes = update_asts(l.codes, nrefs, mappings[i])
 
-    print(f"Nref: {nrefs}")
-
     # List of list of ASTs to list of ASTs
     lcodes = [code for l in lattices for code in l.codes]
     lcodes = symbolize(lcodes, nrefs)
@@ -696,7 +389,7 @@ def symbolize_together(lattices):
 
     return ref_weight, ref_weight_lattices
 
-def distance(node_val1, node_val2, refs) -> float:
+def distance(node_val1, node_val2, refs) -> Tuple[float, Coord]:
     prog1 = unsymbolize([node_val1['ast']], refs)[0]
     prog2 = unsymbolize([node_val2['ast']], refs)[0]
 
@@ -786,13 +479,14 @@ def problem():
 
         print(f"For problem {i}")
         # Add unshifted unions
-        dist = [(j, distance(inp['value'], node_out['value'], refs), False) for j, inp in enumerate(l_inputs[i].nodes)]
-        for j, inp in enumerate(l_inputs[i].nodes):
-            node_val = inp['value']
-            shift = -node_val['box'][0][0], -node_val['box'][0][1]
-            dist.append((j, distance(shifted(shift, node_val, refs), node_out['value'], refs), True))
+        dist = [(j, distance(inp['value'], node_out['value'], refs)) for j, inp in enumerate(l_inputs[i].nodes)]
+        #for j, inp in enumerate(l_inputs[i].nodes):
+        #    node_val = inp['value']
+            # shift is - top-left corner
+        #    shift = -coords_to_box(node_val['mask'])[0][0], -coords_to_box(node_val['mask'])[0][1]
+        #    dist.append((j, distance(shifted(shift, node_val, refs), node_out['value'], refs), True))
 
-        dist_min = min(dist, key=lambda x: x[1])
+        dist_min = min(dist, key=lambda x: x[1][0])
         union_min = l_inputs[i].unions[dist_min[0]]
 
         # Shift the best union to it's proper frmae?'
@@ -800,7 +494,8 @@ def problem():
         #shift = -node_val_min['box'][0][0], -node_val_min['box'][0][1]
 
         #shift = factor_by_refs(shift_ast(shift, unsymbolize([union_min], refs)[0]), refs)
-
-
-        print(f'Unshifted input: {l_inputs[i].unions[dist_min[0]]} -> {union_out}')
-        print(f'Shifted : {dist_min[2]}')
+        shift_box = -coords_to_box(node_val_min['mask'])[0][0], -coords_to_box(node_val_min['mask'])[0][1]
+        shift_proper = dist_min[1][1][0] + shift_box[0], dist_min[1][1][1] + shift_box[1]
+        print(f'Distance: {dist_min[1][0]}')
+        print(f'Unshifted input: {union_min} -> {union_out}')
+        print(f'Shift : {shift_proper}')

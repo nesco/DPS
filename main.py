@@ -61,7 +61,7 @@ def split_by_color(grid):
         grids[color] = filter_by_color(grid, color)
     return grids
 
-def extract_masks_bicolors(grid):
+def extract_masks_bicolors1(grid):
     """
     Returns a dict of all masks comprised of union of two colours
     """
@@ -87,7 +87,7 @@ def extract_masks_bicolors(grid):
 # unserialize(grid_new, chain_code)
 
 def test_freeman():
-    inputs, outputs, tree = load()
+    inputs, outputs = load()
     correspondances, lattice1, lattice2 = test_align(inputs)
     mask = lattice2.nodes[6]['value']['mask']
     chain_code = serialize(mask)

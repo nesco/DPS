@@ -7,7 +7,7 @@
 Idea -> Things should be as closed to the identity as possible
 [] make unions even more compressed with sets of programs and sets of params
 
-[] See issue with problem 1: why not s6?
+[V] See issue with problem 1: why not s6?
 
 [] to find the programs of the union: jaccard dist to the previously learned invariants?
 For problem 1
