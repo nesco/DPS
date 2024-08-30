@@ -13,10 +13,12 @@ from re import X
 import time
 from pathlib import Path
 from itertools import combinations
+from functools import wraps
 
 
 from dataclasses import dataclass, asdict
-from typing import Any, List, Union, Optional, Iterator, Callable, Tuple, Set, Dict
+from typing import Any, List, Union, Optional, Iterator, Callable, Tuple, Set, Dict, Literal
+from typing import Concatenate, TypeVar, ParamSpec, overload
 
 ## Constants
 # Define ANSI escape codes for the closest standard terminal colors
@@ -48,11 +50,11 @@ DATA = "../ARC-AGI/data"
 # A grid of bottom-right corner (max_row, max_col) will have proportions (height = max_row+1, width = max_col+1)
 
 # Point is basically an unfolded (point: Point, value: int) into a trouple
-GridColored = List[List[int]] # Functional representation of a grid: (row, col) -> val
+Color = int
+GridColored = List[List[Color]] # Functional representation of a grid: (row, col) -> val
 Mask = List[List[bool]]
 Grid = Union[GridColored, Mask]
 
-Color = int
 
 Coord = Tuple[int, int] # Coordinates
 Coords = Set[Coord]
@@ -64,6 +66,59 @@ Point = Tuple[int, int, int] # Coordinates + color value
 Points = Set[Point] # Set representation of a grid: {(row, col, val)} / (row, col, val) -> {True, False}
 
 Trans = Tuple[str, Coord] # Transition
+#
+
+# Basic Monads
+# Maybe / Optional
+T = TypeVar('T')
+U = TypeVar('U')
+
+P = ParamSpec('P')
+
+def optional(func: Callable[Concatenate[T, P], U]) -> Callable[Concatenate[Optional[T], P],  Optional[U]]:
+    @wraps(func)
+    def wrapper(arg: Optional[T], *args, **kwargs) -> Optional[U]:
+        if arg is None:
+            return None
+        return func(arg, *args, **kwargs)
+    return wrapper
+
+@overload
+def handle_elements(func: Callable[Concatenate[List[T], P], List[U]]) -> Callable[Concatenate[List[T], P], List[U]]: ...
+@overload
+def handle_elements(func: Callable[Concatenate[List[T], P], List[U]]) -> Callable[Concatenate[T, P], Optional[U]]: ...
+
+def handle_elements(func: Callable[..., List[U]]) -> Callable[..., Union[List[U], Optional[U]]]:
+    @wraps(func)
+    def wrapper(arg: Union[T, List[T]], *args, **kwargs) -> Union[List[U], Optional[U]]:
+        if isinstance(arg, List):
+            return func(arg, *args, **kwargs)
+        else:
+            result = func([arg], *args, **kwargs)
+            return result[0] if len(result) == 1 else None
+    return wrapper
+
+@overload
+def handle_lists(func: Callable[Concatenate[T, P], U]) -> Callable[Concatenate[T, P], U]: ...
+@overload
+def handle_lists(func: Callable[Concatenate[T, P], U]) -> Callable[Concatenate[List[T], P], List[U]]: ...
+
+def handle_lists(func: Callable[..., U]) -> Callable[..., Union[List[U], U]]:
+    @wraps(func)
+    def wrapper(arg: Union[List[T], T], *args, **kwargs) -> Union[List[U], U]:
+        if isinstance(arg, List):
+            return [func(element, *args, **kwargs) for element in arg]
+        return func(arg, args, **kwargs)
+    return wrapper
+#
+
+## Basic decorator
+def to_grid(func: Callable[[T], U]) -> Callable[[List[List[T]]], List[List[U]]]:
+    @wraps(func)
+    def wrapper(arg: List[List[T]]) -> List[List[U]]:
+        height, width = len(arg), len(arg[0])
+        return [[ func(arg[row][col]) for col in range(width)] for row in range(height)]
+    return wrapper
 #
 
 
@@ -169,6 +224,12 @@ def grid_to_list(grid):
 
 ### Function
 
+# Basic functor
+
+def binary_to_bool(binary: Literal[0, 1]) -> bool:
+    return (binary == 1)
+# Explicitly annotate the transformed function
+binary_to_bool_grid: Callable[[List[List[Literal[0, 1]]]], List[List[bool]]] = to_grid(binary_to_bool)
 
 #region Grid Basics
 # Elementary GridColored constructors
@@ -226,7 +287,7 @@ def proportions_points(points: Points) -> Proportions:
     width = max(cols) + 1
     return (height, width)
 
-def proportions_coords(coords: Coords) -> Proportions:
+def coords_to_proportions(coords: Coords) -> Proportions:
     rows, cols = zip(*coords)
 
     # Check for invalid values
@@ -421,7 +482,7 @@ def populate_mask(mask: Mask, coords: Coords) -> None:
     except IndexError as e:
         raise ValueError("The given list of points do not fit within the grid")
 def coords_to_mask(coords: Coords, height: Optional[int] = None, width: Optional[int] = None) -> Mask:
-    nheight, nwidth = proportions_coords(coords)
+    nheight, nwidth = coords_to_proportions(coords)
 
     match (height, width):
         case None, None:
@@ -469,6 +530,8 @@ def grid_to_color_coords(grid: Grid) -> Dict[Color, Coords]:
 def points_to_color_coords(points: Points) -> Dict[Color, Coords]:
     _, _, colors = zip(*points)
     return {color: {(row, col) for row, col, value in points if value == color} for color in colors}
+def points_to_coords(points: Points) -> Coords:
+    return set((row, col) for row, col, color in points)
 
 def ncolors_coords(colors_coords, min_n=2, max_n=10):
     colors = list(colors_coords.keys())
@@ -492,7 +555,28 @@ def filter_by_color(grid, color):
 
     return grid_new
 
+def distance_levenshtein(chain1: str, chain2: str) -> int:
+    m, n = len(chain1), len(chain2)
 
+    # Create a matrix to store the distances
+    dp = [[0] * (n + 1) for _ in range(m + 1)]
+
+    # Initialize the first row and column
+    for i in range(m + 1):
+        dp[i][0] = i
+    for j in range(n + 1):
+        dp[0][j] = j
+
+    # Fill the matrix
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if chain1[i-1] == chain2[j-1]:
+                dp[i][j] = dp[i-1][j-1]
+            else:
+                dp[i][j] = min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]) + 1
+
+    # Return the Levenshtein distance
+    return dp[m][n]
 
 def split_by_color_deprecated(grid):
     """Create for each color a mask, i.e a binary map of the grid"""

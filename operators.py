@@ -412,15 +412,15 @@ def _test_flatten():
     assert flatten([[1, 1], [0, 1]]) == [1, 1, 0, 1]
 
 def _test_intersection():
-    assert intersection([[1, 1],[0, 1]], [[1, 0], [1, 1]]) == [[1, 0], [0, 1]]
-    assert intersection([[1, 0], [0, 1]], [[0, 1],[1, 0]]) == [[0, 0], [0, 0]]
+    assert intersection(binary_to_bool_grid([[1, 1],[0, 1]]), binary_to_bool_grid([[1, 0], [1, 1]])) == binary_to_bool_grid([[1, 0], [0, 1]])
+    assert intersection(binary_to_bool_grid([[1, 0], [0, 1]]), binary_to_bool_grid([[0, 1],[1, 0]])) == binary_to_bool_grid([[0, 0], [0, 0]])
 
 def _test_union():
-    assert union([[1, 0], [0, 1]], [[0, 1],[1, 0]]) == [[1, 1], [1, 1]]
-    assert union([[1, 0], [0, 0]], [[0, 0], [0, 1]]) == [[1, 0], [0, 1]]
+    assert union(binary_to_bool_grid([[1, 0], [0, 1]]), binary_to_bool_grid([[0, 1],[1, 0]])) == [[1, 1], [1, 1]]
+    assert union(binary_to_bool_grid([[1, 0], [0, 0]]), binary_to_bool_grid([[0, 0], [0, 1]])) == binary_to_bool_grid([[1, 0], [0, 1]])
 
 def _test_complement():
-    assert complement([[1, 0], [0, 1]]) == [[0, 1], [1, 0]]
+    assert complement(binary_to_bool_grid([[1, 0], [0, 1]])) == ([[0, 1], [1, 0]])
 
 def _test_transpose():
     assert transpose([[1, 0], [0, 1]]) == [[1, 0], [0, 1]]

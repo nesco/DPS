@@ -236,14 +236,6 @@ def print_lattice(grid, lattice):
         for el in lattice['successors']:
             print_lattice(grid, el)
 
-def load1(task = "2dc579da.json"):
-    data = read_path('training/' + task)
-    inputs = [el['input'] for el in data['train']]
-    outputs = [el['output'] for el in data['train']]
-    tree = construct_object_lattice(inputs[0])
-    return inputs, outputs, tree
-# inputs, outputs, tree = load()
-
 def get_sizes():
     data, uuids = get_all()
     category = []
@@ -284,8 +276,8 @@ def get_sizes():
         l_propins = []
         for input in inputs:
             masks = extract_masks_bicolors(input)
-            component_ls = list_components(masks)
-            l_propins.append([prop_box(comp['box']) for comp in component_ls])
+            component_ls = list_components(masks, proportions(input))
+            l_propins.append([coords_to_proportions(comp['mask']) for comp in component_ls])
 
         l_propouts = [proportions(output) for output in outputs]
 
@@ -319,15 +311,8 @@ def get_else():
             uu.append(uuids[i])
     return uu
 
-def test_compress():
-    inputs, outputs, tree = load()
-    correspondances, lattice1, lattice2 = test_align(inputs)
-    progs = [node['value']['program'] for node in lattice2.nodes]
-    comp = [code_compression(code) for code in progs]
-    return progs, comp
-
 def test_symbolize():
-    inputs, outputs, tree = load()
+    inputs, outputs = load()
     lattices = [input_to_lattice(input) for input in inputs]
     error = False
     codes = []
@@ -399,7 +384,7 @@ def test_simplify_repetitions():
         print()
 
 def test_fuse_refs():
-    inputs, outputs, tree = load()
+    inputs, outputs = load()
     lattices = [input_to_lattice(input) for input in inputs]
     # constructing refs
     for l in lattices:

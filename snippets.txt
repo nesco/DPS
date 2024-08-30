@@ -560,3 +560,13 @@ encode_rl(node2)
 
 
 unsymbolize([u], la.refs)[0]
+
+for la in l:
+    print(la.unions[la.supremum])
+
+
+code = l[0].unions[6]
+unsymb = unsymbolize([code], l[0].refs)[0]
+unsymb = unsymbolize(code, l[0].refs)
+
+[1,2,3]

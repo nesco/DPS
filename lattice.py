@@ -7,7 +7,7 @@ It works because connected components seems to be a strong prior in the ARC chal
 from helpers import *
 from operators import *
 from syntax_tree import *
-
+import traceback
 
 
 def extract_masks_bicolors(grid):
@@ -89,10 +89,10 @@ def rank_components(component_list):
 
 
     return depth_map, map_contains
-def component_to_object(grid, component, chebyshev = False):
+def component_to_object(grid: GridColored, component, chebyshev = False):
     color_set = set([grid[row][col] for row, col in component['mask']])
     component['colors'] = color_set
-def construct_lattice_ends(grid):
+def construct_lattice_ends(grid: Grid):
     height, width = proportions(grid)
     mask_supremum = set([(row, col) for row in range(height) for col in range(width)])
     mask_infinmum = set()
@@ -147,11 +147,13 @@ def get_potential_starting_points(coordinates: List[Coord]) -> List[Coord]:
 
 class Lattice():
 
-    def __init__(self, grid, mask_dict):
+    def __init__(self, grid: GridColored, mask_dict: Dict[Any, Coords]):
         self.grid = grid
         self.height, self.width = proportions(grid)
         self.area = self.height * self.width
-        self.refs = []
+        self.refs: SymbolTable = []
+        self.union_refs: SymbolTable = []
+        self.unions: List[Optional[UnionNode]] = []
 
         # Retrieve all the connected components, except the entire grid if it is in
 
@@ -267,9 +269,16 @@ class Lattice():
         while to_process:
             i = to_process.pop()
             if len(self.nodes[i]['value']['colors']) == 1:
-                self.unions[i] = construct_union([self.codes[i]], self.refs)
+                self.unions[i] = construct_union(None, [(i, self.codes[i])], self.refs)
             else:
-                self.unions[i] = construct_union([code for j in self.nodes[i]['successors'] for code in self.unions[j].codes], self.refs)
+                codes = []
+                for j in self.nodes[i]['successors']:
+                    for k in self.unions[j].subindices:
+                        codes.append((k, self.codes[k]))
+
+                self.unions[i] = construct_union(self.codes[i], codes, self.refs)
+                #self.unions[i] = construct_union([code for j in self.nodes[i]['successors'] for code in self.unions[j].codes], self.refs)
+
             processed.add(i)
             # Add predecessors that have all their successors processed
             for parent_i in self.nodes[i]['predecessors']:
@@ -277,8 +286,12 @@ class Lattice():
                     to_process.add(parent_i)
 
         for i, node in enumerate(self.nodes):
-            node['value']['ast'] = self.unions[i]
+            node_val = node['value']
+            shift_box = -coords_to_box(node_val['mask'])[0][0], -coords_to_box(node_val['mask'])[0][1]
+            self.unions[i] = shift_ast(shift_box, self.unions[i])
 
+        for i, node in enumerate(self.nodes):
+            node_val = node['value']['ast'] = self.unions[i]
 
 
         # The update
@@ -299,24 +312,27 @@ class Lattice():
             #node['value']['start'] = start
 
 def display_unions(lattice: Lattice):
-    for node, union in lattice.unions.items():
+    for i, union in enumerate(lattice.unions):
         try:
-            original_code = lattice.codes[node]
-            unsymb_original = unsymbolize([original_code], lattice.refs)[0]
-            print(f"Node {node}:")
+            original_code = lattice.codes[i]
+            unsymb_original = unsymbolize(original_code, lattice.refs)
+            print(f"Node {i}:")
             print(f"  Original code: {original_code}")
             print(f"  Length: {len(original_code)}")
             print(f"  Unsymbolized: {unsymb_original}")
             print(f"  Union: {union}")
             print("  Subcodes:")
-            for i, code in enumerate(union.codes, 1):
+            if union is None:
+                return
+            for j, code in enumerate(union.codes, 1):
                 unsymb_code = unsymbolize([code], lattice.refs)[0]
-                print(f"    {i}. {code}")
+                print(f"    {j}. {code}")
                 print(f"       Length: {len(code)}")
                 print(f"       Unsymbolized: {unsymb_code}")
             print()  # Empty line for readability between nodes
         except Exception as e:
-            print(f"Error processing node {node}: {str(e)}")
+            print(f"Error processing node {i}: {str(e)}")
+            print("".join(traceback.format_tb(e.__traceback__)))
 
 def align_lattice2(lattices):
 
@@ -368,30 +384,37 @@ def symbolize_together(lattices):
     for i, l in enumerate(lattices):
         for j in range(len(l.codes)):
             l.codes[j] = lcodes[index]
-            l.update_unions()
             index += 1
+        l.update_unions()
 
-    ref_weight = {}
-    ref_weight_lattices = []
+    lucodes = []
+    urefs = []
     for l in lattices:
-        ref_weight_lattices.append({})
-        for code in l.codes:
-            symbols = get_symbols(code)
-            for s in symbols:
-                if s in ref_weight:
-                    ref_weight[s] += 1
-                else:
-                    ref_weight[s] = 1
-                if s in ref_weight_lattices[-1]:
-                    ref_weight_lattices[-1][s] += 1
-                else:
-                    ref_weight_lattices[-1][s] = 1
+        for u in l.unions:
+            lucodes.append(u.background)
+            for code in u.codes:
+                lucodes.append(code)
 
-    return ref_weight, ref_weight_lattices
+    lucodes = symbolize(lucodes, urefs)
+
+    # Reconstruction of union codes
+    index = 0
+    for i, l in enumerate(lattices):
+        for j, u in enumerate(l.unions):
+            u.background = lucodes[index]
+            nucodes = set()
+            index += 1
+            for k in range(len(u.codes)):
+                nucodes.add(lucodes[index])
+                index += 1
+            u.codes = nucodes
+        l.union_refs = urefs
+
+
 
 def distance(node_val1, node_val2, refs) -> Tuple[float, Coord]:
-    prog1 = unsymbolize([node_val1['ast']], refs)[0]
-    prog2 = unsymbolize([node_val2['ast']], refs)[0]
+    prog1 = unsymbolize(node_val1['ast'], refs)
+    prog2 = unsymbolize(node_val2['ast'], refs)
 
     _, points1 = decode(prog1)
     _, points2 = decode(prog2)
@@ -433,36 +456,32 @@ def test_align(inputs):
     #corr = align_lattice(lattice0, lattice1)
     corr = None
     return corr, lattice0, lattice1
-def input_to_lattice(input: Grid) -> Lattice:
+def input_to_lattice(input: GridColored) -> Lattice:
     masks = extract_masks_bicolors(input)
     return Lattice(input, masks)
 # correspondances, lattice1, lattice2 = test_align(inputs)
 # corr = sorted(correspondances, key=lambda el: el[1])
 
-def lattice_to_grid_old(lattice):
-    grid = zeros(lattice.height, lattice.width)
-    unsymb = unsymbolize(lattice.codes, lattice.refs)
-    for code in unsymb:
-        if isinstance(code, Root) and len(code.colors)==1:
-            populate(grid, code)
-    return grid
-
 def union_to_grid(union, refs, height, width):
     grid = zeros(height, width)
-    unsymb_union = unsymbolize([union], refs)[0]
-    populate(grid, unsymb_union)
+    unsymb_union = unsymbolize(union, refs)
+    _, points = decode(unsymb_union)
+    populate_grid_colored(grid, points)
     return grid
 
 def lattice_to_grid(lattice: Lattice) -> Grid:
     lattice.update_unions()
-    unsymb_union = unsymbolize([lattice.unions[lattice.supremum]], lattice.refs)[0]
+    unsymb_union = unsymbolize(lattice.unions[lattice.supremum], lattice.refs)
     if unsymb_union is None:
         raise ValueError("Supremum union is None")
     #populate(grid, unsymb_union)
     return node_to_grid(unsymb_union)
 
 def shifted(shift, union, refs):
-    return factor_by_refs(shift_ast(shift, unsymbolize([union], refs)[0]), refs)
+    unsymb = unsymbolize(union, refs)
+    if unsymb is None:
+        return None
+    return factor_by_refs(shift_ast(shift, unsymbolize(union, refs)), refs)
 
 def problem():
     inputs, outputs = load()
@@ -475,11 +494,12 @@ def problem():
     for i, out in enumerate(l_outputs):
         union_out = out.unions[out.supremum]
         node_out = out.nodes[out.supremum]
-        refs = l_inputs[i].refs
+        refs = l_inputs[i].union_refs
 
         print(f"For problem {i}")
         # Add unshifted unions
         dist = [(j, distance(inp['value'], node_out['value'], refs)) for j, inp in enumerate(l_inputs[i].nodes)]
+        dist1 = [(j, ast_distance(inp, union_out, refs)) for j, inp in enumerate(l_inputs[i].unions)]
         #for j, inp in enumerate(l_inputs[i].nodes):
         #    node_val = inp['value']
             # shift is - top-left corner
@@ -487,15 +507,24 @@ def problem():
         #    dist.append((j, distance(shifted(shift, node_val, refs), node_out['value'], refs), True))
 
         dist_min = min(dist, key=lambda x: x[1][0])
+        dist_min1 = min(dist1, key=lambda x: x[1])
         union_min = l_inputs[i].unions[dist_min[0]]
+        union_min1 = l_inputs[i].unions[dist_min1[0]]
 
         # Shift the best union to it's proper frmae?'
         node_val_min = l_inputs[i].nodes[dist_min[0]]['value']
         #shift = -node_val_min['box'][0][0], -node_val_min['box'][0][1]
 
         #shift = factor_by_refs(shift_ast(shift, unsymbolize([union_min], refs)[0]), refs)
-        shift_box = -coords_to_box(node_val_min['mask'])[0][0], -coords_to_box(node_val_min['mask'])[0][1]
-        shift_proper = dist_min[1][1][0] + shift_box[0], dist_min[1][1][1] + shift_box[1]
+        #shift_box = -coords_to_box(node_val_min['mask'])[0][0], -coords_to_box(node_val_min['mask'])[0][1]
+        shift_proper = dist_min[1][1][0], dist_min[1][1][1]
         print(f'Distance: {dist_min[1][0]}')
+        print(f'Program distance: {ast_distance(union_min, union_out, refs)}')
         print(f'Unshifted input: {union_min} -> {union_out}')
         print(f'Shift : {shift_proper}')
+        print(f"index {dist_min[0]}")
+
+        print(f'Distance Program: {dist_min1[1]}')
+        print(f'Unshifted input: {union_min1} -> {union_out}')
+        #print(f'Shift : {shift_proper}')
+        print(f"index {dist_min1[0]}")
