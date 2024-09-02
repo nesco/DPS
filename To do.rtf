@@ -3,8 +3,14 @@ Fuzzy equivalence relations on product shapes?
 -> Rectangular
 -> Circular
 
+{0}->(0, 0):Rect(12, 12) < {{5}->(1, 1):(2)*{4}(3)*{4}(0)*{4}(1)*{3}}U{{5}->(7, 4):(2)*{3}(3)*{3}(0)*{3}11}
+{0}->(0, 0):Rect(12, 12) < {{8}->(2, 2):Rect(3, 3)}U{{7}->(8, 5):Rect(2, 2)}U{{5}->(1, 1):(2)*{4}(3)*{4}(0)*{4}(1)*{3}}U{{5}->(7, 4):(2)*{3}(3)*{3}(0)*{3}11}
+####
 {3}->(10, 0):((0)*{4}Rect(2, 1)(Rect(1, 2))*{4}Rect(2, 1))*{2}(0)*{4}
+(2)*{4}3(0)*{4}3)*{2}(2)*{4}
+(2222 3 0000 3) * 2 2222
 
+NodeList([rect_to_moves(5, 5)])
 
 -> For symbolization: replace also if the entire unfolded sequence is the same to avoid repeat(, 2) effects
 Problem: if a shape is not really in the dataset it can struggle to learn it like squares

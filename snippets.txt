@@ -586,6 +586,9 @@ unsymb = unsymbolize([code], l[0].refs)[0]
 unsymb = unsymbolize(code, l[0].refs)
 
 [1,2,3]
+a = [(False, 1), (False, 2), (False,3), (True, 1), (True,2)]
+a.sort(key= lambda x: (x[0], x[1]), reverse=True)
+m = [o[:2] for o in a]
 
 ####
 problem(task = "48d8fb45.json")
@@ -602,7 +605,7 @@ for code in la.codes:
     print(f'code: {code}')
     print(f'Unsymbolized: {unsymbolize(code, la.refs)}')
     _, points = decode(unsymbolize(code, la.refs))
-    #rid = points_to_grid_colored(points)
+    grid = points_to_grid_colored(points)
     print_colored_grid(grid)
 
 ####

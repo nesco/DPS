@@ -20,9 +20,9 @@ DEBUG_ROOT = False
 DEBUG = False
 DEBUG_ASTMAP = False
 
-LEN_COORD = 10 # Base length for node type (3 bits) because <= 8 types
+LEN_COORD = 10
 LEN_COLOR = 4
-LEN_NODE = 3
+LEN_NODE = 3 # Base length for node type (3 bits) because <= 8 types
 LEN_MOVE = 3 # Assuming 8-coinnectivity 3bits per move
 LEN_COUNT = 4   # counts of repeats should be an int between 2 and 9 or -2 and -8 (4 bits) ideally
 LEN_INDEX = 3 # should not be more than 8 so 3 bits
@@ -583,7 +583,7 @@ class Root(Node):
 
 # Strategy diviser pour régner avec marginalisation + reconstruction
 @dataclass
-class UnionNode(Node):
+class UnionNode1(Node):
     """
     Represent a connected component by reconstructing it with the best set of single color programs.
     After marginalisation comes reconstruction, divide and conquer.
@@ -620,21 +620,21 @@ class UnionNode(Node):
         return hash(self.__repr__())
 
 @dataclass
-class UnionNode1(Node):
+class UnionNode(Node):
     """
     Represent a connected component by reconstructing it with the best set of single color programs.
     After marginalisation comes reconstruction, divide and conquer.
     """
     #background: Dict['ASTNode', 'ASTNode']
-    codes: Dict[Color, Set['ASTNode']] # Mapping from each colors to a set of codes
-    subindices: Set[int] #Use for construction
+    codes: Set['ASTNode']
+    shadowed: Optional[Set[int]] = None
     background: Optional['ASTNode'] = None
 
     def __len__(self):
         len_codes = 0
         if self.codes is None:
             return 0
-        return sum([len(code) for code in self])
+        return sum([len(code) for code in self.codes])
     def __add__(self, other):
         raise NotImplemented
     def __str__(self):
@@ -644,7 +644,7 @@ class UnionNode1(Node):
         if self.codes is None:
             msg += 'Ø'
         else:
-            msg += 'U'.join([f"{{{code}}}" for code in self])
+            msg += 'U'.join([f"{{{code}}}" for code in self.codes])
         return msg
     def __repr__(self):
         codes_repr = ','.join(code.__repr__() for code in self.codes)
@@ -653,8 +653,6 @@ class UnionNode1(Node):
         if not isinstance(other, UnionNode):
             return False
         return (self.background == other.background and self.codes == other.codes)
-    def __iter__(self) -> Iterator[Set['ASTNode']]:
-        return (color_code for color, color_code in self.codes.items())
     def __hash__(self):
         return hash(self.__repr__())
 ############## TEST : NEW FREEMAN STRUCTURE ###########
@@ -1046,7 +1044,7 @@ def get_symbols(ast):
             return []
 
 
-def ast_map(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
+def ast_map1(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
     """
     Map a function from an single ASTNode to an single AST node to an entire AST.
     :param f: function to map
@@ -1093,13 +1091,69 @@ def ast_map(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
         case BiSymbolicNode(index=i, param1=p1, param2=p2, len_ref=l) if isinstance(p1, ASTNode):
             nnode1 = ast_map(f, p1)
             return f(BiSymbolicNode(i, nnode1, p2, l))
-        case BiSymbolicNode(index=i, param1=p1, param2=p2, len_ref=l) if isinstance(p1, ASTNode):
+        case BiSymbolicNode(index=i, param1=p1, param2=p2, len_ref=l) if isinstance(p2, ASTNode):
             nnode2 = ast_map(f, p2)
             return f(BiSymbolicNode(i, p1, nnode2, l))
         case _:
             return f(node)
 
-def ast_map1(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
+def ast_map(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
+    """
+    Map a function from an single ASTNode to an single AST node to an entire AST.
+    :param f: function to map
+    :param node:
+    """
+    match node:
+        case None:
+            return None
+        case Root(start=s, colors=c, node=n):
+            nnode = ast_map(f, n)
+            return f(Root(s, c, nnode))
+        case Branch(sequences = seqs):
+            nsequences = [nnode for seq in seqs if (nnode := ast_map(f, seq)) is not None]
+            return f(Branch(nsequences))
+        case NodeList(nodes = node_ls):
+            try:
+                nnodes = [nnode for n in node_ls if (nnode := ast_map(f, n)) is not None]
+                return f(NodeList(nnodes))
+            except NotImplementedError as e:
+                print(f"Caught a NotImplementedError: {e}")
+                print(f"Traceback: {print_trace(e)}")
+                print(f"List of subnodes: ")
+                for n in node_ls:
+                    print(f"Node: {n}")
+            return NotImplemented
+        case UnionNode(codes, shadowed, background):
+            ncodes = set([ncode for n in codes if (ncode := ast_map(f, n)) is not None])
+            if shadowed:
+                nshadowed = set([ncode for n in shadowed if (ncode := ast_map(f, n)) is not None])
+            else:
+                nshadowed = None
+            nbackground = ast_map(f, background) if background else None
+            return f(UnionNode(ncodes, nshadowed, nbackground))
+        case Repeat(node=n, count=c):
+            nnode = ast_map(f, n)
+            if nnode is not None:
+                return f(Repeat(nnode, c)) #if nnode is not None else None
+            else:
+                return None
+        case SymbolicNode(index=i, param=p, len_ref=l) if isinstance(p, ASTNode):
+            nnode = ast_map(f, p)
+            return f(SymbolicNode(i, nnode, l))
+        case BiSymbolicNode(index=i, param1=p1, param2=p2, len_ref=l) if isinstance(p1, ASTNode) \
+        and isinstance(p2, ASTNode):
+            nnode1 = ast_map(f, p1)
+            nnode2 = ast_map(f, p2)
+            return f(BiSymbolicNode(i, nnode1, nnode2, l))
+        case BiSymbolicNode(index=i, param1=p1, param2=p2, len_ref=l) if isinstance(p1, ASTNode):
+            nnode1 = ast_map(f, p1)
+            return f(BiSymbolicNode(i, nnode1, p2, l))
+        case BiSymbolicNode(index=i, param1=p1, param2=p2, len_ref=l) if isinstance(p2, ASTNode):
+            nnode2 = ast_map(f, p2)
+            return f(BiSymbolicNode(i, p1, nnode2, l))
+        case _:
+            return f(node)
+def ast_map2(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
     """
     Map a function from an single ASTNode to an single AST node to an entire AST.
     :param f: function to map
@@ -1827,34 +1881,8 @@ def update_asts(ast_ls: List[ASTNode], nrefs: SymbolTable, mapping: List[int]):
     ast_ls = [factor_by_refs(ast, nrefs) for ast in ast_ls]
     return ast_ls
 
-def construct_union1(code: Optional[ASTNode], codes: List[Tuple[int, ASTNode]], refs: SymbolTable):
-    #codes = [c for c in codes if c is not None]
-    #codes.sort(reverse=True, key=lambda x: len(x[1]))
-    unsymb = unsymbolize([scode for ind, scode in codes], refs)
-    background = unsymbolize(code, refs)
 
-    subcodes = []
-    subindices = []
-    for i, (ind, scode) in enumerate(codes):
-        match unsymb[i]:
-            case Root(start=s, colors=c, node=n) if len(c) == 1:
-                #subcodes.append(code)
-                subcodes.append((scode, unsymb[i]))
-                subindices.append(ind)
-            case Root(_, _, _):
-                print(unsymb[i])
-                raise ValueError("Root with more than one color propagated in UnionNode")
-            case _:
-                raise ValueError("UnionNode initialized with a node which isn't Root")
-
-    subcodes.sort(reverse=True, key=lambda x: (len(x[0]), (0 if not isinstance(x[0], (SymbolicNode, BiSymbolicNode)) else x[0].len_ref) ))
-    if background and len(subcodes[0][0]) > len(code): # If the background is less than the heaviest code add the background
-        background.colors = subcodes[0][1].colors
-        return UnionNode(set([u for c, u in subcodes[1:]]), set(subindices), background)
-
-    return UnionNode(set([u for c, u in subcodes]), set(subindices), None)
-
-def construct_union(code: Optional[ASTNode], codes: List[Tuple[int, ASTNode]], refs: SymbolTable):
+def construct_union1(code: Optional[ASTNode], codes: List[Tuple[int, ASTNode]], refs: SymbolTable, box: Box):
     #codes = [c for c in codes if c is not None]
     #codes.sort(reverse=True, key=lambda x: len(x[1]))
     def remove_symbolized_code(input: Dict[Color,Set[Tuple['ASTNode', 'ASTNode']]]) -> Dict[Color,Set['ASTNode']]:
@@ -1873,7 +1901,7 @@ def construct_union(code: Optional[ASTNode], codes: List[Tuple[int, ASTNode]], r
         match unsymbolized[i]:
             case Root(start=s, colors=colors, node=n) if len(colors) == 1:
                 #subcodes.append(code)
-                c = next(iter(colors))
+                c = next(iter(colors)) # type: ignore
                 subcodes[c].add((symbolized, unsymbolized[i]))
                 subindices.append(ind)
             case Root(_, _, _):
@@ -1889,13 +1917,18 @@ def construct_union(code: Optional[ASTNode], codes: List[Tuple[int, ASTNode]], r
     for color, codes_color in subcodes.items():
         len_color = 0
         len_color_symbolic = 0
+        is_border = False
         for symbolized, unsymbolized in codes_color:
+            _, points = decode(unsymbolized)
+            if points and touches_border(points, box):
+                is_border = True#is_border and True
+
             len_color += len(symbolized)
             len_color_symbolic += (0 if not isinstance(symbolized, (SymbolicNode, BiSymbolicNode)) else symbolized.len_ref)
-        len_colors.append((color, len_color, len_color_symbolic))
+        len_colors.append((color, len_color, len_color_symbolic, is_border))
 
     # / 5 is an evil arbitrary parameter necessary in case some node memorization is "too" efficient
-    len_colors.sort(reverse=True, key=lambda x: (x[1] +  x[2]/5))
+    len_colors.sort(reverse=True, key=lambda x: (x[3], x[1] +  x[2]/5))
 
     #print('\n------------')
     #print('Codes:')
@@ -1906,13 +1939,163 @@ def construct_union(code: Optional[ASTNode], codes: List[Tuple[int, ASTNode]], r
     #    if background:
     #        print(f"Background code: {code}, len: {len(code)}")
 
-    color, length, len_ref = len_colors[0]
-    if background and length + len_ref/5 > len(code):
+    color, length, len_ref, is_border = len_colors[0]
+    if background and is_border and length + len_ref/5 > len(code):
         background.colors = {color}
         del subcodes[color]
         return UnionNode(quotient_to_set(remove_symbolized_code(input=subcodes)), set(subindices), background) # type: ignore
 
     return UnionNode(quotient_to_set(remove_symbolized_code(input=subcodes)), set(subindices), None) # type: ignore
+
+def construct_union(code: Optional[ASTNode], codes: List[ASTNode], unions: List[ASTNode], refs: SymbolTable, box: Box):
+    # Hypothesess:
+        # union elements of union are always already unsymbolized and have a background
+        # code elements of codes are symbolized
+        # a code elements cannot be both standalone and in a union already as the depths wouldn't match
+        # Issue: codes can already be unions because unions can contain unions...
+
+    for u in unions:
+        if not u.background:
+            raise ValueError(f"Union {u} sent without background")
+
+    # Unsymbolized the symbolized code and background
+    unsymbolized = unsymbolize([scode for scode in codes], refs)
+    background = unsymbolize(code, refs) # type: ignore
+
+    # Expel the unions from codes
+    code_unions = set((ncode for ncode in unsymbolized if isinstance(ncode, UnionNode)))
+    code_roots = set((ncode for ncode in unsymbolized if isinstance(ncode, Root)))
+
+    # fuse code_unions with unions
+    code_unions.update(unions)
+    codes_dump = set()
+
+    #codes = [c for c in codes if c is not None]
+    #codes.sort(reverse=True, key=lambda x: len(x[1]))
+    def remove_symbolized_code(input: Dict[Color,Set[Tuple['ASTNode', 'ASTNode']]]) -> Dict[Color,Set['ASTNode']]:
+        codes={}
+        for color, subcode_c in input.items():
+            codes_color = set([unsymbolized for ncode, unsymbolized in subcode_c])
+            codes[color] = codes_color
+        return codes
+
+    # First handle subunion:
+        # cases
+        # A shadowed shadowed element of one is an element of the other
+        # -> Remove the background, dump all elements in codes
+
+    # First retrieve all codes,
+    # if a code appears more than once, then the unions that contains it intersects
+    # they should be expanded. Thus only unions with novel codes should be kept
+    subunions = set()
+
+
+    # Count occurrences of each code
+    # Also count each color to know which one to use for background normalization
+    colors_count = defaultdict(set)
+    codes_count = {}
+
+    for u in code_unions:
+        for ncode in u.codes:
+            codes_count[ncode] = codes_count.get(ncode, 0) + 1
+
+    # codes_dump can still contains union lol
+    for u in code_unions:
+        if any(codes_count[ncode] > 1 for ncode in u.codes) or (u.shadowed & codes_count.keys()):
+            codes_dump.update(u.codes)
+            codes_dump.update(u.shadowed)
+        else:
+            subunions.add(u)
+
+    subcodes = defaultdict(set)
+
+    for ncode in code_roots:
+        c = next(iter(ncode.colors)) # type: ignore
+        index = unsymbolized.index(ncode)
+        subcodes[c].add((codes[index], ncode))
+        colors_count[c].add((codes[index], ncode))
+
+    for ncode in codes_dump:
+        c = next(iter(ncode.colors)) # type: ignore
+        subcodes[c].add((factor_by_refs(ncode, refs), ncode))
+        colors_count[c].add((factor_by_refs(ncode, refs), ncode))
+
+    for u in code_unions:
+        for ncode in u.codes:
+            c = next(iter(ncode.colors)) # type: ignore
+            colors_count[c].add((factor_by_refs(ncode, refs), ncode))
+        c = next(iter(u.background.colors)) # type: ignore
+        colors_count[c].add((factor_by_refs(u.background, refs), u.background))
+
+
+
+
+    #for i, symbolized in enumerate(codes_roots):
+    #    match unsymbolized[i]:
+    #        case Root(start=s, colors=colors, node=n) if len(colors) == 1:
+    #            c = next(iter(colors)) # type: ignore
+    #            subcodes[c].add((symbolized, unsymbolized[i]))
+    #            colors_count[c].add((symbolized, unsymbolized[i]))
+
+    #        case Root(_, _, _):
+    #            raise ValueError("Root with more than one color propagated in UnionNode")
+    #        case _:
+    #            raise ValueError("UnionNode initialized with a node which isn't Root or UnionNode")
+    # background normalization
+    # First, computing the description length for each colors
+    # Then sorting them by description length
+    # FInally, if the background is less than the heaviest description replace it by the background
+
+    len_colors = []
+    for color, codes_color in colors_count.items():
+        len_color = 0
+        len_color_symbolic = 0
+        is_border = False
+        for symbolized, unsymbolized in codes_color:
+            _, points = decode(unsymbolized)
+            if points and touches_border(points, box):
+                is_border = True
+
+            len_color += len(symbolized)
+            len_color_symbolic += (0 if not isinstance(symbolized, (SymbolicNode, BiSymbolicNode)) else symbolized.len_ref)
+        len_colors.append((color, len_color, len_color_symbolic, is_border))
+
+    # / 5 is an evil arbitrary parameter necessary in case some node memorization is "too" efficient
+    len_colors.sort(reverse=True, key=lambda x: (x[3], x[1] +  x[2]/5))
+
+    nbackground = None
+    nshadowed = None
+    nsubunions = set()
+    unions_to_remove = []
+
+    if len_colors:
+        color, length, len_ref, is_border = len_colors[0]
+        if background and is_border and length + len_ref/5 > len(code):
+            background.colors = {color}
+            nbackground = background
+
+            for union in subunions:
+                if next(iter(union.background.colors)) == color or (union.codes&subcodes[color]) :
+                    for code in union.codes:
+                        c = next(iter(code.colors)) # type: ignore
+                        subcodes[c].add((code, code))
+                        unions_to_remove.append(union)
+                    #for code in union.shadowed:
+                    #    c = next(iter(code.colors)) # type: ignore
+                    #    subcodes[c].add((code, code))
+            nshadowed = subcodes[color]
+            del subcodes[color]
+
+    for union in subunions:
+        if not union in unions_to_remove:
+            nsubunions.add(union)
+
+    if subcodes:
+        subcodes =  quotient_to_set(remove_symbolized_code(input=subcodes))
+    else:
+        subcodes = set()
+
+    return UnionNode( nsubunions | subcodes, nshadowed, nbackground) # type: ignore
 def hide_position(node: ASTNode) -> ASTNode:
     match node:
         case Root(s, c, n):
@@ -1926,8 +2109,8 @@ def hide_position_with_params(node):
     match node:
         case Root(s, c, n):
             return (Root(Variable(-1), c, n), s)
-        case SymbolicNode(i, p) if isinstance(p, tuple):
-            return (SymbolicNode(i, Variable(-1)), p)
+        case SymbolicNode(i, p, l) if isinstance(p, tuple):
+            return (SymbolicNode(i, Variable(-1), l), p)
 
     return node
 
@@ -1968,7 +2151,7 @@ def get_invariants2(union1, union2):
 
     return invariants
 
-def get_invariants1(unions: List[UnionNode]) -> Set[ASTNode]:
+def get_invariants(unions: List[UnionNode]) -> Set[ASTNode]:
     # First get constant programs then tried relative/hidden position programs
     invariants = set()
     seen = set()
@@ -2073,7 +2256,7 @@ def node_to_grid(node: ASTNode) -> Grid:
     _, points = decode(node)
     return points_to_grid_colored(points)
 
-def ast_distance(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: SymbolTable) -> int:
+def ast_distance1(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: SymbolTable) -> int:
     def list_edit_distance(list1, list2):
         m, n = len(list1), len(list2)
 
@@ -2177,9 +2360,9 @@ def ast_distance(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: Symbo
             if i1==i2:
                 return param_distance(p1, p2)
             else:
-                return ast_distance(unsymbolize(node1, refs), unsymbolize(node2, refs), refs)
+                return ast_distance(unsymbolize(node1, refs), unsymbolize(node2, refs), refs) #type :ignore
         case (SymbolicNode(i, p, l), _):
-            udist = ast_distance(unsymbolize(node1, refs), node2, refs)
+            udist = ast_distance(unsymbolize(node1, refs), node2, refs) # type: ignore
             sdist = 0
             if isinstance(p, ASTNode):
                 sdist = LEN_NODE + LEN_INDEX + ast_distance(p, node2, refs)
@@ -2202,11 +2385,11 @@ def ast_distance(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: Symbo
                 sdist += dist1 + len(p2)
             else:
                 sdist += dist2 + len(p1)
-            return min(sdist, ast_distance(node2, unsymbolize(node1, refs), refs))
+            return min(sdist, ast_distance(node2, unsymbolize(node1, refs), refs)) #type: ignore
         case (_, BiSymbolicNode(i, p1, p2, l)):
             return ast_distance(node2, node1, refs)
         case (Root(s1, c1, n1), Root(s2, c2, n2)):
-            return abs(s1[0] - s2[0]) + abs(s1[1] - s2[1]) + len(c1^c2)*LEN_COLOR + ast_distance(n1, n2, refs)
+            return abs(s1[0] - s2[0]) + abs(s1[1] - s2[1]) + len(c1^c2)*LEN_COLOR + ast_distance(n1, n2, refs) # type: ignore
         case (Root(s, c, n), _):
             return LEN_COORD + LEN_COLOR*len(c) + ast_distance(n, node2, refs)
         case (_, Root(s, c, n)):
@@ -2249,7 +2432,7 @@ def ast_distance(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: Symbo
         case _:
             return 0 if node1 == node2 else len(node1) + len(node2)
 
-def ast_distance1(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: SymbolTable) -> int:
+def ast_distance(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: SymbolTable) -> int:
     def list_edit_distance(list1, list2):
         m, n = len(list1), len(list2)
 
@@ -2297,19 +2480,22 @@ def ast_distance1(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: Symb
             # Create a matrix of edit distances between strings in only_in_s1 and only_in_s2
             edit_matrix = [[ast_distance(a, b, refs) for b in only_in_s2] for a in only_in_s1]
 
-            while edit_matrix:
+            while edit_matrix and any(edit_matrix):  # Check if matrix is not empty and has non-empty rows
                 # Find the minimum edit distance
-                min_dist = min(min(row) for row in edit_matrix)
+                min_dist = min(min(row) for row in edit_matrix if row)
                 edit_cost += min_dist
 
                 # Find the position of the minimum distance
-                row_idx = next(i for i, row in enumerate(edit_matrix) if min(row) == min_dist)
+                row_idx, col_idx = next((i, row.index(min_dist))
+                                        for i, row in enumerate(edit_matrix)
+                                        if row and min(row) == min_dist)
                 col_idx = edit_matrix[row_idx].index(min_dist)
 
                 # Remove the matched strings
                 edit_matrix.pop(row_idx)
                 for row in edit_matrix:
-                    row.pop(col_idx)
+                    if row:  # Check if the row is not empty
+                        row.pop(col_idx)
 
         return add_remove_cost + edit_cost
     def node_list_distance(n, ls):
@@ -2338,22 +2524,23 @@ def ast_distance1(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: Symb
         case (_, None):
             return len(node1)
         case (UnionNode(c1, s1, b1), UnionNode(c2, s2, b2)):
-            len_back = ast_distance(b1, b2, refs)
-            len_codes = set_edit_distance(quotient_to_set(c1), quotient_to_set(c2))
-            return len_back + len_codes
+            #len_back = ast_distance(b1, b2, refs)
+            nc1 = c1 | {b1} if b1 else c1
+            nc2 = c2 | {b2} if b2 else c2
+            len_codes = set_edit_distance(nc1, nc2)
+            return len_codes #len_back + len_codes
         case (UnionNode(c, s, b), _):
-            code_set = quotient_to_set(c)
             len_b = len(b) if b else 0
-            return min(node_list_distance(node2, c) + len_b, sum([len(n) for n in code_set]) + ast_distance(node2, b, refs))
+            return min(node_list_distance(node2, list(c)) + len_b, sum([len(n) for n in c]) + ast_distance(node2, b, refs))
         case (_, UnionNode(c, s, b)):
             return ast_distance(node2, node1, refs)
         case (SymbolicNode(i1, p1, l1), SymbolicNode(i2, p2, l2)):
             if i1==i2:
                 return param_distance(p1, p2)
             else:
-                return ast_distance(unsymbolize(node1, refs), unsymbolize(node2, refs), refs)
+                return ast_distance(unsymbolize(node1, refs), unsymbolize(node2, refs), refs) #type :ignore
         case (SymbolicNode(i, p, l), _):
-            udist = ast_distance(unsymbolize(node1, refs), node2, refs)
+            udist = ast_distance(unsymbolize(node1, refs), node2, refs) # type: ignore
             sdist = 0
             if isinstance(p, ASTNode):
                 sdist = LEN_NODE + LEN_INDEX + ast_distance(p, node2, refs)
@@ -2376,11 +2563,11 @@ def ast_distance1(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: Symb
                 sdist += dist1 + len(p2)
             else:
                 sdist += dist2 + len(p1)
-            return min(sdist, ast_distance(node2, unsymbolize(node1, refs), refs))
+            return min(sdist, ast_distance(node2, unsymbolize(node1, refs), refs)) #type: ignore
         case (_, BiSymbolicNode(i, p1, p2, l)):
             return ast_distance(node2, node1, refs)
         case (Root(s1, c1, n1), Root(s2, c2, n2)):
-            return abs(s1[0] - s2[0]) + abs(s1[1] - s2[1]) + len(c1^c2)*LEN_COLOR + ast_distance(n1, n2, refs)
+            return abs(s1[0] - s2[0]) + abs(s1[1] - s2[1]) + len(c1^c2)*LEN_COLOR + ast_distance(n1, n2, refs) # type: ignore
         case (Root(s, c, n), _):
             return LEN_COORD + LEN_COLOR*len(c) + ast_distance(n, node2, refs)
         case (_, Root(s, c, n)):

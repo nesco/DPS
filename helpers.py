@@ -69,6 +69,8 @@ Proportions = Tuple[int, int]
 Point = Tuple[int, int, int] # Coordinates + color value
 Points = Set[Point] # Set representation of a grid: {(row, col, val)} / (row, col, val) -> {True, False}
 
+CoordsGeneralized = Union[Points, Coords]
+
 Trans = Tuple[str, Coord] # Transition
 
 T = TypeVar('T')
@@ -365,18 +367,25 @@ def points_to_grid_colored(points: Points, height: Optional[int] = None, width: 
 
 #region Box basics
 # Box constructors
-def points_to_box(points: Points) -> Box:
-    rows, cols , _ = zip(*points)
+#def points_to_box(points: Points) -> Box:
+#    rows, cols , _ = zip(*points)
+#    row_min, row_max = min(rows), max(rows)
+#    col_min, col_max = min(cols), max(cols)
+#    return (row_min, col_min),  (row_max, col_max)
+
+def coords_to_box(coords: CoordsGeneralized) -> Box:
+    rows, cols, *_ = zip(*coords)
     row_min, row_max = min(rows), max(rows)
     col_min, col_max = min(cols), max(cols)
     return (row_min, col_min),  (row_max, col_max)
 
-def coords_to_box(coords: Coords) -> Box:
-    rows, cols = zip(*coords)
-    row_min, row_max = min(rows), max(rows)
-    col_min, col_max = min(cols), max(cols)
-    return (row_min, col_min),  (row_max, col_max)
-
+def touches_border(coords: CoordsGeneralized, box: Box) -> bool:
+    (row_min, col_min), (row_max, col_max) = box
+    return any(
+        row == row_min or row == row_max or col == col_min or col == col_max
+        for item in coords
+        for row, col in [item[:2]]
+    )
 
 def grid_to_box(grid: Grid) -> Box:
     return proportions_to_box(proportions(grid))
@@ -465,8 +474,8 @@ def distance_jaccard_optimal(points1: Points, points2: Points) -> Tuple[float, C
     min_shift = (0, 0)
 
     # Founding the bounding
-    _, (row_max1, col_max1) = points_to_box(points1)
-    _, (row_max2, col_max2) = points_to_box(points2)
+    _, (row_max1, col_max1) = coords_to_box(points1)
+    _, (row_max2, col_max2) = coords_to_box(points2)
 
     # Sliding grid2 over grid1
     for drow in range(-row_max2, row_max1+1):

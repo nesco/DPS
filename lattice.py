@@ -252,7 +252,7 @@ class Lattice():
     def symbolize(self):
         self.codes = symbolize(self.codes, self.refs)
 
-    def update_unions(self):
+    def update_unions1(self):
         # A priority queue will be needed to track backgrounds. A simple (code, depth) would suffice at first
         to_process = set()
         processed = set()
@@ -268,15 +268,16 @@ class Lattice():
         # Then process all nodes
         while to_process:
             i = to_process.pop()
+            box = coords_to_box(self.nodes[i]['value']['mask'])
             if len(self.nodes[i]['value']['colors']) == 1:
-                self.unions[i] = construct_union(None, [(i, self.codes[i])], self.refs)
+                self.unions[i] = construct_union(None, [(i, self.codes[i])], self.refs, box)
             else:
                 codes = []
                 for j in self.nodes[i]['successors']:
                     for k in self.unions[j].subindices:
                         codes.append((k, self.codes[k]))
 
-                self.unions[i] = construct_union(self.codes[i], codes, self.refs)
+                self.unions[i] = construct_union(self.codes[i], codes, self.refs, box)
                 #self.unions[i] = construct_union([code for j in self.nodes[i]['successors'] for code in self.unions[j].codes], self.refs)
 
             processed.add(i)
@@ -311,6 +312,69 @@ class Lattice():
             #node['value']['program'] = code
             #node['value']['start'] = start
 
+    def update_unions(self):
+        # A priority queue will be needed to track backgrounds. A simple (code, depth) would suffice at first
+        to_process = set()
+        processed = set()
+
+        # First get the union for all simple unicolors nodes
+        # Plus the placeholder for the final list
+
+        self.unions = [None for _ in range(len(self.nodes))]
+        for i, node in enumerate(self.nodes):
+            if len(node['value']['colors']) == 1:
+                to_process.add(i)
+
+        # Then process all nodes
+        while to_process:
+            i = to_process.pop()
+            box = coords_to_box(self.nodes[i]['value']['mask'])
+            if len(self.nodes[i]['value']['colors']) == 1:
+                self.unions[i] = construct_union(None, [self.codes[i]], [], self.refs, box)
+            else:
+                codes = []
+                unions = []
+                for j in self.nodes[i]['successors']:
+                    if self.unions[j].background:
+                        unions.append(self.unions[j])
+                    else:
+                        for k in self.unions[j].codes:
+                            codes.append(k)
+
+                self.unions[i] = construct_union(self.codes[i], codes, unions, self.refs, box)
+                #self.unions[i] = construct_union([code for j in self.nodes[i]['successors'] for code in self.unions[j].codes], self.refs)
+
+            processed.add(i)
+            # Add predecessors that have all their successors processed
+            for parent_i in self.nodes[i]['predecessors']:
+                if all(child in processed for child in self.nodes[parent_i]['successors']):
+                    to_process.add(parent_i)
+
+        for i, node in enumerate(self.nodes):
+            node_val = node['value']
+            shift_box = -coords_to_box(node_val['mask'])[0][0], -coords_to_box(node_val['mask'])[0][1]
+            self.unions[i] = shift_ast(shift_box, self.unions[i])
+
+        for i, node in enumerate(self.nodes):
+            node_val = node['value']['ast'] = self.unions[i]
+
+
+        # The update
+
+            #chain_code = serialize(node['value']['mask'])
+            #start, code = extract_serialized_elements(chain_code)
+            #morphology, coordinates = code_compression(code)
+            #if morphology in self.morphologies:
+            #    self.morphologies[morphology] += [(i, coordinates)]
+            #else:
+            #    self.morphologies[morphology] =  [(i, coordinates)]
+
+            #if code in self.programs:
+            #    self.programs[code] += [i]
+            #else:
+            #   self.programs[code] = [i]
+            #node['value']['program'] = code
+            #node['value']['start'] = start
 def display_unions(lattice: Lattice):
     for i, union in enumerate(lattice.unions):
         try:
@@ -621,7 +685,7 @@ def problem(task = "2dc579da.json"):
     l = l_inputs+l_outputs
     symbolize_together(l)
     print('Symbol Table')
-    for ref in l[0].refs:
+    for ref in l[0].union_refs:
         print(f'{ref}')
 
     print("Optimal mappings:")
@@ -630,9 +694,8 @@ def problem(task = "2dc579da.json"):
         node_out = out.nodes[out.supremum]
         refs = l[i].union_refs #l_inputs[i].union_refs
 
-        print(f"For problem {i}")
-
         # Add unshifted unions
+
         dist = [(j, distance(inp['value'], node_out['value'], refs)) for j, inp in enumerate(l_inputs[i].nodes)]
         dist1 = [(j, ast_distance(inp, union_out, refs)) for j, inp in enumerate(l_inputs[i].unions)]
         #for j, inp in enumerate(l_inputs[i].nodes):
@@ -642,7 +705,9 @@ def problem(task = "2dc579da.json"):
         #    dist.append((j, distance(shifted(shift, node_val, refs), node_out['value'], refs), True))
 
         dist_min = min(dist, key=lambda x: x[1][0])
-        dist_min1 = min(dist1, key=lambda x: x[1])
+        #dist_min1 = min(dist1, key=lambda x: x[1])
+        dist_sort1 = sorted(dist1, key=lambda x: x[1])
+        dist_min1 = dist_sort1[0]
         union_min = l_inputs[i].unions[dist_min[0]]
         union_min1 = l_inputs[i].unions[dist_min1[0]]
 
@@ -653,9 +718,11 @@ def problem(task = "2dc579da.json"):
         #shift = factor_by_refs(shift_ast(shift, unsymbolize([union_min], refs)[0]), refs)
         #shift_box = -coords_to_box(node_val_min['mask'])[0][0], -coords_to_box(node_val_min['mask'])[0][1]
         shift_proper = dist_min[1][1][0], dist_min[1][1][1]
+
+        print(f"For problem {i}")
+
         print('Target:')
         print(f'Union Out: {union_out}, len: {len(union_out)}')
-        print(f'Unsymoblized: {unsymbolize(union_out, refs)}')
         union_to_grid(union_out, refs)
         print(f'Using Jaccard / Pixel Space:')
         print(f'Distance: {dist_min[1][0]}')
@@ -671,5 +738,8 @@ def problem(task = "2dc579da.json"):
         union_to_grid(union_min1, refs)
         print(f'Distance Program: {dist_min1[1]}')
         print(f'Unshifted input: {union_min1} -> {union_out}')
+        print(f'Unsymoblized: {unsymbolize(union_min1, refs)}')
+
+
         #print(f'Shift : {shift_proper}')
         print(f"index {dist_min1[0]}")
