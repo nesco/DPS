@@ -11,11 +11,13 @@ import os
 import json
 from re import X
 import time
-from pathlib import Path
+import pathlib
 from itertools import combinations
 from functools import wraps
+import traceback
 
 
+from collections import defaultdict
 from dataclasses import dataclass, asdict
 from typing import Any, List, Union, Optional, Iterator, Callable, Tuple, Set, Dict, Literal
 from typing import Concatenate, TypeVar, ParamSpec, overload
@@ -37,7 +39,7 @@ COLORS = {
 
 DIRECTIONS = {
     '0': (-1, 0), '1': (0, -1), '2': (1, 0), '3': (0, 1),
-    '4': (1, -1), '5': (1, 1), '6': (-1, 1), '7': (-1, -1)
+    '4': (-1, -1), '5': (1, -1), '6': (1, 1), '7': (-1, 1)
 }
 
 MOVES = "01234567"
@@ -50,7 +52,9 @@ DATA = "../ARC-AGI/data"
 # A grid of bottom-right corner (max_row, max_col) will have proportions (height = max_row+1, width = max_col+1)
 
 # Point is basically an unfolded (point: Point, value: int) into a trouple
+
 Color = int
+Colors = Set[Color]
 GridColored = List[List[Color]] # Functional representation of a grid: (row, col) -> val
 Mask = List[List[bool]]
 Grid = Union[GridColored, Mask]
@@ -66,15 +70,35 @@ Point = Tuple[int, int, int] # Coordinates + color value
 Points = Set[Point] # Set representation of a grid: {(row, col, val)} / (row, col, val) -> {True, False}
 
 Trans = Tuple[str, Coord] # Transition
-#
 
-# Basic Monads
-# Maybe / Optional
 T = TypeVar('T')
 U = TypeVar('U')
 
+# Structure to build quotient space through a couple (key: representative, value: equivalent class)
+Quotient = Dict[U, Set[T]]
+
+# set_to_quotient groups togetherm elements of the set into equivalence classes
+# based on the projection operations
+def set_to_quotient(projection: Callable[[T], U], object_set: Set[T]) -> Quotient:
+    """
+    Given a function, represent a set by a couple (quotient set, equivalence classes).
+    The quotients are the dict keys and the equivalence classes the values.
+    This construction needs an objective function that gives a representative to each element of
+    the original set into the quotient set.
+    @param object_set: set of objects
+    @param projection: to each element of the original set, it assigns a representative in the quotient set
+    """
+    groups = defaultdict(set)
+    for obj in object_set:
+        groups[projection(obj)].add(obj)
+    return dict(groups)
+def quotient_to_set(quotient: Quotient) -> Set[T]:
+    return set.union(*quotient.values())
+
 P = ParamSpec('P')
 
+# Basic Monads
+# Maybe / Optional
 def optional(func: Callable[Concatenate[T, P], U]) -> Callable[Concatenate[Optional[T], P],  Optional[U]]:
     @wraps(func)
     def wrapper(arg: Optional[T], *args, **kwargs) -> Optional[U]:
@@ -630,7 +654,7 @@ def read_path(path):
     return data
 
 def get_all():
-    path_dir = Path(DATA + '/training')
+    path_dir = pathlib.Path(DATA + '/training')
     path_files = []
     uuids = []
     for json_file in path_dir.glob('*.json'):
@@ -647,3 +671,8 @@ def load(task = "2dc579da.json"):
     inputs = [el['input'] for el in data['train']]
     outputs = [el['output'] for el in data['train']]
     return inputs, outputs
+
+
+#### Debug
+def print_trace(e):
+    print("".join(traceback.format_tb(e.__traceback__)))

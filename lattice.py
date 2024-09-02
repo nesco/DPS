@@ -410,6 +410,52 @@ def symbolize_together(lattices):
             u.codes = nucodes
         l.union_refs = urefs
 
+def symbolize_together1(lattices):
+
+    #for l in lattices:
+    #    l.symbolize()
+
+    refs_ls = [l.refs for l in lattices]
+    nrefs, mappings = fuse_refs(refs_ls)
+
+    for i, l in enumerate(lattices):
+        l.refs = nrefs
+        l.codes = update_asts(l.codes, nrefs, mappings[i])
+
+    # List of list of ASTs to list of ASTs
+    lcodes = [code for l in lattices for code in l.codes]
+    lcodes = symbolize(lcodes, nrefs)
+
+    # Reconstruction of lattices codes
+    index = 0
+    for i, l in enumerate(lattices):
+        for j in range(len(l.codes)):
+            l.codes[j] = lcodes[index]
+            index += 1
+        l.update_unions()
+
+    lucodes = []
+    urefs = []
+    for l in lattices:
+        for u in l.unions:
+            lucodes.append(u.background)
+            for code in quotient_to_set(u.codes):
+                lucodes.append(code)
+
+    lucodes = symbolize(lucodes, urefs)
+
+    # Reconstruction of union codes
+    index = 0
+    for i, l in enumerate(lattices):
+        for j, u in enumerate(l.unions):
+            u.background = lucodes[index]
+            nucodes = set()
+            index += 1
+            for k in range(len(u.codes)):
+                nucodes.add(lucodes[index])
+                index += 1
+            u.codes = set_to_quotient(lambda x: x.colors, nucodes)
+        l.union_refs = urefs
 
 
 def distance(node_val1, node_val2, refs) -> Tuple[float, Coord]:
@@ -462,11 +508,15 @@ def input_to_lattice(input: GridColored) -> Lattice:
 # correspondances, lattice1, lattice2 = test_align(inputs)
 # corr = sorted(correspondances, key=lambda el: el[1])
 
-def union_to_grid(union, refs, height, width):
-    grid = zeros(height, width)
+def union_to_grid(union, refs, height=None, width=None):
     unsymb_union = unsymbolize(union, refs)
     _, points = decode(unsymb_union)
-    populate_grid_colored(grid, points)
+    if height is None or width is None:
+        grid = points_to_grid_colored(points)
+        print_colored_grid(grid)
+    else:
+        grid = zeros(height, width)
+        populate_grid_colored(grid, points)
     return grid
 
 def lattice_to_grid(lattice: Lattice) -> Grid:
@@ -483,12 +533,36 @@ def shifted(shift, union, refs):
         return None
     return factor_by_refs(shift_ast(shift, unsymbolize(union, refs)), refs)
 
-def problem():
-    inputs, outputs = load()
+def print_symb():
+    tasks = ["2dc579da.json", "48d8fb45.json"]
+    l = []
+    for task in tasks:
+        inputs, outputs = load(task)
+        l_inputs = [input_to_lattice(input) for input in inputs]
+        l_outputs = [input_to_lattice(output) for output in outputs]
+        l += l_inputs+l_outputs
+
+    symbolize_together(l)
+    print('Symbol Table')
+    for i, ref in enumerate(l[0].refs):
+        print(f'Symbol n°{i}: {ref}')
+        print('Linked programs:')
+        for la in l:
+            for code in la.codes:
+                if i in get_symbols(code):
+                    print(f'Code: {code}')
+                    print(f'Unsymbolized: {unsymbolize(code, l[0].refs)}')
+        print('\n')
+
+def problem1(task = "2dc579da.json"):
+    inputs, outputs = load(task)
     l_inputs = [input_to_lattice(input) for input in inputs]
     l_outputs = [input_to_lattice(output) for output in outputs]
     l = l_inputs+l_outputs
     symbolize_together(l)
+    print('Symbol Table')
+    for ref in l[0].refs:
+        print(f'{ref}')
 
     print("Optimal mappings:")
     for i, out in enumerate(l_outputs):
@@ -497,6 +571,7 @@ def problem():
         refs = l_inputs[i].union_refs
 
         print(f"For problem {i}")
+
         # Add unshifted unions
         dist = [(j, distance(inp['value'], node_out['value'], refs)) for j, inp in enumerate(l_inputs[i].nodes)]
         dist1 = [(j, ast_distance(inp, union_out, refs)) for j, inp in enumerate(l_inputs[i].unions)]
@@ -518,12 +593,82 @@ def problem():
         #shift = factor_by_refs(shift_ast(shift, unsymbolize([union_min], refs)[0]), refs)
         #shift_box = -coords_to_box(node_val_min['mask'])[0][0], -coords_to_box(node_val_min['mask'])[0][1]
         shift_proper = dist_min[1][1][0], dist_min[1][1][1]
+        print('Target:')
+        print(f'Union Out: {union_out}, len: {len(union_out)}')
+        print(f'Unsymoblized: {unsymbolize(union_out, refs)}')
+        union_to_grid(union_out, refs)
+        print(f'Using Jaccard / Pixel Space:')
         print(f'Distance: {dist_min[1][0]}')
+        print(f'Distance: {distance_jaccard(decode(unsymbolize(union_min, refs))[1],decode(unsymbolize(union_out, refs))[1])}')
         print(f'Program distance: {ast_distance(union_min, union_out, refs)}')
         print(f'Unshifted input: {union_min} -> {union_out}')
+        print(f'Input:')
+        union_to_grid(union_min, refs)
         print(f'Shift : {shift_proper}')
         print(f"index {dist_min[0]}")
 
+        print(f'Using Levenhstein / Latent Space')
+        union_to_grid(union_min1, refs)
+        print(f'Distance Program: {dist_min1[1]}')
+        print(f'Unshifted input: {union_min1} -> {union_out}')
+        #print(f'Shift : {shift_proper}')
+        print(f"index {dist_min1[0]}")
+
+def problem(task = "2dc579da.json"):
+    inputs, outputs = load(task)
+    l_inputs = [input_to_lattice(input) for input in inputs]
+    l_outputs = [input_to_lattice(output) for output in outputs]
+    l = l_inputs+l_outputs
+    symbolize_together(l)
+    print('Symbol Table')
+    for ref in l[0].refs:
+        print(f'{ref}')
+
+    print("Optimal mappings:")
+    for i, out in enumerate(l_outputs):
+        union_out = out.unions[out.supremum]
+        node_out = out.nodes[out.supremum]
+        refs = l[i].union_refs #l_inputs[i].union_refs
+
+        print(f"For problem {i}")
+
+        # Add unshifted unions
+        dist = [(j, distance(inp['value'], node_out['value'], refs)) for j, inp in enumerate(l_inputs[i].nodes)]
+        dist1 = [(j, ast_distance(inp, union_out, refs)) for j, inp in enumerate(l_inputs[i].unions)]
+        #for j, inp in enumerate(l_inputs[i].nodes):
+        #    node_val = inp['value']
+            # shift is - top-left corner
+        #    shift = -coords_to_box(node_val['mask'])[0][0], -coords_to_box(node_val['mask'])[0][1]
+        #    dist.append((j, distance(shifted(shift, node_val, refs), node_out['value'], refs), True))
+
+        dist_min = min(dist, key=lambda x: x[1][0])
+        dist_min1 = min(dist1, key=lambda x: x[1])
+        union_min = l_inputs[i].unions[dist_min[0]]
+        union_min1 = l_inputs[i].unions[dist_min1[0]]
+
+        # Shift the best union to it's proper frmae?'
+        node_val_min = l_inputs[i].nodes[dist_min[0]]['value']
+        #shift = -node_val_min['box'][0][0], -node_val_min['box'][0][1]
+
+        #shift = factor_by_refs(shift_ast(shift, unsymbolize([union_min], refs)[0]), refs)
+        #shift_box = -coords_to_box(node_val_min['mask'])[0][0], -coords_to_box(node_val_min['mask'])[0][1]
+        shift_proper = dist_min[1][1][0], dist_min[1][1][1]
+        print('Target:')
+        print(f'Union Out: {union_out}, len: {len(union_out)}')
+        print(f'Unsymoblized: {unsymbolize(union_out, refs)}')
+        union_to_grid(union_out, refs)
+        print(f'Using Jaccard / Pixel Space:')
+        print(f'Distance: {dist_min[1][0]}')
+        print(f'Distance: {distance_jaccard(decode(unsymbolize(union_min, refs))[1],decode(unsymbolize(union_out, refs))[1])}')
+        print(f'Program distance: {ast_distance(union_min, union_out, refs)}')
+        print(f'Unshifted input: {union_min} -> {union_out}')
+        print(f'Input:')
+        union_to_grid(union_min, refs)
+        print(f'Shift : {shift_proper}')
+        print(f"index {dist_min[0]}")
+
+        print(f'Using Levenhstein / Latent Space')
+        union_to_grid(union_min1, refs)
         print(f'Distance Program: {dist_min1[1]}')
         print(f'Unshifted input: {union_min1} -> {union_out}')
         #print(f'Shift : {shift_proper}')

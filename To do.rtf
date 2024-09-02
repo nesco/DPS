@@ -1,0 +1,108 @@
+
+Fuzzy equivalence relations on product shapes?
+-> Rectangular
+-> Circular
+
+{3}->(10, 0):((0)*{4}Rect(2, 1)(Rect(1, 2))*{4}Rect(2, 1))*{2}(0)*{4}
+
+
+-> For symbolization: replace also if the entire unfolded sequence is the same to avoid repeat(, 2) effects
+Problem: if a shape is not really in the dataset it can struggle to learn it like squares
+-> Encode it at pre-made symbols:
+Basic Symbols:
+Var(0)Var(0)Var(1)Var(0)
+Var(0)3Var(1)3 (S2(6) s1(6))
+
+Carré (nxn)
+None 1x1
+230 (2x2)
+22300322 (3x3)
+222300032223000: ((2)*{3} 3 (0){3}){2} (4x4)
+22223000322223000032222 2{4} (3 0{4} 3 2{4}) (5x5)
+
+Repeat(NodeList(Repeat(Moves('2'), c1), Moves('3), Repeat(Moves('0'), c2)), Moves('3')), c3)
+
+for row in range(height):
+    + 2
+
+Rect (n, m)
+2 (2x1)
+3 (1x2)
+22300 (2x3)
+2{3} 3 0{3} (2x4)
+Repeat(Moves('2'), c1), Moves('3'), Repeat(Moves('0'), c2) if c1==c2:
+    return rect(2,c1+1)
+
+2 3 0 (2x2)
+
+2 3 0 3 2 (3x2)
+
+2 3 0 3 2 3 0 (4x2)
+2(3 0)(3 2){h//2}(3 2)if h%2==1
+
+
+hollow square n
+2{n} 3{n} 0{n} 1{n-1}
+
+Cross (n):
+[0, 1, 2, 3]
+[00, 11, 22, 33]
+[0{n}, 1{n}, 2{n}, 3{n}]
+
+
+
+pair:
+((2){w-1} 3 (0){w-1} 3){h//2}
+impair:
+(2){w-1} (3 (2){w-1} 3 (0){w-1}){h//2}
+
+
+
+# Normalisation can make some unions very far in program space, notably if the morphology to recognize is complicated
+#in its subrect, because it is getting normalized away.
+----> You NEED to TRY BOTH VERSIONS, EACH TIME
+
+s_2(6) 3 s2(6) 3
+O>>>>>>
+<<<<<<v
+v
+
+3 s_2(4) 3 s_1(4)
+O
+v>>>>
+<<<<v
+
+s2: (2)*{Var(0)} s1: (0)*{Var(0)}
+
+rect(height, width) (2*{var(0)} 3 0*{var(0)} 3)*{var(1)} where var(0) = height, var(1) = width/2
+refs = Repeat(UnionNode(Repeat(Moves("2"), Var(0)), 3, Repeat(Moves("0"), Var(0), 3), Var(1))
+
+####
+[V] Understand why the lattice n°3 is represented differently from number 1 and number 2
+[V] Optimal scanning with sub unions
+[V] Union with backgrounds
+[V] Hit-or-miss/jaccard for colored grid to have node distance
+[] Creation of a "Output" space and "Input" space with a way to project the input to the output
+Idea -> Things should be as closed to the identity as possible
+[X] make unions even more compressed with sets of programs and sets of params
+[] resolve the repeat issue : (Var)*{3}(0) == (0)*{Var}(3)
+[V] Have a codes and a codes_shifted druign symbolization, as code_shifted should be used to write unions
+
+[V] See issue with problem 1: why not s6?
+
+->> Avoid over_symbolization, maybe symbols shoukld not be able to have bisymbols as params
+som symbolization add nothing it leads to this: s_3  < { s_21 } ->  s_3  < { s_21 }
+Or maybe it's ok with the right program distance
+
+[] to find the programs of the union: jaccard dist to the previously learned invariants?
+For problem 1
+Unshifted input: { s_17((1, 5)) } -> { s_17((1, 1)) }U{ s_6((0, 0)) }
+Shifted input: { s_17((0, 0)) } -> { s_17((1, 1)) }U{ s_6((0, 0)) }
+
+also issue for problem 2:
+For problem 2
+Unshifted input: { s_9({8}) } -> { s_9({8}) }U{ s_1({3}) }
+Shifted input: {{8}->(0, 0):None} -> { s_9({8}) }U{ s_1({3}) }
+
+#### AIM: Get JACCARD to 0
+Note it's an heuristic / distance measure because it's the latent program that needs alignement

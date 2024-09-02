@@ -2,12 +2,24 @@
  lattices = [input_to_lattice(input) for input in inputs]
 
 
+c0f76784.json
 
+Caught a NotImplementedError: Trying to initialise a node list with : Var(1)->11:(2)*{3}(3)*{3}(0)*{3}11,[3(2)*{5}(3)*{4}(2)*{5}(1)*{4}2(3)*{5}(0)*{6},(1)*{5}(2)*{11}3(0)*{7}[(0)*{3}(3)*{3},5(2)*{6}3(0)*{6}3(2)*{6}]]
 
+Repeat(2, Var(0)), Repear(3, Var(1)), Repeat(0, Var(0), Repeat(1, Var(1))
 
+Codes of color: 4 with len 20, 26
+ s_2((1, 0), {4})  {4}->(1, 0):None
+Codes of color: 8 with len 19, 30
+ s_4({8}, 32)  {8}->(0, 0):32
+deleting color: 4
 
-
-
+Codes:
+Codes of color: 8 with len 23, 0
+{8}->(3, 0):32 {8}->(3, 0):32
+Codes of color: 4 with len 20, 26
+s_2((4, 0), {4})  {4}->(4, 0):None
+deleting color: 8
 
 
 ## Test bfs
@@ -538,6 +550,10 @@ for i, la in enumerate(l):
     grid = lattice_to_grid(la)
     print_colored_grid(grid)
 
+la = next(iter(l))
+for union in la.unions:
+    union_to_grid(union, la.refs)
+
 ###
 set([1, 2]) in set([1, 2, 3])
 [la.supremum]
@@ -570,3 +586,41 @@ unsymb = unsymbolize([code], l[0].refs)[0]
 unsymb = unsymbolize(code, l[0].refs)
 
 [1,2,3]
+
+####
+problem(task = "48d8fb45.json")
+
+#####
+inputs, outputs = load(task = "48d8fb45.json")
+l_inputs = [input_to_lattice(input) for input in inputs]
+l_outputs = [input_to_lattice(output) for output in outputs]
+l = l_inputs+l_outputs
+symbolize_together(l)
+
+la = next(iter(l))
+for code in la.codes:
+    print(f'code: {code}')
+    print(f'Unsymbolized: {unsymbolize(code, la.refs)}')
+    _, points = decode(unsymbolize(code, la.refs))
+    #rid = points_to_grid_colored(points)
+    print_colored_grid(grid)
+
+####
+inputs, outputs = load()
+input = inputs[1]
+masks = extract_masks_bicolors(input)
+component_ls = list_components(masks, proportions(input))
+mask_list = [component['mask'] for component in component_ls]
+mask = mask_list[5]
+is_valid = lambda x: valid_coordinates(*proportions(input), mask, x)
+#construct_node(start, is_valid, method)
+start = next(iter(mask), None)
+
+node1 = encode_connected_component(mask, start, is_valid, method="dfs")
+node2 = encode_connected_component(mask, start, is_valid, method="bfs")
+
+tree1 = (start, node1)
+tree2 = (start, node2)
+
+decode_freeman(tree1)
+decode_freeman(tree2)
