@@ -1,6 +1,7 @@
  inputs, outputs, tree = load()
  lattices = [input_to_lattice(input) for input in inputs]
 
+set([None])
 
 c0f76784.json
 
@@ -334,7 +335,7 @@ for ref in lattice2.refs:
 
 
 ####
-inputs, outputs, tree = load()
+inputs, outputs = load()
 lattices = [input_to_lattice(input) for input in inputs]
 codes = [l.codes for l in lattices]
 #print(lattice2.codes[6])
@@ -342,7 +343,7 @@ lattice2.symbolize()
 #print(lattice2.codes[6])
 u = unsymbolize(lattice2.codes, lattice2.refs)
 #print(u[6])
-
+codes[0]
 
 symbolize_together(lattices)
 lattice1 = lattices[0]
@@ -365,7 +366,7 @@ for i, l in enumerate(codes):
 #    print(ref)
 #######
 
-inputs, outputs, tree = load()
+inputs, outputs = load()
 lattices = [input_to_lattice(input) for input in inputs]
 symbolize_together(lattices)
 for lattice in lattices:
@@ -627,3 +628,147 @@ tree2 = (start, node2)
 
 decode_freeman(tree1)
 decode_freeman(tree2)
+
+####
+
+1bfc4729.json
+007bbfb7.json
+
+f9012d9b.json
+
+e509e548.json
+-> Jaccard needs to be done simultaneously using colors and with bicolors, no?
+Or add a color distance
+
+7ddcd7ec.json
+
+39e1d7f9.json
+
+####
+inputs, outputs = load("7ddcd7ec.json")
+input = inputs[1]
+masks = extract_masks_bicolors(input)
+component_ls = list_components(masks, proportions(input))
+mask_list = [component['mask'] for component in component_ls]
+mask = mask_list[2]
+is_valid = lambda x: valid_coordinates(*proportions(input), mask, x)
+#construct_node(start, is_valid, method)
+start = next(iter(mask), None)
+
+node1 = encode_connected_component(mask, start, is_valid, method="dfs")
+node2 = encode_connected_component(mask, start, is_valid, method="bfs")
+
+tree1 = (start, node1)
+tree2 = (start, node2)
+
+decode_freeman(tree1)
+decode_freeman(tree2)
+
+
+
+####
+
+mask = set([(0, 0), (1, 0), (2, 0), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2)])
+
+###
+inputs, outputs = load("7ddcd7ec.json")
+input = inputs[1]
+masks = extract_masks_bicolors(input)
+component_ls = list_components(masks, proportions(input))
+mask_list = [component['mask'] for component in component_ls]
+mask = mask_list[2]
+coords_to_rectangles(mask)
+print_colored_grid(coords_to_mask(mask))
+
+condition_by_rectangles(mask)
+
+#####
+inputs, outputs = load("7ddcd7ec.json")
+input = inputs[1]
+masks = extract_masks_bicolors(input)
+
+objects = []
+for mask in masks.values():
+    orthoset = condition_by_rectangles(mask)
+    objects.append(orthoset)
+
+print(objects)
+
+ccoords = [orthogonal_set_to_coords(orthoset) for orthoset in objects]
+for coords in ccoords:
+    grid = coords_to_mask(coords)
+    print_colored_grid(grid)
+
+l = list(l)
+r1, r2 = l[0], l[1]
+is_rectangle_included(r2, r1)
+
+
+
+inputs, outputs = load("7ddcd7ec.json")
+input = inputs[1]
+masks = extract_masks_bicolors(input)
+
+mask = next(iter(masks.values()))
+
+boundary = mask_to_boundary(mask)
+
+path = trace_boundary(boundary, (0, 0))
+
+g = coords_to_mask(boundary)
+print_colored_grid(g)
+
+bcoo = freeman_to_boundary_coords((0, 0), path)
+g = coords_to_mask(bcoo)
+print_colored_grid(g)
+
+#####
+
+
+# Prägnanz
+grid = [
+    [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5],
+    [5, 5, 5, 1, 1, 1, 1, 5, 5, 5, 5, 5, 0, 0, 0, 0, 5, 5, 5, 5, 5, 2, 2, 2, 2, 5, 5, 5, 5, 5],
+    [5, 5, 1, 5, 5, 5, 5, 1, 5, 5, 5, 0, 5, 5, 5, 5, 0, 5, 5, 5, 2, 5, 5, 5, 5, 2, 5, 5, 5, 5],
+    [5, 1, 5, 5, 5, 5, 5, 5, 1, 5, 0, 5, 5, 5, 5, 5, 5, 0, 5, 2, 5, 5, 5, 5, 5, 5, 2, 5, 5, 5],
+    [5, 1, 5, 5, 5, 5, 5, 5, 1, 5, 0, 5, 5, 5, 5, 5, 5, 0, 5, 2, 5, 5, 5, 5, 5, 5, 2, 5, 5, 5],
+    [5, 1, 5, 5, 5, 5, 5, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 0, 3, 3, 3, 5, 5, 5, 5, 5, 2, 5, 5, 5],
+    [5, 1, 5, 5, 5, 5, 4, 5, 1, 5, 0, 4, 5, 5, 5, 5, 3, 0, 5, 2, 5, 3, 5, 5, 5, 5, 2, 5, 5, 5],
+    [5, 5, 1, 5, 5, 4, 5, 1, 5, 5, 5, 0, 4, 5, 5, 3, 0, 5, 5, 5, 2, 5, 3, 5, 5, 2, 5, 5, 5, 5],
+    [5, 5, 5, 1, 1, 1, 1, 5, 5, 5, 5, 5, 4, 0, 0, 3, 5, 5, 5, 5, 5, 2, 2, 2, 2, 5, 5, 5, 5, 5],
+    [5, 5, 5, 5, 5, 4, 5, 5, 5, 5, 5, 5, 4, 5, 5, 3, 5, 5, 5, 5, 5, 5, 3, 5, 5, 5, 5, 5, 5, 5],
+    [5, 5, 5, 5, 5, 4, 5, 5, 5, 5, 5, 5, 4, 5, 5, 5, 3, 5, 5, 5, 5, 3, 5, 5, 5, 5, 5, 5, 5, 5],
+    [5, 5, 5, 5, 5, 5, 4, 5, 5, 5, 5, 4, 5, 5, 5, 5, 5, 3, 3, 3, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5],
+    [5, 5, 5, 5, 5, 5, 5, 4, 4, 4, 4, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5],
+    [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5],
+    [5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5]
+]
+
+### Reifcation
+grid = [
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 5, 5, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 6, 6, 0, 0, 0],
+    [0, 5, 0, 0, 0, 0, 5, 0, 0, 0, 0, 0, 6, 0, 0, 6, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 4, 4, 0, 0, 4, 4, 0, 0, 0, 0, 0, 3, 3, 0],
+    [0, 5, 0, 0, 4, 0, 5, 0, 0, 4, 0, 0, 6, 0, 3, 6, 0, 3],
+    [0, 5, 5, 0, 0, 5, 5, 0, 0, 0, 0, 0, 0, 6, 6, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 4, 0, 0, 0, 0, 4, 0, 0, 0, 0, 3, 0, 0, 3],
+    [0, 0, 0, 0, 4, 4, 0, 0, 4, 4, 0, 0, 0, 0, 0, 3, 3, 0]
+]
+
+print_colored_grid(grid)
+
+
+######
+inputs, outputs = load("7ddcd7ec.json")
+input = inputs[1]
+masks = extract_masks_bicolors(input)
+
+objects = []
+for mask in masks.values():
+    orthoset = find_coverage_by_large_sub_rectangles(mask)
+    objects.append(orthoset)
+
+print(objects)

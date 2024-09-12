@@ -5,6 +5,8 @@ from os import CLD_CONTINUED
 from helpers import *
 from operators import *
 from lattice import *
+from rectangles import *
+from freeman import mask_to_boundary, trace_boundary, freeman_to_boundary_coords
 # Tree primitives
 # String:
     # value: move string

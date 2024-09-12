@@ -8,6 +8,9 @@ Operators are classified in:
     - Topological operators: they involve notions of connectivity.
         Either 4-connectivity (Manhattan) or 8-connectivity (Chebyshev)
     - Signal and probabilistic operators: [TO-DO]
+
+
+    NOTE: [row][col] -> [col, row]
 """
 
 from helpers import *
@@ -302,8 +305,8 @@ def connected_components(mask: Mask, chebyshev=False):
 
     return component_number, distribution, components
 
-def connected_components_coords(coords: Coords, props: Proportions, chebyshev=False):
-    """Extract connex components.
+def connected_components_coords(coords: Coords, props: Proportions, chebyshev=True):
+    """Extract connected components.
         Chebyshev: if True then 8-connexity is used instead of 4-connexity
     """
     height, width = props
@@ -345,6 +348,55 @@ def connected_components_coords(coords: Coords, props: Proportions, chebyshev=Fa
 
 
     return component_number, components
+
+def condition_by_connected_components(coords: Coords, limits: Optional[Box] = None, chebyshev: bool = True) -> List[Coords]:
+    """
+    Extract the connected components of a mask represented as coords
+    """
+    seen = set()
+    components = list()
+
+    # Iterating over all coords is necessary to extract all connected components
+    for coord in coords:
+        # Has it already been seen?
+        if coord in seen:
+            continue
+
+        # If not, then perform a graph traversal, and add the discovered coords
+        # in a newly created mask
+        ncoords = set()
+        queue = [coord]
+        while queue:
+            ccoord = queue.pop(0)
+            ncoords.add(ccoord)
+            seen.add(ccoord)
+
+            # Add all unseen 4-connex neighbors
+            for dcol, drow in [(-1, 0), (0, -1), (1, 0), (0,1)]:
+                ncol, nrow = ccoord[0] + dcol, ccoord[1] + drow
+                if (ncol, nrow) in coords and (ncol, nrow) not in seen:
+                    if limits:
+                        if is_coord_in_box((ncol, nrow), limits):
+                            queue.append((ncol, nrow))
+                    else:
+                        queue.append((ncol, nrow))
+
+            if not chebyshev:
+                continue
+
+            # Add all unseen diagnonal neighbors
+            for dcol, drow in [(-1, -1), (1, -1), (-1, 1), (1,1)]:
+                ncol, nrow = ccoord[0] + dcol, ccoord[1] + drow
+                if (ncol, nrow) in coords and (ncol, nrow) not in seen:
+                    if limits:
+                        if is_coord_in_box((ncol, nrow), limits):
+                            queue.append((ncol, nrow))
+                    else:
+                        queue.append((ncol, nrow))
+
+        components.append(ncoords)
+
+    return components
 
 
 def partition(mask_connected_component, chebyshev=False):

@@ -16,7 +16,7 @@ of the morphology.
 DEBUG_RESOLVE = False
 DEBUG_UNSYMBOLIZE = False
 DEBUG_NODELIST = False
-DEBUG_ROOT = False
+DEBUG_ROOT = True
 DEBUG = False
 DEBUG_ASTMAP = False
 
@@ -27,6 +27,7 @@ LEN_MOVE = 3 # Assuming 8-coinnectivity 3bits per move
 LEN_COUNT = 4   # counts of repeats should be an int between 2 and 9 or -2 and -8 (4 bits) ideally
 LEN_INDEX = 3 # should not be more than 8 so 3 bits
 LEN_INDEX_VARIABLE = 1 # Variable can be 0 or 1 so 1 bit
+LEN_RECT = 8
 
 from dataclasses import dataclass, asdict
 from collections import deque
@@ -37,6 +38,7 @@ from typing import Any, List, Union, Optional, Iterator, Callable, Set, Tuple, D
 from helpers import *
 
 from time import sleep
+from freeman import shift4, inverse
 
 #### Abstract Syntax Tree Structure
 
@@ -164,11 +166,11 @@ class Moves(Node):
         """
         Iterator over the path
         """
-        row, col = start
+        col, row = start
         for move in self.moves:
-            row += DIRECTIONS[move][0]
-            col += DIRECTIONS[move][1]
-            yield (row, col)
+            col += DIRECTIONS[move][0]
+            row += DIRECTIONS[move][1]
+            yield (col, row)
     def copy(self) -> 'ASTNode':
         return Moves(self.moves)
     def reverse(self) -> 'ASTNode':
@@ -180,7 +182,7 @@ class Rect(Node):
     width: Union[int, 'Variable']
 
     def __len__(self) -> int:
-        return super().__len__() + 8
+        return super().__len__() + LEN_RECT
     def __str__(self) -> str:
         return f"Rect({self.height}, {self.width})"
     def __hash__(self) -> int:
@@ -528,6 +530,9 @@ class Root(Node):
                 case SymbolicNode(i, p, _) if isinstance(p, Root):
                     print(f"Trying to initialize {self.__repr__()} with another root")
                     print(f"Root: {p}")
+            col, row = self.start
+            if col < 0 or row < 0:
+                print(f"Trying to initialize {self} at nehative starting point {col}, {row}")
     def __len__(self):
         # 10 bits for x and y going from 0 to 32 max on the grids + 4 bits for each color (10 choices)
         len_node = len(self.node) if self.node is not None else 0
@@ -536,11 +541,11 @@ class Root(Node):
         match other:
             case Variable():
                 return NotImplemented
-            case Root(start=(row, col), colors=c, child=n) if not isinstance(self.start, Variable):
-                if self.start[0] == row and self.start[1] == col:
+            case Root(start=(col, row), colors=c, child=n) if not isinstance(self.start, Variable):
+                if self.start[0] == col and self.start[1] == row:
                     if self.colors != c or isinstance(self.colors, Variable) or isinstance(c, Variable):
                         raise NotImplementedError()
-                    return Root((row, col), c, Branch([self.node, n]))
+                    return Root((col, row), c, Branch([self.node, n]))
                 return Branch([self, other])
             case Root(start=s, colors=c, child=n) if  (isinstance(self.start, Variable) or isinstance(s, Variable)):
                 raise NotImplementedError()
@@ -581,6 +586,95 @@ class Root(Node):
         node = self.node.reverse() if self.node is not None else None
         return Root(self.start, self.colors, node)
 
+@dataclass
+class Root1(Node):
+    """
+    Node representing a path root. Note that the branches here can possibly lead to overlapping paths
+    """
+    start: Union[Coord, Variable]
+    colors: Union[Colors, Variable]
+    node_rel: Optional[Tuple['ASTNode', Union[int, Variable]]] # Node, first move for relative code chains
+
+    def __post_init_(self):
+        if DEBUG_ROOT:
+            match self.node_rel:
+                case Root(_), _:
+                    print(f"Trying to initialize {self.__repr__()} with another root")
+                    print(f"Root: {self.node_rel}")
+                case SymbolicNode(i, p, _), _ if isinstance(p, Root):
+                    print(f"Trying to initialize {self.__repr__()} with another root")
+                    print(f"Root: {p}")
+    def __len__(self):
+        # 10 bits for x and y going from 0 to 32 max on the grids + 4 bits for each color (10 choices)
+        len_node = 0
+        if self.node_rel is not None:
+            node, first_move = self.node_rel
+            len_node = len(node) + LEN_MOVE
+        return LEN_COORD + len(self.colors) * LEN_COLOR + len_node
+    def __add__(self, other):
+        match other:
+            case Variable():
+                return NotImplemented
+            case Root(start=(col, row), colors=c, child=(node, first_move)) if not isinstance(self.start, Variable):
+                if self.start[0] == col and self.start[1] == row:
+                    if self.colors != c or isinstance(self.colors, Variable) or isinstance(c, Variable):
+                        raise NotImplementedError()
+                    if self.node_rel is None or first_move != self.node_rel[1]:
+                        raise NotImplementedError()
+                    return Root( (col, row), c, (Branch([self.node_rel[0], node]), first_move) )
+                return Branch([self, other])
+            case Root(start=s, colors=c, child=n) if  (isinstance(self.start, Variable) or isinstance(s, Variable)):
+                raise NotImplementedError()
+        return Root(self.start, self.colors, Branch([self.node, other]))
+    def __str__(self):
+        str_node = "None"
+        if self.node_rel is not None:
+            node, fmove = self.node_rel
+            str_node = str(fmove) + "/" + str(node)
+        return f"{self.colors}->{self.start}:" + str_node
+    #def __repr__(self):
+    #    return f"{self.__class__.__name__}(start={self.start.__repr__()}, colors={str(self.colors)}, node={self.node.__repr__()})"
+    def __hash__(self):
+        return hash(self.__repr__())
+    def __eq__(self, other):
+        if not isinstance(other, Root):
+            return False
+        #if isinstance(self.start, Variable):
+        #    return (self.colors==other.colors) and (self.node == other.node)
+        return (self.start == other.start) and (self.colors==other.colors) \
+        and (self.node_rel == other.node_rel)
+
+    def depth_iter(self) -> Iterator['ASTNode']:
+        if self.node_rel is None:
+            return iter(())
+        yield self.node_rel[0]
+        if isinstance(self.node_rel[0], (Branch, Repeat, NodeList)):
+            yield from self.node_rel[0].depth_iter()
+
+    def breadth_iter(self) -> Iterator['ASTNode']:
+        if self.node_rel is None:
+            return iter(())
+
+        node, _ = self.node_rel
+        yield node
+        if isinstance(node, (Branch, Repeat, NodeList)):
+            yield from node.breadth_iter()
+
+    def copy(self) -> 'Root':
+        if not self.node_rel:
+            return Root(self.start, self.colors, None)
+
+        node, first_move = self.node_rel
+        cnode = node.copy()
+        return Root(self.start, self.colors, (cnode, first_move) )
+
+    def reverse(self) -> 'Root':
+        if self.node_rel is None:
+            return Root(self.start, self.colors, None)
+
+        node, first_move = self.node_rel
+        nnode = node.reverse()
+        return Root(self.start, self.colors, (nnode, first_move) )
 # Strategy diviser pour régner avec marginalisation + reconstruction
 @dataclass
 class UnionNode1(Node):
@@ -1007,6 +1101,24 @@ def get_depth(ast):
         case BiSymbolicNode(_, param1=p1, param2=p2, len_ref=l) if isinstance(p, ASTNode):
             depth += max([get_depth(p1), get_depth(p2)])
     return depth
+
+def get_depth1(ast):
+    depth=1
+    match ast:
+        case None:
+            return 0
+        case Root(_, _, (n, first_move)):
+            depth += get_depth(n)
+        case Repeat(n , _):
+            depth += get_depth(n)
+        case Branch(seq=ls) | NodeList(nodes=ls):
+            depth += max([get_depth(n) for n in ls])
+        case SymbolicNode(_, param=p, len_ref=l) if isinstance(p, ASTNode):
+            depth += get_depth(p)
+        case BiSymbolicNode(_, param1=p1, param2=p2, len_ref=l) if isinstance(p, ASTNode):
+            depth += max([get_depth(p1), get_depth(p2)])
+    return depth
+
 def is_symbolic(ast):
     match ast:
         case SymbolicNode() | BiSymbolicNode():
@@ -1044,7 +1156,7 @@ def get_symbols(ast):
             return []
 
 
-def ast_map1(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
+def ast_map2(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
     """
     Map a function from an single ASTNode to an single AST node to an entire AST.
     :param f: function to map
@@ -1153,7 +1265,7 @@ def ast_map(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
             return f(BiSymbolicNode(i, p1, nnode2, l))
         case _:
             return f(node)
-def ast_map2(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
+def ast_map3(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
     """
     Map a function from an single ASTNode to an single AST node to an entire AST.
     :param f: function to map
@@ -1208,6 +1320,66 @@ def ast_map2(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
             return f(BiSymbolicNode(i, p1, nnode2, l))
         case _:
             return f(node)
+
+def ast_map1(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
+    """
+    Map a function from an single ASTNode to an single AST node to an entire AST.
+    :param f: function to map
+    :param node:
+    """
+    match node:
+        case None:
+            return None
+        case Root(start=s, colors=c, node_rel=(n, first_move) ):
+            nnode = ast_map(f, n)
+            if nnode is None:
+                return f(Root(s, c, None))
+            return f(Root(s, c, (nnode, first_move) ))
+        case Branch(sequences = seqs):
+            nsequences = [nnode for seq in seqs if (nnode := ast_map(f, seq)) is not None]
+            return f(Branch(nsequences))
+        case NodeList(nodes = node_ls):
+            try:
+                nnodes = [nnode for n in node_ls if (nnode := ast_map(f, n)) is not None]
+                return f(NodeList(nnodes))
+            except NotImplementedError as e:
+                print(f"Caught a NotImplementedError: {e}")
+                print(f"Traceback: {print_trace(e)}")
+                print(f"List of subnodes: ")
+                for n in node_ls:
+                    print(f"Node: {n}")
+            return NotImplemented
+        case UnionNode(codes, shadowed, background):
+            ncodes = set([ncode for n in codes if (ncode := ast_map(f, n)) is not None])
+            if shadowed:
+                nshadowed = set([ncode for n in shadowed if (ncode := ast_map(f, n)) is not None])
+            else:
+                nshadowed = None
+            nbackground = ast_map(f, background) if background else None
+            return f(UnionNode(ncodes, nshadowed, nbackground))
+        case Repeat(node=n, count=c):
+            nnode = ast_map(f, n)
+            if nnode is not None:
+                return f(Repeat(nnode, c)) #if nnode is not None else None
+            else:
+                return None
+        case SymbolicNode(index=i, param=p, len_ref=l) if isinstance(p, ASTNode):
+            nnode = ast_map(f, p)
+            return f(SymbolicNode(i, nnode, l))
+        case BiSymbolicNode(index=i, param1=p1, param2=p2, len_ref=l) if isinstance(p1, ASTNode) \
+        and isinstance(p2, ASTNode):
+            nnode1 = ast_map(f, p1)
+            nnode2 = ast_map(f, p2)
+            return f(BiSymbolicNode(i, nnode1, nnode2, l))
+        case BiSymbolicNode(index=i, param1=p1, param2=p2, len_ref=l) if isinstance(p1, ASTNode):
+            nnode1 = ast_map(f, p1)
+            return f(BiSymbolicNode(i, nnode1, p2, l))
+        case BiSymbolicNode(index=i, param1=p1, param2=p2, len_ref=l) if isinstance(p2, ASTNode):
+            nnode2 = ast_map(f, p2)
+            return f(BiSymbolicNode(i, p1, nnode2, l))
+        case _:
+            return f(node)
+
 ### Helper functions to compress ASTs
 
 def find_repeating_pattern(nodes: List[ASTNode], offset):
@@ -1287,7 +1459,7 @@ def factorize_nodelist(ast_node):
 
     return NodeList(nodes=nnodes)
 
-def functionalized1(node):
+def functionalized2(node):
     """
     Return a functionalized version of the node and a parameter.
     As the parameter count of Repeat is not a ASTNode, it's functionalized version
@@ -1307,7 +1479,7 @@ def functionalized1(node):
             if not isinstance(nnode, Variable) and not isinstance(count, Variable):
                 functions = [(Repeat(Variable(-1), count), nnode), (Repeat(nnode, Variable(-1)), count)]
             return functions
-        case Root(start=s, colors=c, node=n):
+        case Root(start=s, colors=c, node=(n)):
             functions = []
             if not isinstance(s, Variable) and not isinstance(n, Variable) and not isinstance(c, Variable):
                 functions = [
@@ -1383,6 +1555,74 @@ def functionalized(node: ASTNode) -> List[Tuple[ASTNode, Any]]:
             return [(Rect(Variable(0), Variable(0)), h)]
         case _:
             return []
+
+
+def functionalized1(node: ASTNode) -> List[Tuple[ASTNode, Any]]:
+    """
+    Return a functionalized version of the node and a parameter.
+    As the parameter count of Repeat is not a ASTNode, it's functionalized version
+    is 0 to mark it needs to be replaced, -index once replaced
+    """
+    match node:
+        case Branch(sequences=sequences):
+            #max_sequence = max(sequences, key=len)
+            max_sequences = sorted(sequences, key=len, reverse=True)[:2]
+            max_sequence = max_sequences[0]
+            nsequences1 = [seq if seq != max_sequence else Variable(0) for seq in sequences]
+
+            nsequences2 = []
+            for nnode in sequences:
+                if nnode in max_sequences:
+                    nsequences2.append(Variable(max_sequences.index(nnode)))
+                else:
+                    nsequences2.append(nnode)
+
+            return [(Branch(nsequences1), max_sequence), (Branch(nsequences2), max_sequences)]
+        case NodeList(nodes=nodes):
+            #max_node = max(nodes, key=len)
+            max_nodes = sorted(nodes, key=len, reverse=True)[:2]
+            max_node = max_nodes[0]
+
+            # Replacing only 1
+            nnodes1 = [nnode if nnode != max_node else Variable(0)for nnode in nodes]
+
+            # Or replacing 2 variables
+            nnodes2 = []
+            for nnode in nodes:
+                if nnode in max_nodes:
+                    nnodes2.append(Variable(max_nodes.index(nnode)))
+                else:
+                    nnodes2.append(nnode)
+            return [(NodeList(nnodes1), max_node), (NodeList(nnodes2), max_nodes)]
+        case Repeat(node=nnode, count=count):
+            functions = []
+            if not isinstance(nnode, Variable) and not isinstance(count, Variable):
+                functions = [(Repeat(Variable(0), count), nnode), (Repeat(nnode, Variable(0)), count)]
+            return functions
+        case Root(start=s, colors=c, node=(n, first_move) ):
+            functions = []
+            if True or (not isinstance(s, Variable) and not isinstance(n, Variable) and not isinstance(c, Variable)):
+                functions = [
+                    # Bar the Root to memorize position otherwise it defeats the purpose of "objectification"
+                    (Root(Variable(0), c, (n, first_move)), s),
+                    #(Root(s, c, Variable(0)), n),
+                    (Root(Variable(0), c, (Variable(1), first_move) ), [s, n]),
+                    (Root(Variable(0), c, (n, Variable(1)) ), [s, first_move])
+                ]
+                if len(c) == 1:
+                    functions.extend([
+                        #(Root(s, Variable(0), n), c),
+                        (Root(Variable(0), Variable(1), (n, first_move) ), [s, c]),
+                        #(Root(s, Variable(0), Variable(1)), [c, n])
+
+                    ])
+            return functions
+        case Rect(height=h, width=w) if h==w:
+            return [(Rect(Variable(0), Variable(0)), h)]
+        case _:
+            return []
+
+
 def copy_ast(node: ASTNode) -> ASTNode:
     return ast_map(lambda node: node, node)
 ### Other helper functions
@@ -1488,6 +1728,124 @@ def construct_node(coordinates, is_valid: Callable[[Coord], bool], traversal="df
 
     node = bfs(coordinates) if traversal=="bfs" else dfs(coordinates)
     return ast_map(extract_rects, ast_map(factorize_nodelist, node))
+
+def construct_node1(coordinates, is_valid: Callable[[Coord], bool], traversal="dfs") -> Optional[Tuple[ASTNode, int]]:
+    seen = set([coordinates])
+    def transitionsTower(coordinates):
+        return available_transitions(is_valid, coordinates, MOVES[:4])
+    def transitionsBishop(coordinates):
+        return available_transitions(is_valid, coordinates, MOVES[4:])
+
+    def add_move_left(move, node: Optional[ASTNode]):
+        def shift_by_move(node: ASTNode) -> ASTNode:
+            match node:
+                case Moves(moves):
+                    # Relative here means shifting in 4shift by an amount equal to the inverse of the previous
+                    cmove = int(moves[0])
+                    cmove = str(shift4(cmove, -int(move)%4))
+                    return Moves(cmove + moves[1:])
+                case Repeat(n, c):
+                    return Repeat(shift_by_move(n), c)
+                case NodeList(nodes=nodes):
+                    return NodeList([shift_by_move(nodes[0])] + nodes[1:])
+                case Branch(sequences=sequences):
+                    return Branch([shift_by_move(sequence) for sequence in sequences])
+                case _:
+                    return node
+
+        if not node:
+            return Moves(move)
+        else:
+            return Moves(move) + shift_by_move(node)
+
+    def dfs(coordinates) -> Optional[tuple[ASTNode, int]]:
+        branches = []
+        branches_simplified = []
+        for move, ncoordinates in transitionsTower(coordinates):
+            if ncoordinates not in seen:
+                first_move = int(move)
+                seen.add(ncoordinates)
+                ndfs = dfs(ncoordinates)
+                node = None
+                if ndfs:
+                    node, _ = ndfs
+                nnode = add_move_left(move, node)
+                branches.append((first_move, nnode))
+        for move, ncoordinates in transitionsBishop(coordinates):
+            if ncoordinates not in seen:
+                first_move = int(move)
+                seen.add(ncoordinates)
+                ndfs = dfs(ncoordinates)
+                node = None
+                if ndfs:
+                    node, _ = ndfs
+                nnode = add_move_left(move, node)
+                branches.append((first_move, nnode))
+
+        for node in branches:
+            first_move, nnode = node
+            if isinstance(node, Moves):
+                branches_simplified.append(encode_run_length(nnode))
+            else:
+                branches_simplified.append(nnode)
+
+        if len(branches_simplified) > 1:
+            return Branch(branches_simplified), 0 # Branches don't have an immediate first move'
+        elif len(branches_simplified) == 1:
+            return branches_simplified[0], branches[0][0]
+        else:
+            return None
+
+    def bfs(coordinates) -> Optional[tuple[ASTNode, int]]:
+        queue = []
+        branches = []
+        branches_simplified = []
+        queue_tower = []
+        queue_bishop = []
+        for move, ncoordinates in transitionsTower(coordinates):
+            if ncoordinates not in seen:
+                seen.add(ncoordinates)
+                queue_tower.append((move, ncoordinates))
+        for move, ncoordinates in transitionsBishop(coordinates):
+            if ncoordinates not in seen:
+                seen.add(ncoordinates)
+                queue_bishop.append((move, ncoordinates))
+        for queue in (queue_tower, queue_bishop):
+            for move, ncoordinates in queue:
+                first_move = int(move)
+                nbfs = bfs(ncoordinates)
+                node = None
+                if nbfs:
+                    node, _ = nbfs
+                nnode = add_move_left(move, node)
+                branches.append((first_move, nnode))
+
+        for node in branches:
+            first_move, cnode = node
+            if isinstance(cnode, Moves):
+                # Run-Lenght Encoding
+                branches_simplified.append(encode_run_length(cnode))
+            else:
+                branches_simplified.append(cnode)
+
+        if len(branches_simplified) > 1:
+            return Branch(branches_simplified), 0 # Branches don't have an immediate first move'
+        elif len(branches_simplified) == 1:
+            return branches_simplified[0], branches[0][0]
+        else:
+            return None
+
+    ntraversal = bfs(coordinates) if traversal=="bfs" else dfs(coordinates)
+    if not ntraversal:
+        return None
+
+    node, first_move = ntraversal
+    node = ast_map(extract_rects, ast_map(factorize_nodelist, node))
+    if node:
+        return node, first_move
+    else:
+        return None
+
 
 def symbolize_next(ast_ls: List[ASTNode], refs: SymbolTable, lattice_count=1) -> Tuple[List[ASTNode], bool]:
     # co_symbolize a list of ast
@@ -1596,6 +1954,114 @@ def symbolize_next(ast_ls: List[ASTNode], refs: SymbolTable, lattice_count=1) ->
     # Note you can only replace one at a time because a same node can be part of several 1-form
     return [replace_symb(node) for node in ast_ls], True
 
+def symbolize_next1(ast_ls: List[ASTNode], refs: SymbolTable, lattice_count=1) -> Tuple[List[ASTNode], bool]:
+    # co_symbolize a list of ast
+    pattern_encountered = {}
+
+    def register_node(pattern, param=None):
+        # pattern = (count, value, value_param, bi)
+        bi = isinstance(param, list)
+        if pattern in pattern_encountered:
+            pattern_encountered[pattern] = (pattern_encountered[pattern][0] + 1, \
+                pattern_encountered[pattern][1], pattern_encountered[pattern][2] + len_param(param), bi)
+        else:
+            pattern_encountered[pattern] = (1, len(pattern), len_param(param), bi)
+    def discover_node(node):
+        """
+        Add a node to the dictionary of node, and its functionalized variants
+        """
+        if not isinstance(node, (SymbolicNode, Variable, Root, UnionNode, BiSymbolicNode)): #the not Variable is probably not useful
+            register_node(node)
+        funs = functionalized(node)
+
+        for fun, parameter in funs:
+            register_node(fun, parameter)
+
+    def add_symbol(symb):
+        index = len(refs) # we are adding a new symbol at the end
+
+        def precize_symb(node):
+            return node#update_symbol(node, 0)#index)#, -1) #Var(-1) ande Repeat(_, 0) marks unupdated node
+
+        symb_precized = ast_map(precize_symb, symb)
+        refs.append(symb_precized)
+        return symb_precized
+
+    # For each ast and templates already in the symbol table, discover every node
+    for node in ast_ls + list(refs):
+        if node is not None:
+            discover_node(node)
+            for n in node.breadth_iter():
+                discover_node(n)
+
+    # 6: cost of a symbolic node
+    def bit_gained(value, count, bi=False):
+        if not bi:
+            value_symb = len(SymbolicNode(-1, None, 0))
+        else:
+            value_symb = len(BiSymbolicNode(-1, None, None, 0))
+        compression = count*value - (count-1)*value_symb - value
+        return compression#original - compressed
+
+    compressable =[(node, bit_gained(value, count)) \
+    for node, (count, value, value_param, bi) in pattern_encountered.items() if bit_gained(value, count, bi) > 0 \
+   and count > lattice_count and node not in refs]
+
+    if not compressable:
+        return ast_ls, False
+
+    max_symb, _ = max(compressable, key=lambda x: x[1])
+    symb_precized = add_symbol(max_symb)
+
+
+    def replace_by_symbol(node, symb):
+        index = len(refs) - 1
+
+        # If the symbol is a constant, and equal to the current node repl
+        # Replace the current node by the symbol
+        if node == max_symb:
+            return SymbolicNode(index, None, len(max_symb))
+
+        # Else, propragate the symbolic node
+        match node:
+            case Branch(sequences=sequences):
+                node = Branch([replace_by_symbol(n, max_symb) for n in sequences])
+            case NodeList(nodes=nodes):
+                node = NodeList([replace_by_symbol(n, max_symb) for n in nodes])
+            case Repeat(node=n, count=c):
+                node = Repeat(replace_by_symbol(n, max_symb), c)
+            case Root(start=s, colors=c, node=(n, first_move)):
+                node = Root(s, c, (replace_by_symbol(n, max_symb), first_move) )
+
+
+        funs = functionalized(node)
+        # And test for functions
+        for fun, parameter in funs:
+            if fun == max_symb:
+                if isinstance(parameter, list):
+                    return BiSymbolicNode(index, parameter[0], parameter[1], len(max_symb))
+                return SymbolicNode(index, parameter, len(max_symb))
+
+        return node
+
+    def replace_symb(node):
+        return replace_by_symbol(node, symb_precized)
+
+    for ref in refs:
+        match ref:
+            case Branch(sequences=seqs):
+                ref.sequences = [replace_symb(n) for n in seqs]
+            case NodeList(nodes=node_ls):
+                ref.nodes = [replace_symb(n) for n in node_ls]
+            case Repeat(node=n, count=c):
+                ref.node = replace_symb(n)
+            case Root(start=s, colors=c, node_rel=(n, first_move) ):
+                ref.node_rel = (replace_symb(n), first_move)
+
+    # Note you can only replace one at a time because a same node can be part of several 1-form
+    return [replace_symb(node) for node in ast_ls], True
+
+
 @handle_elements
 def symbolize(ast_ls: List[ASTNode], refs: SymbolTable, lattice_count=1) -> List[ASTNode]:
     """Symbolize ast_ls as much as possible"""
@@ -1656,6 +2122,62 @@ def resolve_symbolic(node: ASTNode, refs: SymbolTable):
                 return node
 
     return ast_map(resolve_symbolic_node, node)
+
+def resolve_symbolic1(node: ASTNode, refs: SymbolTable):
+    def replace_parameter(node, param, index):
+        """Replace a variable by the right parameter"""
+        match node:
+            case Variable(index=i) if i==index:
+                if DEBUG_RESOLVE:
+                    print(f"Replacing variable {node} by {param}")
+                return param
+            case Rect(height=Variable(index=i1), width=Variable(index=i2)) if i1==index and i2==index:
+                return Rect(height=param, width=param)
+            case Repeat(node=n, count=Variable(index=i)) if i == index:
+                if DEBUG_RESOLVE:
+                    print(f"Replacing repeat's count {node.count} by {param}")
+                return Repeat(n, param)
+            case Root(start=Variable(index=i), colors=c, node_rel=(n, first_move) ) if i == index:
+                if DEBUG_RESOLVE:
+                    print(f"Replacing roots's start {node.start} by {param}")
+                return Root(param, c, (n, first_move) )
+            case Root(start=s, colors=Variable(index=i), node_rel=(n, first_move)) if i == index:
+                if DEBUG_RESOLVE:
+                    print(f"Replacing roots's color {node.colors} by {param}")
+                return Root(s, param, (n, first_move) )
+            case Root(start=s, colors=c, node_rel=(n, Variable(index=i)) ):
+                return Root(s, c, (n, param) )
+        return node
+
+    def resolve_symbolic_node(node: ASTNode):
+        """Replace a SymbolicNode by the ASTNode it represents"""
+        match node:
+            case BiSymbolicNode(index, param1, param2, l):
+                param1 = ast_map(resolve_symbolic_node, param1) if isinstance(param1, ASTNode) else param1
+                param2 = ast_map(resolve_symbolic_node, param2) if isinstance(param2, ASTNode) else param2
+                template = refs[index]
+
+                replace_param1 = lambda node: replace_parameter(node, param1, 0)#index)
+                replace_param2 = lambda node: replace_parameter(node, param2, 1)#index)
+                nnode = ast_map(replace_param1, template)
+                nnode = ast_map(replace_param2, nnode)
+                return nnode
+
+            case SymbolicNode(index, param):
+                if param is None:
+                    return refs[index]
+                else:
+                    # First resolve param:
+                    param = ast_map(resolve_symbolic_node, param) if isinstance(param, ASTNode) else param
+                    template = refs[index]
+                    replace_param = lambda node: replace_parameter(node, param, 0)#index)
+                    nnode = ast_map(replace_param, template)
+                    return nnode
+            case _:
+                return node
+
+    return ast_map(resolve_symbolic_node, node)
+
 
 @handle_elements
 def unsymbolize(ast_ls: List[ASTNode], refs: SymbolTable):
@@ -1742,16 +2264,16 @@ def populate_old(grid, node, coordinates=(0,0), color=1, construction = None):
 
         node = node.node
 
-    row, col = coordinates
+    col, row = coordinates
     ncoordinates = coordinates
     grid[row][col] = color
     if isinstance(node, Moves):
         if DEBUG:
             print("Node dected as Moves")
             print(f"Coloring with color {color} the path {node.moves}")
-        for row, col in node.iter_path(coordinates):
+        for col, row in node.iter_path(coordinates):
           grid[row][col] = color
-          ncoordinates = (row, col)
+          ncoordinates = (col, row)
     if isinstance(node, (Repeat, NodeList)):
         if DEBUG:
             print("Node dected as Repeat or NodeList")
@@ -1882,7 +2404,7 @@ def update_asts(ast_ls: List[ASTNode], nrefs: SymbolTable, mapping: List[int]):
     return ast_ls
 
 
-def construct_union1(code: Optional[ASTNode], codes: List[Tuple[int, ASTNode]], refs: SymbolTable, box: Box):
+def construct_union2(code: Optional[ASTNode], codes: List[Tuple[int, ASTNode]], refs: SymbolTable, box: Box):
     #codes = [c for c in codes if c is not None]
     #codes.sort(reverse=True, key=lambda x: len(x[1]))
     def remove_symbolized_code(input: Dict[Color,Set[Tuple['ASTNode', 'ASTNode']]]) -> Dict[Color,Set['ASTNode']]:
@@ -1954,7 +2476,7 @@ def construct_union(code: Optional[ASTNode], codes: List[ASTNode], unions: List[
         # a code elements cannot be both standalone and in a union already as the depths wouldn't match
         # Issue: codes can already be unions because unions can contain unions...
 
-    for u in unions:
+    for i, u in enumerate(unions):
         if not u.background:
             raise ValueError(f"Union {u} sent without background")
 
@@ -1966,9 +2488,11 @@ def construct_union(code: Optional[ASTNode], codes: List[ASTNode], unions: List[
     code_unions = set((ncode for ncode in unsymbolized if isinstance(ncode, UnionNode)))
     code_roots = set((ncode for ncode in unsymbolized if isinstance(ncode, Root)))
 
+
     # fuse code_unions with unions
     code_unions.update(unions)
     codes_dump = set()
+
 
     #codes = [c for c in codes if c is not None]
     #codes.sort(reverse=True, key=lambda x: len(x[1]))
@@ -1989,7 +2513,6 @@ def construct_union(code: Optional[ASTNode], codes: List[ASTNode], unions: List[
     # they should be expanded. Thus only unions with novel codes should be kept
     subunions = set()
 
-
     # Count occurrences of each code
     # Also count each color to know which one to use for background normalization
     colors_count = defaultdict(set)
@@ -2007,17 +2530,22 @@ def construct_union(code: Optional[ASTNode], codes: List[ASTNode], unions: List[
         else:
             subunions.add(u)
 
+
     subcodes = defaultdict(set)
 
     for ncode in code_roots:
         c = next(iter(ncode.colors)) # type: ignore
         index = unsymbolized.index(ncode)
         subcodes[c].add((codes[index], ncode))
+        if is_symbolic(ncode):
+            print(f'From code_roots, Error: code symbolic: {ncode}')
         colors_count[c].add((codes[index], ncode))
 
     for ncode in codes_dump:
         c = next(iter(ncode.colors)) # type: ignore
         subcodes[c].add((factor_by_refs(ncode, refs), ncode))
+        if is_symbolic(ncode):
+            print(f'From codes_dump: Error: code symbolic: {ncode}')
         colors_count[c].add((factor_by_refs(ncode, refs), ncode))
 
     for u in code_unions:
@@ -2027,20 +2555,6 @@ def construct_union(code: Optional[ASTNode], codes: List[ASTNode], unions: List[
         c = next(iter(u.background.colors)) # type: ignore
         colors_count[c].add((factor_by_refs(u.background, refs), u.background))
 
-
-
-
-    #for i, symbolized in enumerate(codes_roots):
-    #    match unsymbolized[i]:
-    #        case Root(start=s, colors=colors, node=n) if len(colors) == 1:
-    #            c = next(iter(colors)) # type: ignore
-    #            subcodes[c].add((symbolized, unsymbolized[i]))
-    #            colors_count[c].add((symbolized, unsymbolized[i]))
-
-    #        case Root(_, _, _):
-    #            raise ValueError("Root with more than one color propagated in UnionNode")
-    #        case _:
-    #            raise ValueError("UnionNode initialized with a node which isn't Root or UnionNode")
     # background normalization
     # First, computing the description length for each colors
     # Then sorting them by description length
@@ -2052,6 +2566,7 @@ def construct_union(code: Optional[ASTNode], codes: List[ASTNode], unions: List[
         len_color_symbolic = 0
         is_border = False
         for symbolized, unsymbolized in codes_color:
+            # Issue: a backgrojnd can be symbolized here, strang
             _, points = decode(unsymbolized)
             if points and touches_border(points, box):
                 is_border = True
@@ -2083,7 +2598,7 @@ def construct_union(code: Optional[ASTNode], codes: List[ASTNode], unions: List[
                     #for code in union.shadowed:
                     #    c = next(iter(code.colors)) # type: ignore
                     #    subcodes[c].add((code, code))
-            nshadowed = subcodes[color]
+            nshadowed = set((unsymbolized for ncode, unsymbolized in subcodes[color]))
             del subcodes[color]
 
     for union in subunions:
@@ -2096,6 +2611,151 @@ def construct_union(code: Optional[ASTNode], codes: List[ASTNode], unions: List[
         subcodes = set()
 
     return UnionNode( nsubunions | subcodes, nshadowed, nbackground) # type: ignore
+
+def construct_union1(code: Optional[ASTNode], codes: List[ASTNode], unions: List[ASTNode], refs: SymbolTable, box: Box):
+    # Hypothesess:
+        # union elements of union are always already unsymbolized and have a background
+        # code elements of codes are symbolized
+        # a code elements cannot be both standalone and in a union already as the depths wouldn't match
+        # Issue: codes can already be unions because unions can contain unions...
+
+    for i, u in enumerate(unions):
+        if not u.background:
+            raise ValueError(f"Union {u} sent without background")
+
+    # Unsymbolized the symbolized code and background
+    unsymbolized = unsymbolize([scode for scode in codes], refs)
+    background = unsymbolize(code, refs) # type: ignore
+
+    # Expel the unions from codes
+    code_unions = set((ncode for ncode in unsymbolized if isinstance(ncode, UnionNode)))
+    code_roots = set((ncode for ncode in unsymbolized if isinstance(ncode, Root)))
+
+
+    # fuse code_unions with unions
+    code_unions.update(unions)
+    codes_dump = set()
+
+
+    #codes = [c for c in codes if c is not None]
+    #codes.sort(reverse=True, key=lambda x: len(x[1]))
+    def remove_symbolized_code(input: Dict[Color,Set[Tuple['ASTNode', 'ASTNode']]]) -> Dict[Color,Set['ASTNode']]:
+        codes={}
+        for color, subcode_c in input.items():
+            codes_color = set([unsymbolized for ncode, unsymbolized in subcode_c])
+            codes[color] = codes_color
+        return codes
+
+    # First handle subunion:
+        # cases
+        # A shadowed shadowed element of one is an element of the other
+        # -> Remove the background, dump all elements in codes
+
+    # First retrieve all codes,
+    # if a code appears more than once, then the unions that contains it intersects
+    # they should be expanded. Thus only unions with novel codes should be kept
+    subunions = set()
+
+    # Count occurrences of each code
+    # Also count each color to know which one to use for background normalization
+    colors_count = defaultdict(set)
+    codes_count = {}
+
+    for u in code_unions:
+        for ncode in u.codes:
+            codes_count[ncode] = codes_count.get(ncode, 0) + 1
+
+    # codes_dump can still contains union lol
+    for u in code_unions:
+        if any(codes_count[ncode] > 1 for ncode in u.codes) or (u.shadowed & codes_count.keys()):
+            codes_dump.update(u.codes)
+            codes_dump.update(u.shadowed)
+        else:
+            subunions.add(u)
+
+
+    subcodes = defaultdict(set)
+
+    for ncode in code_roots:
+        c = next(iter(ncode.colors)) # type: ignore
+        index = unsymbolized.index(ncode)
+        subcodes[c].add((codes[index], ncode))
+        if is_symbolic(ncode):
+            print(f'From code_roots, Error: code symbolic: {ncode}')
+        colors_count[c].add((codes[index], ncode))
+
+    for ncode in codes_dump:
+        c = next(iter(ncode.colors)) # type: ignore
+        subcodes[c].add((factor_by_refs(ncode, refs), ncode))
+        if is_symbolic(ncode):
+            print(f'From codes_dump: Error: code symbolic: {ncode}')
+        colors_count[c].add((factor_by_refs(ncode, refs), ncode))
+
+    for u in code_unions:
+        for ncode in u.codes:
+            c = next(iter(ncode.colors)) # type: ignore
+            colors_count[c].add((factor_by_refs(ncode, refs), ncode))
+        c = next(iter(u.background.colors)) # type: ignore
+        colors_count[c].add((factor_by_refs(u.background, refs), u.background))
+
+    # background normalization
+    # First, computing the description length for each colors
+    # Then sorting them by description length
+    # FInally, if the background is less than the heaviest description replace it by the background
+
+    len_colors = []
+    for color, codes_color in colors_count.items():
+        len_color = 0
+        len_color_symbolic = 0
+        is_border = False
+        for symbolized, unsymbolized in codes_color:
+            # Issue: a backgrojnd can be symbolized here, strang
+            _, _, points = decode(unsymbolized)
+            if points and touches_border(points, box):
+                is_border = True
+
+            len_color += len(symbolized)
+            len_color_symbolic += (0 if not isinstance(symbolized, (SymbolicNode, BiSymbolicNode)) else symbolized.len_ref)
+        len_colors.append((color, len_color, len_color_symbolic, is_border))
+
+    # / 5 is an evil arbitrary parameter necessary in case some node memorization is "too" efficient
+    len_colors.sort(reverse=True, key=lambda x: (x[3], x[1] +  x[2]/5))
+
+    nbackground = None
+    nshadowed = None
+    nsubunions = set()
+    unions_to_remove = []
+
+    if len_colors:
+        color, length, len_ref, is_border = len_colors[0]
+        if background and is_border and length + len_ref/5 > len(code):
+            background.colors = {color}
+            nbackground = background
+
+            for union in subunions:
+                if next(iter(union.background.colors)) == color or (union.codes&subcodes[color]) :
+                    for code in union.codes:
+                        c = next(iter(code.colors)) # type: ignore
+                        subcodes[c].add((code, code))
+                        unions_to_remove.append(union)
+                    #for code in union.shadowed:
+                    #    c = next(iter(code.colors)) # type: ignore
+                    #    subcodes[c].add((code, code))
+            nshadowed = set((unsymbolized for ncode, unsymbolized in subcodes[color]))
+            del subcodes[color]
+
+    for union in subunions:
+        if not union in unions_to_remove:
+            nsubunions.add(union)
+
+    if subcodes:
+        subcodes =  quotient_to_set(remove_symbolized_code(input=subcodes))
+    else:
+        subcodes = set()
+
+    return UnionNode( nsubunions | subcodes, nshadowed, nbackground) # type: ignore
+
+
 def hide_position(node: ASTNode) -> ASTNode:
     match node:
         case Root(s, c, n):
@@ -2212,9 +2872,9 @@ def decode(node: ASTNode, coordinates: Coord =(0,0), color: int = 1) -> Tuple[Co
             coords = points_to_coords(points)
             code_background = decode(background)[1] if background else set()
 
-            for row, col, color in code_background:
-                if not (row, col) in coords:
-                    points.add((row, col, color))
+            for col, row, color in code_background:
+                if not (col, row) in coords:
+                    points.add((col, row, color))
 
             return coordinates, points
         case Root(start, colors, nnode):
@@ -2226,11 +2886,11 @@ def decode(node: ASTNode, coordinates: Coord =(0,0), color: int = 1) -> Tuple[Co
             node = nnode
 
     # Then continue with traditional nodes
-    row, col = coordinates
+    col, row = coordinates
     ncoordinates = coordinates
 
     # Start point
-    points = [(row, col, color)]
+    points = [(col, row, color)]
 
     if isinstance(node, Rect):
         node = rect_to_moves(node.height, node.width)
@@ -2238,9 +2898,9 @@ def decode(node: ASTNode, coordinates: Coord =(0,0), color: int = 1) -> Tuple[Co
     # Searching and processing the non-symbolic traditional nodes
     match node:
         case Moves(moves):
-            for row, col in node.iter_path(coordinates):
-                points.append((row, col, color))
-                ncoordinates = (row, col)
+            for col, row in node.iter_path(coordinates):
+                points.append((col, row, color))
+                ncoordinates = (col, row)
         case NodeList() | Repeat():
             for nnode in node:
                 ncoordinates, npoints = decode(nnode, ncoordinates, color)
@@ -2252,11 +2912,103 @@ def decode(node: ASTNode, coordinates: Coord =(0,0), color: int = 1) -> Tuple[Co
 
     return ncoordinates, set(points)
 
+def decode1(node: ASTNode, first_move=0, first_node= False, coordinates: Coord =(0,0), color: int = 1) -> Tuple[Coord, int, Points]:
+    """
+    Decode asts into grid without having a particular grid imposed.
+    The AST should not be symbolic, it has to have its symbols resolved first.
+    It shouldn't either be a parametrized symbol, i.e. of a function of Vars
+    It enables to dynamically decide of the resulting grid proportions downstream.
+    First_move is used for differential coding. First_node to know if first_move is a check or a pasrt move
+    """
+    if is_function(node):
+        print(node)
+        raise ValueError("A function cannot be decoded")
+    if is_symbolic(node):
+        raise ValueError("Trying to decode a node containing symbols. Please resolve it's symbols first")
+
+    if node is None:
+        return coordinates, set()
+
+    first_node = False # Used to known if the first_move is a past element pr
+    # First search for top-level nodes: UnionNode and Root
+    match node:
+        case UnionNode(codes, _, background):
+            # First getting the points of every code
+            points = set([point for code in codes for point in decode(code)[2]])
+
+            # Then getting the points of the backgroudn that don't conflicts with a points of the codes
+            coords = points_to_coords(points)
+            code_background = decode(background)[2] if background else set()
+
+            for col, row, color in code_background:
+                if not (col, row) in coords:
+                    points.add((col, row, color))
+
+            return coordinates, 0, points
+        case Root(start, colors, (nnode, fmove) ):
+            # Switching to the root node, and setting appropriate parameters
+            if not isinstance(start, Variable):
+                coordinates = start
+            if not isinstance(colors, Variable) and len(colors) == 1:
+                color = list(colors)[0]
+            if not isinstance(fmove, Variable):
+                first_move = fmove
+                first_node = True
+            node = nnode
+
+    # Then continue with traditional nodes
+    col, row = coordinates
+    ncoordinates = coordinates
+
+    # Start point
+    points = [(col, row, color)]
+
+    if isinstance(node, Rect):
+        node = rect_to_moves(node.height, node.width)
+
+    # Searching and processing the non-symbolic traditional nodes
+    last_move = first_move
+    match node:
+        case Moves(moves):
+            ncoordinates = coordinates
+            cmoves = moves
+            if first_node:
+                if last_move != -1 and last_move != int(cmoves[0]):
+                    raise ValueError("First move isn't matching")
+                last_move = 0 # as the first move is the current move, last move is 0
+            for move in moves:
+                col, row = ncoordinates
+                # Integrate moves
+                move_absolute = str( shift4( int(move), last_move % 4 ))
+                col += DIRECTIONS[move_absolute][0]
+                row += DIRECTIONS[move_absolute][1]
+                points.append((col, row, color))
+                last_move = int(move_absolute)
+                ncoordinates = (col, row)
+        case NodeList() | Repeat():
+            for nnode in node:
+                ncoordinates, last_move, npoints = decode(nnode, last_move, first_node, ncoordinates, color)
+                first_node = False
+                points.extend(npoints)
+        case Branch():
+            for nnode in node:
+                if first_node:
+                    last_move = -1 # First branches don't have a first move'
+                _, _, npoints = decode(nnode, last_move, first_node, ncoordinates, color)
+                first_node = False
+                points.extend(npoints)
+
+    return ncoordinates, last_move, set(points)
+
 def node_to_grid(node: ASTNode) -> Grid:
     _, points = decode(node)
     return points_to_grid_colored(points)
 
-def ast_distance1(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: SymbolTable) -> int:
+def node_to_grid1(node: ASTNode) -> Grid:
+    _, _, points = decode(node)
+    return points_to_grid_colored(points)
+
+def ast_distance2(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: SymbolTable) -> int:
     def list_edit_distance(list1, list2):
         m, n = len(list1), len(list2)
 
@@ -2461,6 +3213,286 @@ def ast_distance(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: Symbo
                     dp[i][j] = min(replace_cost, delete_cost, insert_cost)
 
         return dp[m][n]
+    def set_edit_distance2(s1, s2):
+        s1, s2 = set(s1), set(s2)
+
+        # Strings present in both sets
+        common = s1.intersection(s2)
+
+        # Strings only in s1 or s2
+        only_in_s1 = s1 - common
+        only_in_s2 = s2 - common
+
+        # Calculate the cost of adding/removing strings
+        add_remove_cost = len(only_in_s1) + len(only_in_s2)
+
+        # Calculate the minimum cost of editing strings
+        edit_cost = 0
+        if only_in_s1 and only_in_s2:
+            # Create a matrix of edit distances between strings in only_in_s1 and only_in_s2
+            edit_matrix = [[ast_distance(a, b, refs) for b in only_in_s2] for a in only_in_s1]
+
+            while edit_matrix and any(edit_matrix):  # Check if matrix is not empty and has non-empty rows
+                # Find the minimum edit distance
+                min_dist = min(min(row) for row in edit_matrix if row)
+                edit_cost += min_dist
+
+                # Find the position of the minimum distance
+                row_idx, col_idx = next((i, row.index(min_dist))
+                                        for i, row in enumerate(edit_matrix)
+                                        if row and min(row) == min_dist)
+                col_idx = edit_matrix[row_idx].index(min_dist)
+
+                # Remove the matched strings
+                edit_matrix.pop(row_idx)
+                for row in edit_matrix:
+                    if row:  # Check if the row is not empty
+                        row.pop(col_idx)
+
+        return add_remove_cost + edit_cost
+
+    def set_edit_distance1(s1, s2):
+        s1, s2 = set(s1), set(s2)
+
+        # Strings present in both sets
+        common = s1.intersection(s2)
+
+        # Strings only in s1 or s2
+        only_in_s1 = s1 - common
+        only_in_s2 = s2 - common
+
+        # Calculate initial total cost
+        total_cost = sum(len(ast) for ast in only_in_s1 if ast) + sum(len(ast) for ast in only_in_s2 if ast)
+
+        if only_in_s1 and only_in_s2:
+            # Create edit matrix with tuples: (edit_distance, s1_length, s2_length)
+            edit_matrix = [
+                [(ast_distance(a, b, refs), len(a) if a else 0, len(b) if b else 0)
+                    for b in only_in_s2]
+                for a in only_in_s1
+            ]
+
+            while edit_matrix and any(edit_matrix):  # Check if matrix is not empty and has non-empty rows
+                # Find minimum edit distance
+                min_dist, s1_len, s2_len = min(
+                (item for row in edit_matrix for item in row if item),
+                key=lambda x: x[0]
+                )
+
+                # Find position of minimum distance
+                row_idx, col_idx = next(
+                    (i, row.index((min_dist, s1_len, s2_len)))
+                    for i, row in enumerate(edit_matrix)
+                    if (min_dist, s1_len, s2_len) in row
+                )
+
+                print(f'pairing: S1: {list(only_in_s1)[row_idx]} S2: {list(only_in_s2)[col_idx]}')
+                print(f'dist and len: {edit_matrix[row_idx][col_idx]}')
+
+                # Adjust total cost
+                total_cost -= s1_len + s2_len
+                total_cost += min_dist
+
+                # Remove processed items
+                edit_matrix.pop(row_idx)
+                for row in edit_matrix:
+                    if row:
+                        row.pop(col_idx)
+
+        return total_cost
+
+    def set_edit_distance(s1, s2):
+        s1, s2 = set(s1), set(s2)
+
+        # Strings present in both sets
+        common = s1.intersection(s2)
+
+        # Strings only in s1 or s2
+        only_in_s1 = list(s1 - common)  # Convert to list immediately
+        only_in_s2 = list(s2 - common)  # Convert to list immediately
+
+        # Calculate initial total cost
+        total_cost = sum(len(ast) for ast in only_in_s1 if ast) + sum(len(ast) for ast in only_in_s2 if ast)
+
+        if only_in_s1 and only_in_s2:
+            # Create edit matrix with tuples: (edit_distance, s1_length, s2_length)
+            edit_matrix = [
+                [(ast_distance(a, b, refs), len(a) if a else 0, len(b) if b else 0)
+                    for b in only_in_s2]
+                for a in only_in_s1
+            ]
+
+            while edit_matrix and any(edit_matrix):  # Check if matrix is not empty and has non-empty rows
+                # Find minimum edit distance
+                min_dist, s1_len, s2_len = max(
+                (item for row in edit_matrix for item in row if item),
+                key=lambda x: x[1] + x[2] - x[0]
+                )
+
+                # Check if edit would increase total cost
+                if min_dist >= s1_len + s2_len:
+                    break  # Stop if no beneficial edits remain
+
+                # Find position of minimum distance
+                row_idx, col_idx = next(
+                    (i, row.index((min_dist, s1_len, s2_len)))
+                    for i, row in enumerate(edit_matrix)
+                    if (min_dist, s1_len, s2_len) in row
+                )
+
+                # Adjust total cost
+                total_cost -= s1_len + s2_len
+                total_cost += min_dist
+
+                # Remove processed items
+                edit_matrix.pop(row_idx)
+                for row in edit_matrix:
+                    if row:
+                        row.pop(col_idx)
+
+        return total_cost
+
+    def node_list_distance(n, ls):
+        min_dist, min_i = ast_distance(ls[0], n, refs), 0
+        for i, nnode in enumerate(ls[1:]):
+            if min_dist == 0:
+                break
+            dist = ast_distance(n, nnode, refs)
+            if dist < min_dist:
+                min_dist, min_i = dist, i
+        return min_dist + sum([len(n) for n in (ls[:min_i] + ls[min_i+1:])])
+    def param_distance(p1, p2):
+        # if p1!=p2 and not ast_node, return greatest len
+        match p1, p2:
+            case (_, _) if isinstance(p1, ASTNode) and isinstance(p2, ASTNode):
+                return ast_distance(p1, p2, refs)
+            case (_, _) if p1 == p2:
+                return 0
+            case (_, _):
+                return max(len_param(p1), len_param(p2))
+
+    match node1, node2:
+        case (None, None):
+            return 0
+        case (None, _):
+            return len(node2)
+        case (_, None):
+            return len(node1)
+        case (UnionNode(c1, s1, b1), UnionNode(c2, s2, b2)):
+            #len_back = ast_distance(b1, b2, refs)
+            len_codes = set_edit_distance(c1 | {b1}, c2 | {b2})
+            return len_codes #len_back + len_codes
+        case (UnionNode(c, s, b), _):
+            len_b = len(b) if b else 0
+            return min(node_list_distance(node2, c) + len_b, sum([len(n) for n in c]) + ast_distance(node2, b, refs))
+        case (_, UnionNode(c, s, b)):
+            return ast_distance(node2, node1, refs)
+        case (SymbolicNode(i1, p1, l1), SymbolicNode(i2, p2, l2)):
+            if i1==i2:
+                return param_distance(p1, p2)
+            else:
+                return ast_distance(unsymbolize(node1, refs), unsymbolize(node2, refs), refs) #type :ignore
+        case (SymbolicNode(i, p, l), _):
+            udist = ast_distance(unsymbolize(node1, refs), node2, refs) # type: ignore
+            sdist = 0
+            if isinstance(p, ASTNode):
+                sdist = LEN_NODE + LEN_INDEX + ast_distance(p, node2, refs)
+            else:
+                sdist = len(node2) + len_param(p)
+            return min(udist, sdist)
+        case (_, SymbolicNode(i, p, l)):
+            return ast_distance(node2, node1, refs)
+        case (BiSymbolicNode(i1, p11, p21, l1), BiSymbolicNode(i2, p12, p22, l2)):
+            if i1 == i2:
+                dist1 = param_distance(p11, p12)
+                dist2 = param_distance(p21, p22)
+                return dist1 + dist2
+            return ast_distance(unsymbolize(node1, refs), unsymbolize(node2, refs), refs)
+        case (BiSymbolicNode(i, p1, p2, l), _):
+            dist1 = ast_distance(p1, node2, refs) if isinstance(p1, ASTNode) else len(node2) + len_param(p1)
+            dist2 = ast_distance(p2, node2, refs) if isinstance(p2, ASTNode) else len(node2) + len_param(p2)
+            sdist = LEN_INDEX + LEN_NODE
+            if dist1 < dist2:
+                sdist += dist1 + len(p2)
+            else:
+                sdist += dist2 + len(p1)
+            return min(sdist, ast_distance(node2, unsymbolize(node1, refs), refs)) #type: ignore
+        case (_, BiSymbolicNode(i, p1, p2, l)):
+            return ast_distance(node2, node1, refs)
+        case (Root(s1, c1, n1), Root(s2, c2, n2)):
+            return abs(s1[0] - s2[0]) + abs(s1[1] - s2[1]) + len(c1^c2)*LEN_COLOR + ast_distance(n1, n2, refs) # type: ignore
+        case (Root(s, c, n), _):
+            return LEN_COORD + LEN_COLOR*len(c) + ast_distance(n, node2, refs)
+        case (_, Root(s, c, n)):
+            return ast_distance(node2, node1, refs)
+        case (Branch(nsequences=nls1), Branch(nsequences=nls2)):
+            return set_edit_distance(nls1, nls2)
+        case (Branch(nsequences=nls), _):
+            return LEN_NODE + node_list_distance(node2, nls)
+        case (_, Branch(nsequences=nls)):
+            return ast_distance(node2, node1, refs)
+        case (Rect(h1, w1), Rect(h2, w2)):
+            return 0 if h1==h2 and w1==w2 else LEN_COORD
+        case (Rect(h, w), _):
+            #return min(ast_distance(node2, rect_to_moves(h, w), refs), LEN_COORD+len(node2))
+            return ast_distance(node2, rect_to_moves(h, w), refs)
+        case(_, Rect(h, w)):
+            return ast_distance(node2, node1, refs)
+        case (NodeList(nodes=nodes1), NodeList(nodes=nodes2)):
+            return list_edit_distance(nodes1, nodes2)
+        case (NodeList(nodes=nodes), Repeat(n, c)):
+            dist_rep = LEN_COUNT + LEN_NODE + ast_distance(n, node1, refs)
+            dist_nl = node_list_distance(node1, nodes)
+            return min(dist_rep, dist_nl)
+        case (Repeat(n, c), NodeList(nodes=nodes)):
+            return ast_distance(node2, node1, refs)
+        case (NodeList(nodes=nodes), _):
+            return node_list_distance(node2, nodes)
+        case (_, NodeList(nodes=nodes)):
+            return ast_distance(node2, node1, refs)
+        case (Repeat(n1, c1), Repeat(n2, c2)):
+            dist = ast_distance(n1, n2, refs)
+            dist_count = LEN_COUNT if c1 != c2 else 0
+            return dist + dist_count
+        case (Repeat(n,c), _):
+            dist = LEN_NODE + LEN_COUNT + ast_distance(n, node2, refs)
+            return dist
+        case (_, Repeat(n,c)):
+            return ast_distance(node2, node1, refs)
+        case (Moves(m1), Moves(m2)):
+            return distance_levenshtein(m1, m2)*LEN_MOVE
+        case _:
+            return 0 if node1 == node2 else len(node1) + len(node2)
+
+def ast_distance1(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: SymbolTable) -> int:
+    def list_edit_distance(list1, list2):
+        m, n = len(list1), len(list2)
+
+        # Initialize the dynamic programming matrix
+        dp = [[0] * (n + 1) for _ in range(m + 1)]
+
+        # Fill the first row and column
+        for i in range(m + 1):
+            dp[i][0] = i
+        for j in range(n + 1):
+            dp[0][j] = j
+
+        # Fill the rest of the matrix
+        for i in range(1, m + 1):
+            for j in range(1, n + 1):
+                # If the strings are the same, no operation needed
+                if list1[i-1] == list2[j-1]:
+                    dp[i][j] = dp[i-1][j-1]
+                else:
+                    # Calculate the cost of each operation
+                    replace_cost = dp[i-1][j-1] + ast_distance(list1[i-1], list2[j-1], refs)
+                    delete_cost = dp[i-1][j] + len(list1[i-1])
+                    insert_cost = dp[i][j-1] + len(list2[j-1])
+
+                    # Choose the operation with minimum cost
+                    dp[i][j] = min(replace_cost, delete_cost, insert_cost)
+
+        return dp[m][n]
     def set_edit_distance(s1, s2):
         s1, s2 = set(s1), set(s2)
 
@@ -2566,11 +3598,13 @@ def ast_distance(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: Symbo
             return min(sdist, ast_distance(node2, unsymbolize(node1, refs), refs)) #type: ignore
         case (_, BiSymbolicNode(i, p1, p2, l)):
             return ast_distance(node2, node1, refs)
-        case (Root(s1, c1, n1), Root(s2, c2, n2)):
-            return abs(s1[0] - s2[0]) + abs(s1[1] - s2[1]) + len(c1^c2)*LEN_COLOR + ast_distance(n1, n2, refs) # type: ignore
-        case (Root(s, c, n), _):
-            return LEN_COORD + LEN_COLOR*len(c) + ast_distance(n, node2, refs)
-        case (_, Root(s, c, n)):
+        case (Root(s1, c1, (n1, fmove1) ), Root(s2, c2, (n2, fmove2) )):
+            len_fmove = 0 if fmove1 == fmove2 else LEN_MOVE
+            # Try all node codes rotations
+            return abs(s1[0] - s2[0]) + abs(s1[1] - s2[1]) + len(c1^c2)*LEN_COLOR + len_fmove + ast_distance(n1, n2, refs) # type: ignore
+        case (Root(s, c, (n, first_move) ), _):
+            return LEN_COORD + LEN_COLOR*len(c) + LEN_MOVE + ast_distance(n, node2, refs)
+        case (_, Root(s, c, (n, first_move))):
             return ast_distance(node2, node1, refs)
         case (Branch(nsequences=nls1), Branch(nsequences=nls2)):
             return set_edit_distance(nls1, nls2)
