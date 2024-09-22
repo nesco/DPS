@@ -927,6 +927,10 @@ def solve_problem(task = "2dc579da.json"):
             case _, _:
                 return ast_distance(a, b, refs)
 
+    def asts_print(ast_set):
+        for ast in ast_set:
+            print(ast)
+
     def ast_set_print(ast_set):
         for i, ast in ast_set:
             print(f'Element n°{i} : {ast}')
@@ -936,28 +940,77 @@ def solve_problem(task = "2dc579da.json"):
             print(f'Group n°{i}')
             ast_set_print(ast_set)
 
-    invariants_in, cliques_in, morphisms_in  = set_to_category([input.codes | {input.background} for input in inputs if input], distance)
-    print(f'Invariants In: ')
-    ast_set_print(invariants_in)
+    category_input = set_to_category([input.codes | {input.background} for input in inputs if input], distance)
+    #invariants_in, cliques_in, morphisms_in  = set_to_category([input.codes | {input.background} for input in inputs if input], distance)
+    #print(f'Invariants In: ')
+    #ast_set_print(invariants_in)
 
-    print(f'Cliques In')
-    list_of_ast_set_print(cliques_in)
+    #print(f'Cliques In')
+    #list_of_ast_set_print(cliques_in)
 
     #print(f'Morphisms In: {morphisms_in}')
     #dists.sort(key= lambda x: x[0], reverse=True)
+    category_output = set_to_category([output.codes | {output.background} for output in output_space if output], distance)
+    #invariants_out, cliques_out, morphisms_out  = set_to_category([output.codes | {output.background} for output in output_space if output], distance)
+    #print(f'Invariants Out:')
+    #ast_set_print(invariants_out)
 
-    invariants_out, cliques_out, morphisms_out  = set_to_category([output.codes | {output.background} for output in outputs if output], distance)
-    print(f'Invariants Out:')
-    ast_set_print(invariants_out)
-
-    print(f'Cliques Out:')
-    list_of_ast_set_print(cliques_out)
+    #print(f'Cliques Out:')
+    #list_of_ast_set_print(cliques_out)
 
 
     #print(f'Morphisms Out: {morphisms_out}')
 
+    pair_categories = []
+
+    for i, pair in enumerate(pair_spaces):
+        #print(f'\n Pair: {i}')
+        pair_category = set_to_category([u.codes | {u.background} for u in pair if u], distance)
+        #invariants, cliques, morphisms  = comma_category.invariants, comma_category.cliques, comma_category.morphisms
+        pair_categories.append(pair_category)
+        #print(f'Invariants:')
+        #asts_print(invariants)
+
+        #print(f'Cliques :')
+        #list_of_ast_set_print(cliques)
+    natural_transformations = functor_categories_to_natural_transformation_category(pair_categories, category_input, category_output)
+    transform = natural_transformation_category_to_callable(natural_transformations)
+
+    input_enumeration = {(category_input.element_to_class_index(code), code) for code in min_object.codes if code}
+    input_background_index = category_input.element_to_class_index(min_object.background)
+
+    output_codes = set()
+
+    for input_index, input_code in input_enumeration:
+        if input_index is not None and transform(input_index) is not None:
+            output_codes.add(transform(input_index)(input_code))
+
+    output_background_index = transform(input_background_index)(min_object.background)
+
+    #output_codes = {output_indices}
+    output = UnionNode(codes=output_codes, background=output_background_index)
+
+
+    print(natural_transformations)
+    print_colored_grid(union_to_grid(output, refs))
 
     #print('rest')
     #for dist, u in dists:
     #    print(f'Object: {u} has dsit: {dist}')
     #    union_to_grid(u, refs)
+
+def natural_transformation_category_to_callable(natural_transformation_category):
+    @optional
+    def transformation(index: IndexElement):
+        for functor in natural_transformation_category.invariants:
+            input_index, output_index, type = functor
+            if index == input_index:
+                if type == INVARIANT:
+                    return IDENTITY
+                else:
+                    return None
+        return None
+
+    return transformation
+
+#element_to_equivalence_class_index#def output_index_to_code(index, )

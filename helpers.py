@@ -13,7 +13,7 @@ from re import X
 import time
 import pathlib
 from itertools import combinations
-from functools import wraps
+from functools import wraps, reduce
 import traceback
 
 
@@ -21,6 +21,8 @@ from collections import defaultdict
 from dataclasses import dataclass, asdict
 from typing import Any, List, Union, Optional, Iterator, Callable, Tuple, Set, Dict, Literal
 from typing import Concatenate, TypeVar, ParamSpec, overload
+
+from category import *
 
 ## Constants
 # Define ANSI escape codes for the closest standard terminal colors
@@ -45,7 +47,7 @@ DIRECTIONS = {
 MOVES = "01234567"
 
 DATA = "../ARC-AGI/data"
-DEBUG = False
+DEBUG = True
 
 ## Types
 # Proportions is equivalent data-wise to Coord but different meaning
@@ -71,14 +73,11 @@ Point = Tuple[int, int, int] # Coordinates + color value
 Points = Set[Point] # Set representation of a grid: {(row, col, val)} / (row, col, val) -> {True, False}
 
 CoordsGeneralized = Union[Points, Coords]
-Distance = Union[Callable[[Any, Any], int], Callable[[Any, Any], float]]
 
 Trans = Tuple[str, Coord] # Transition
 
 T = TypeVar('T')
 U = TypeVar('U')
-
-EndoMap = dict[T, T]
 
 # Structure to build quotient space through a couple (key: representative, value: equivalent class)
 Quotient = dict[U, Set[T]]
@@ -680,10 +679,10 @@ def get_all():
             data.append(json.load(file))
     return data, uuids
 
-def set_to_category(sets: list[set], distance: Distance) -> tuple[set, list[set], dict[tuple[int, int], EndoMap]]:
+def set_to_category1(sets: list[set], distance: Distance) -> Category:
     # Hypothesis: distance to None is intrinsic cost
     # Step 1: identify the invariants, and extract the variants
-    invariants = set().intersection(*sets)
+    invariants = reduce(set.intersection, sets)
     variants = [s - invariants for s in sets]
 
     # Step 2: Try to make associations through pairwise comparisons
@@ -783,7 +782,7 @@ def set_to_category(sets: list[set], distance: Distance) -> tuple[set, list[set]
 
                 processed.update(clique)
 
-    if DEBUG:
+    if DEBUG and False:
         for i, cluster in enumerate(cliques):
             print(f'\nClique n°{i}')
             for j, el in cluster:
@@ -811,8 +810,8 @@ def set_to_category(sets: list[set], distance: Distance) -> tuple[set, list[set]
             if elem not in morphisms[(i, j)]:
                 morphisms[(i, j)][elem] = None
 
-    return invariants, cliques, morphisms
-
+    category = Category(invariants, cliques, sets, morphisms)
+    return category
 
 def load(task = "2dc579da.json"):
     data = read_path('training/' + task)
