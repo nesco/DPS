@@ -7,13 +7,14 @@ It works because connected components seems to be a strong prior in the ARC chal
 from helpers import *
 from operators import *
 from syntax_tree import *
+from freeman import *
 import traceback
 
 def extract_masks_bicolors(grid):
     """
     Returns a dict of all masks comprised of union of two colours
     """
-    height, width = proportions(grid)
+    width, height = proportions(grid)
     colors_unique = list(set([grid[row][col] for row in range(height) for col in range(width)]))
     #colors_unique = list(grid_to_color_coords(grid))
     #masks_colors = split_by_color(grid)
@@ -54,7 +55,6 @@ def list_components(mask_dict: Dict[Any, Coords], proportions: Proportions, cheb
         for component in components.values():
             if component not in components_seen:
                 components_seen.append(component)
-
     return components_seen
 def rank_components(component_list):
     mask_list = [component['mask'] for component in component_list]
@@ -92,7 +92,7 @@ def component_to_object(grid: GridColored, component, chebyshev = True):
     color_set = set([grid[row][col] for col, row in component['mask']])
     component['colors'] = color_set
 def construct_lattice_ends(grid: Grid):
-    height, width = proportions(grid)
+    width, height = proportions(grid)
     mask_supremum = set([(col, row) for row in range(height) for col in range(width)])
     mask_infinmum = set()
 
@@ -144,11 +144,55 @@ def get_potential_starting_points(coordinates: List[Coord]) -> List[Coord]:
     # Remove duplicates while preserving order
     return list(dict.fromkeys(starts))
 
+def mask_to_ast(mask: Coords, colors: Colors, proportions: Proportions) -> Optional[ASTNode]:
+    width, height = proportions
+    is_valid = lambda x: valid_coordinates(height, width, mask, x)
+    start, ast = None, None
+    starts = get_potential_starting_points(list(mask))
+
+    def argmin_by_len_and_depth(lst):
+        def key_func(node):
+            return len(node) + 3*get_depth(node)
+        return min(range(len(lst)), key=lambda i: key_func(lst[i]))
+
+    def get_traditional_construct():
+        # Trying several combinations of start pos and dfs/bfs
+        # choose the best option by iterating overstart points and dfs/bfs
+        asts=[]
+        for start in starts:
+            for method in ["dfs", "bfs"]:
+                ast = Root(start, node['value']['colors'], construct_node1(start, is_valid, method))
+                asts.append(ast)
+        return asts
+    def get_freeman_construct() -> list[ASTNode]:
+        freeman_nodes = []
+        asts = []
+        for start in starts:
+            for method in TraversalModes:
+                freeman_node = encode_connected_component(start, is_valid, method)
+                freeman_nodes.append((start, freeman_node))
+
+        for start, freeman_node in freeman_nodes:
+            ast = Root(start, colors, construct_node(freeman_node))
+            asts.append(ast)
+
+        return asts
+
+    if len(starts) >= 1:
+        asts = get_freeman_construct()
+        # Getting the smallest, regularized by the depth to avoid pathological cases
+        asts = sorted(asts, key=len)
+        asts = asts[:3]
+        i = argmin_by_len_and_depth(asts)#symbolize(asts, []))
+        ast = asts[i]
+
+    return ast
+
 class Lattice():
 
     def __init__(self, grid: GridColored, mask_dict: Dict[Any, Coords]):
         self.grid = grid
-        self.height, self.width = proportions(grid)
+        self.width, self.height = proportions(grid)
         self.area = self.height * self.width
         self.refs: SymbolTable = []
         self.union_refs: SymbolTable = []
@@ -223,27 +267,7 @@ class Lattice():
 
             node['index'] = i
             mask_list = node['value']['mask']
-            is_valid = lambda x: valid_coordinates(self.height, self.width, mask_list, x)
-
-            start, ast = None, None
-            starts = get_potential_starting_points(mask_list)
-            if len(starts)>=1:
-                # Trying several combinations of start pos and dfs/bfs
-                # choose the best option by iterating overstart points and dfs/bfs
-                asts=[]
-                for start in starts:
-                    for method in ["dfs", "bfs"]:
-                        ast = Root(start, node['value']['colors'], construct_node(start, is_valid, method))
-                        asts.append(ast)
-                        #asts.append(ast_map(factorize_moves, ast))
-
-                # Getting the smallest, regularized by the depth to avoid pathological cases
-                asts = sorted(asts, key=len)
-                asts = asts[:3]
-                i = argmin_by_len_and_depth(asts)#symbolize(asts, []))
-                ast = asts[i]
-
-                #ast = Root(start, node['value']['colors'], construct_node(start, is_valid, "dfs"))
+            ast = mask_to_ast(mask_list, node['value']['colors'], (self.width, self.height))
 
             node['value']['ast'] = ast
 
@@ -815,6 +839,7 @@ def problem(task = "2dc579da.json"):
 
         print('Target:')
         print(f'Union Out: {union_out}, len: {len(union_out)}')
+        print(f'Unsymbolized: {unsymbolize(union_out, refs)}')
         union_to_grid(union_out, refs)
         print(f'Using Jaccard / Pixel Space:')
         print(f'Distance: {dist_min[1][0]}')

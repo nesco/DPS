@@ -4,8 +4,7 @@ from typing import cast
 
 from collections import deque
 
-from helpers import Coord, Coords
-from helpers import MOVES
+from helpers import *
 from lattice import *
 from dataclasses import dataclass
 
@@ -22,7 +21,7 @@ TOWER: Final[List[Tower]] = [0, 1, 2, 3]
 BISHOP: Final[List[Bishop]] = [4, 5, 6, 7]
 KING: Final[List[King]] = [0, 1, 2, 3, 4, 5, 6, 7]
 
-DIRECTIONS: Final[Dict[King, Coord]] = {
+DIRECTIONS_FREEMAN: Final[Dict[King, Coord]] = {
     0: (-1, 0), 1: (0, -1), 2: (1, 0), 3: (0, 1),
     4: (-1, -1), 5: (1, -1), 6: (1, 1), 7: (-1, 1)
 }
@@ -75,16 +74,20 @@ def path_to_coords(start: Coord, path: Path) -> Tuple[Coords, Coord]:
     coords = set([start])
     coord = start
     for direction in path:
-        coord = coord[0] + DIRECTIONS[direction][0], coord[1] + DIRECTIONS[direction][1]
+        coord = coord[0] + DIRECTIONS_FREEMAN[direction][0], coord[1] + DIRECTIONS_FREEMAN[direction][1]
         coords.add(coord)
     return coords, coord
 
 ### Freeman
+# A Freeman tree is a trie on Freeman chain codes describing pathes
+# Contrarily to boundaries, several pathes are required to describe shapes
+# because of topological issues: filling a shape with a path can "disconnect" remaining
+# areas to explore into separated connected components
 
 @dataclass
 class FreemanNode():
     path: Path
-    branches: frozenset['FreemanNode'] # Branches are always separate
+    branches: list['FreemanNode'] # Branches are always separate
 
     def __str__(self) -> str:
         path = "".join([str(move) for move in self.path])
@@ -112,27 +115,27 @@ def arrowify(freeman: FreemanNode) -> None:
         else:
             arrows += c
     print(arrows)
-def available_transitions(is_valid: Callable[[Coord], bool], coordinates: Coord) -> List[Trans]:
+def available_transitions_freeman(is_valid: Callable[[Coord], bool], coordinates: Coord) -> List[Trans]:
     transitions = []
     col, row = coordinates
     transitions = []
     for direction in KING:
-        ncol, nrow = col + DIRECTIONS[direction][0], row + DIRECTIONS[direction][1]
+        ncol, nrow = col + DIRECTIONS_FREEMAN[direction][0], row + DIRECTIONS_FREEMAN[direction][1]
         ncoordinates = (ncol, nrow)
         if is_valid(ncoordinates):
             transitions.append((direction, ncoordinates))
     return transitions
 
 # Freeman Tree
-def encode_connected_component(coords: Coords, start: Coord, is_valid: Callable[[Coord], bool], method="dfs") -> FreemanNode:
+def encode_connected_component(start: Coord, is_valid: Callable[[Coord], bool], method: TraversalModes = TraversalModes.DFS) -> FreemanNode:
     seen = set()
 
     def coord_to_transitions(coordinates: Coord) -> List[Trans]:
-        return available_transitions(is_valid, coordinates)
+        return available_transitions_freeman(is_valid, coordinates)
 
     def concatenate(moves: Path, node: FreemanNode) -> FreemanNode:
         if not node.branches:
-            return FreemanNode(moves + node.path, frozenset())
+            return FreemanNode(moves + node.path, list())
         elif len(node.branches) == 1:
             child = next(iter(node.branches))
             return FreemanNode(moves + node.path + child.path, child.branches)
@@ -143,7 +146,7 @@ def encode_connected_component(coords: Coords, start: Coord, is_valid: Callable[
         queue = deque([(start)])
         to_process = []
         seen.add(start)
-        branches = set()
+        branches = list()
 
         while queue:
             coord = queue.popleft()
@@ -155,8 +158,8 @@ def encode_connected_component(coords: Coords, start: Coord, is_valid: Callable[
                     to_process.append((move, ncoord))
 
         for move, ncoord in to_process:
-            branches.add(concatenate([move], bfs_traversal(ncoord)))
-        return concatenate([], FreemanNode([], frozenset(branches)))
+            branches.append(concatenate([move], bfs_traversal(ncoord)))
+        return concatenate([], FreemanNode([], list(branches)))
 
     def dfs_traversal(coord: Coord) -> FreemanNode:
         seen.add(coord)
@@ -170,7 +173,7 @@ def encode_connected_component(coords: Coords, start: Coord, is_valid: Callable[
 
         return concatenate([], FreemanNode([], frozenset(branches)))
 
-    if method == "bfs":
+    if method == TraversalModes.BFS:
         return bfs_traversal(start)
     else:
         return dfs_traversal(start)
@@ -214,7 +217,7 @@ def encode_rl(node: FreemanNode):# -> CompressedNode:
 
 def is_boundary(coords: Coords, coord: Coord):
     for i in range(NUM_DIRECTIONS):
-        dcol, drow = DIRECTIONS[cast(King, i)]
+        dcol, drow = DIRECTIONS_FREEMAN[cast(King, i)]
         ncoord: Coord = (coord[0] + dcol, coord[1] + drow)
         if ncoord not in coords:
             return True
@@ -230,7 +233,7 @@ def mask_to_boundary(coords: Coords) -> Coords:
 def next_boundary_cell(coords: Coords, current: Coord, dir: King) -> Optional[Tuple[Coord, King]]:
     for i in range(NUM_DIRECTIONS):
         ndir: King = shift8(dir, LEFT_TURN + i)
-        dcol, drow = DIRECTIONS[ndir]
+        dcol, drow = DIRECTIONS_FREEMAN[ndir]
         ncoord: Coord = (current[0] + dcol, current[1] + drow)
         if ncoord in coords and is_boundary(coords, ncoord):
             return ncoord, ndir
@@ -260,7 +263,7 @@ def freeman_to_boundary_coords(start: Coord, freeman: Path) -> Coords:
     coords = set([start])
     current = start
     for dir in freeman:
-        dcol, drow = DIRECTIONS[dir]
+        dcol, drow = DIRECTIONS_FREEMAN[dir]
         current = current[0] + dcol, current[1] + drow
         coords.add(current)
     return coords

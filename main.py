@@ -44,7 +44,7 @@ class Object():
 #      - output [[]]
 
 def filter_by_color(grid, color):
-    height, width = proportions(grid)
+    wdith, height = proportions(grid)
     grid_new = zeros(height, width)
 
     for i in range(height):

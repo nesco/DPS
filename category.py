@@ -651,6 +651,17 @@ def set_to_category(sets: list[set[T]], distance: Optional[Distance]) -> Categor
     if distance:
         cliques = find_cliques(variants, distance)
 
+    # Collect all elements in invariants and cliques
+    selected_elements = invariants.copy()
+    for clique in cliques:
+        selected_elements.update(elem for _, elem in clique)
+
+    # Find unselected elements for each set
+    unselected = [set(s) - selected_elements for s in sets]
+
+    print('Unselected elements:')
+    for uns in unselected:
+        print(uns)
     # Step 3: Create morphisms
     morphisms = {}
 

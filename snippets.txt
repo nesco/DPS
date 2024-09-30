@@ -620,8 +620,8 @@ is_valid = lambda x: valid_coordinates(*proportions(input), mask, x)
 #construct_node(start, is_valid, method)
 start = next(iter(mask), None)
 
-node1 = encode_connected_component(mask, start, is_valid, method="dfs")
-node2 = encode_connected_component(mask, start, is_valid, method="bfs")
+node1 = encode_connected_component(start, is_valid, method="dfs")
+node2 = encode_connected_component(start, is_valid, method="bfs")
 
 tree1 = (start, node1)
 tree2 = (start, node2)
@@ -643,6 +643,10 @@ Or add a color distance
 7ddcd7ec.json
 
 39e1d7f9.json
+
+05269061.json
+
+a3df8b1e.json
 
 ####
 inputs, outputs = load("7ddcd7ec.json")
@@ -772,3 +776,28 @@ for mask in masks.values():
     objects.append(orthoset)
 
 print(objects)
+
+''.join([1, 2, 3, 4])
+str([1, 2, 3, 4])
+
+####
+
+
+inputs, outputs = load()
+input = inputs[1]
+masks = extract_masks_bicolors(input)
+component_ls = list_components(masks, proportions(input))
+mask_list = [component['mask'] for component in component_ls]
+mask = mask_list[5]
+is_valid = lambda x: valid_coordinates(*proportions(input), mask, x)
+#construct_node(start, is_valid, method)
+start = next(iter(mask), None)
+
+node1 = encode_connected_component(start, is_valid, method="dfs")
+node2 = encode_connected_component(start, is_valid, method="bfs")
+
+
+encode_string(''.join(str(m) for m in node1.path))
+
+###
+node_ls = [Repeat(MovesNode('0'), 6), Repeat(MovesNode('1'), 6), Repeat(MovesNode('2'), 6), Repeat(MovesNode('3'), 6)]

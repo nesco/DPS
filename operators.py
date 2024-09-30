@@ -33,11 +33,11 @@ directions_chebyshev = {
 ### Operators on binary masks
 ## Helpers
 def flatten(mask):
-    height, width = proportions(mask)
+    width, height = proportions(mask)
     return [mask[row][col] for row in range(height) for col in range(width)]
 
 def fill_unary(mask: Mask, condition: Callable[[bool], bool]) -> Mask:
-    height, width = proportions(mask)
+    width, height = proportions(mask)
     mask_new = falses(height, width)
     for row in range(height):
         for col in range(width):
@@ -45,9 +45,9 @@ def fill_unary(mask: Mask, condition: Callable[[bool], bool]) -> Mask:
     return mask_new
 
 def fill_binary(mask1: Mask, mask2: Mask, condition: Callable[[bool, bool], bool]) -> Mask:
-    height, width = proportions(mask1)
+    width, height = proportions(mask1)
 
-    if proportions(mask2) != (height, width):
+    if proportions(mask2) != (width, height):
         msg = f"Applying binary filling to masks of incompatble dimensions: {(height, width)} vs {proportions(mask2)}"
         msg += f"\n mask n°1: {mask1}, mask n°2 {mask2}"
         raise ValueError(msg)
@@ -92,8 +92,8 @@ def jaccard(mask1, mask2):
 
 def jaccard_resized(mask1, mask2):
     # Determine the smaller dimensions
-    height1, width1 = proportions(mask1)
-    height2, width2 = proportions(mask2)
+    width1, height1 = proportions(mask1)
+    width2, height2 = proportions(mask2)
     max_height = max(height1, height2)
     max_width = max(width1, width2)
 
@@ -105,15 +105,15 @@ def jaccard_resized(mask1, mask2):
 
 ## Geometric operators
 def transpose(mask):
-    height, width = proportions(mask)
+    width, height = proportions(mask)
     return [[mask[row][col] for row in range(height)] for col in range(width)]
 
 def reverse_rows(mask):
-    height, width = proportions(mask)
+    width, height = proportions(mask)
     return [[mask[row][col] for col in range(width)] for row in reversed(range(height))]
 
 def reverse_cols(mask):
-    height, width = proportions(mask)
+    width, height = proportions(mask)
     return [[mask[row][col] for col in reversed(range(width))] for row in range(height)]
 
 def rotation(mask):
@@ -132,8 +132,8 @@ def rotational_symmetries(mask, box):
 ## Morphological operators
 def morphological_dilatation(mask_object: Mask, mask_kernel: Mask):
     """Returns the mask of the cropped morphological dilatation (~Minkowski addition) of an object and a structuring element """
-    object_height, object_width = proportions(mask_object)
-    kernel_height, kernel_width = proportions(mask_kernel)
+    object_width, object_height = proportions(mask_object)
+    kernel_width, kernel_height = proportions(mask_kernel)
 
     # The new mask will have the dimension of the object's mask
     # It's the only asymetry between "object" and "kernel"
@@ -156,8 +156,8 @@ def morphological_dilatation(mask_object: Mask, mask_kernel: Mask):
 
 def morphological_erosion(mask_object: Mask, mask_kernel: Mask):
     """Returns the mask of the morphological erosion of an object using a structuring element."""
-    object_height, object_width = proportions(mask_object)
-    kernel_height, kernel_width = proportions(mask_kernel)
+    object_width, object_height = proportions(mask_object)
+    kernel_width, kernel_height = proportions(mask_kernel)
 
     # The new mask will have the dimension of the object's mask
     mask_new = falses(object_height, object_width)
@@ -226,7 +226,7 @@ def is_exterior(mask_connected_component, chebyshev = True):
     """
 
     kernel = kernel_chebyshev if chebyshev else kernel_manhattan
-    height, width = proportions(mask_connected_component)
+    width, height = proportions(mask_connected_component)
     mask = mask_connected_component
 
     def check_adjacent_cells(row, col):
@@ -256,7 +256,7 @@ def connected_components(mask: Mask, chebyshev=False):
         Chebyshev: if True then 8-connexity is used instead of 4-connexity
     """
     component_number = 0
-    height, width = proportions(mask)
+    width, height = proportions(mask)
     distribution = falses(height, width)
     to_see = [(i,j) for j in range(width) for i in range(height)]
     seen = set()
@@ -307,47 +307,41 @@ def connected_components(mask: Mask, chebyshev=False):
 
 def connected_components_coords(coords: Coords, props: Proportions, chebyshev=True):
     """Extract connected components.
-        Chebyshev: if True then 8-connexity is used instead of 4-connexity
+        Chebyshev: if True then 8-connectivity is used instead of 4-connectivity
     """
-    height, width = props
+    width, height = props
     component_number = 0
-    to_see = coords.copy()
     seen = set()
     components = {}
 
-    for i,j in to_see:
-        # Check if there is something to do
-        if (i,j) in seen or (i,j) not in coords:
+    directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+    if chebyshev:
+        directions += [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+
+    for i, j in coords:
+        if (i, j) in seen:
             continue
 
         # New component found, increase the count and initiate queue
         component_number += 1
         components[component_number] = {'mask': set()}
         queue = [(i, j)]
+        seen.add((i, j))  # Mark as seen when enqueued
 
         while queue:
-            k, l = queue.pop(0)  # Correctly manage the queue
-            if (k, l) in seen:
-                continue
+            k, l = queue.pop(0)
+            components[component_number]['mask'].add((k, l))
 
-            components[component_number]['mask'].add((k,l))
-            seen.add((k, l))
-
-            # Add all 4-connex neighbors
-            for dk, dl in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
+            # Add all neighbors based on connectivity
+            for dk, dl in directions:
                 nk, nl = k + dk, l + dl
-                if 0 <= nk < height and 0 <= nl < width and (nk,nl) in coords and (nk, nl) not in seen:
+                if (0 <= nk < width and 0 <= nl < height and
+                    (nk, nl) in coords and (nk, nl) not in seen):
                     queue.append((nk, nl))
-
-            if chebyshev:
-                # Add diagonal neighbors
-                for dk, dl in [(-1, -1), (-1, 1), (1, -1), (1, 1)]:
-                    nk, nl = k + dk, l + dl
-                    if 0 <= nk < height and 0 <= nl < width and (nk, nl) in coords and (nk, nl) not in seen:
-                        queue.append((nk, nl))
-
+                    seen.add((nk, nl))  # Mark as seen when enqueued
 
     return component_number, components
+
 
 def condition_by_connected_components(coords: Coords, limits: Optional[Box] = None, chebyshev: bool = True) -> List[Coords]:
     """
@@ -435,7 +429,7 @@ def topological_contains(mask1, mask2, chebyshev=False):
     :return: None if mask1 doesn't contains mask2, otherwise it returns n >= 0,
     n being the number of dilatation during which mask1 still contains mask2
     """
-    height, width = proportions(mask1)
+    width, height = proportions(mask1)
     _, _, components_partition = partition(mask1, chebyshev=chebyshev)
     interior = mask1
     for key in components_partition.keys():
