@@ -1,9 +1,10 @@
 
-from typing import Any, List, Union, Optional, Iterator, Callable, Set, Tuple, Dict, NewType, Literal, Final
+from typing import Union, Optional, Iterator, Callable, NewType, Literal, Final
 from typing import cast
 
 from collections import deque
 
+from helpers import TraversalModes
 from helpers import *
 from lattice import *
 from dataclasses import dataclass
@@ -17,16 +18,16 @@ King = Union[Tower, Bishop]
 NUM_DIRECTIONS: Final[int] = 8
 NUM_DIRECTIONS_ORTHOGONAL: Final[int] = 4
 
-TOWER: Final[List[Tower]] = [0, 1, 2, 3]
-BISHOP: Final[List[Bishop]] = [4, 5, 6, 7]
-KING: Final[List[King]] = [0, 1, 2, 3, 4, 5, 6, 7]
+TOWER: Final[list[Tower]] = [0, 1, 2, 3]
+BISHOP: Final[list[Bishop]] = [4, 5, 6, 7]
+KING: Final[list[King]] = [0, 1, 2, 3, 4, 5, 6, 7]
 
-DIRECTIONS_FREEMAN: Final[Dict[King, Coord]] = {
+DIRECTIONS_FREEMAN: Final[dict[King, Coord]] = {
     0: (-1, 0), 1: (0, -1), 2: (1, 0), 3: (0, 1),
     4: (-1, -1), 5: (1, -1), 6: (1, 1), 7: (-1, 1)
 }
 
-DIRECTIONS_ARROW: Final[Dict[King, str]] = {
+DIRECTIONS_ARROW: Final[dict[King, str]] = {
     0: "←", 1: "↑", 2: "→", 3: "↓",
     4: "↖", 5: "↗", 6: "↘", 7: "↙"
 }
@@ -84,37 +85,131 @@ def path_to_coords(start: Coord, path: Path) -> Tuple[Coords, Coord]:
 # because of topological issues: filling a shape with a path can "disconnect" remaining
 # areas to explore into separated connected components
 
-@dataclass
+@dataclass(frozen=True)
 class FreemanNode():
+    """Represents a node in the Freeman chain code trie"""
     path: Path
-    branches: list['FreemanNode'] # Branches are always separate
+    children: list['FreemanNode'] # Branches are always separate
 
-    def __str__(self) -> str:
-        path = "".join([str(move) for move in self.path])
-        if not self.branches:
-            return path
-        branches = "[" + ", ".join([str(branch)for branch in self.branches]) + "]"
-        return path + branches
 
     def __len__(self) -> int:
-        return len(self.path) + sum([len(node) for node in self.branches])
+        return len(self.path) + sum([len(child) for child in self.children])
+
+    def __str__(self) -> str:
+        path_str = "".join([str(move) for move in self.path])
+        if not self.children:
+            return path_str
+        children_str = "[" + ", ".join([str(child) for child
+            in self.children]) + "]"
+        return f"{path_str}{children_str}"
 
     def __eq__(self, other) -> bool:
         if isinstance(other, 'FreemanNode'):
-            return self.path == other.path and self.branches == other.branches
+            return self.path == other.path and self.children == other.children
         return False
 
-    def __hash__(self) -> int:
-        return hash(self.__repr__())
+class Freeman:
+    """Freeman chain code processor"""
+    DIRECTIONS: Final[dict[King, Coord]] = {
+        0: (-1, 0), 1: (0, -1), 2: (1, 0), 3: (0, 1),
+        4: (-1, -1), 5: (1, -1), 6: (1, 1), 7: (-1, 1)
+    }
 
-def arrowify(freeman: FreemanNode) -> None:
-    arrows = ""
-    for c in str(freeman):
-        if c in [str(move) for move in KING]:
-            arrows += DIRECTIONS_ARROW[cast(King, int(c))]
-        else:
-            arrows += c
-    print(arrows)
+    def __init__(self, is_valid_coord: Callable):
+        self.is_valid = is_valid_coord
+        self.seen: set[Coord] = set()
+
+    def get_valid_moves(self, coord: Coord) -> list[Tuple[King, Coord]]:
+        """Get the list of valid moves from the current coordinates"""
+        moves = []
+        for direction in range(8):
+            dir_cast = cast(King, direction)
+            dx, dy = self.DIRECTIONS[dir_cast]
+            ncoord  = (coord[0] + dx, coord[1] + dy)
+            if self.is_valid(ncoord):
+                moves.append((dir_cast, ncoord))
+        return moves
+
+    def build_trie(self, start: Coord, mode: TraversalModes = TraversalModes.DFS) -> FreemanNode:
+        """Build a Freeman chain code tree from a start coordinate"""
+        self.seen = {start}
+        if mode == TraversalModes.DFS:
+            return self._dfs_trie(start)
+        return self._bfs_trie(start)
+
+    def _dfs_trie(self, coord: Coord) -> FreemanNode:
+        """Build trie using depth-first search"""
+        children = []
+
+        for direction, next_coord in self.get_valid_moves(coord):
+               if next_coord not in self.seen:
+                   self.seen.add(next_coord)
+                   child_node = self._dfs_trie(next_coord)
+                   if child_node.path or child_node.children:
+                       path = cast(Path, [direction] + child_node.path)
+                       if len(child_node.children) == 1:
+                           # Linearize by combining path with single child
+                           child = child_node.children[0]
+                           children.append(FreemanNode(path + child.path, child.children))
+                       else:
+                           children.append(FreemanNode(path, child_node.children))
+
+        return FreemanNode([], children)
+
+    def _bfs_trie(self, start: Coord) -> FreemanNode:
+        """Build a trie using breadth-first search"""
+        queue = deque([(start, [])])
+        children = []
+
+        while queue:
+            coord, path = queue.popleft()
+
+            for direction, next_coord in self.get_valid_moves(coord):
+                if next_coord not in self.seen:
+                    self.seen.add(next_coord)
+                    npath = path + [direction]
+                    queue.append((next_coord, npath))
+                    children.append(FreemanNode(npath, []))
+
+        # Post-process to linearize nodes with single children
+        nchildren = []
+        for child in children:
+            if len(child.children) == 1:
+                grandchild = child.children[0]
+                nchildren.append(FreemanNode(child.path + grandchild.path, grandchild.children))
+            else:
+                nchildren.append(child)
+
+        return FreemanNode([], nchildren)
+
+def decode_freeman(start: Coord, root: FreemanNode):
+    """Convert Freeman trie back to coordinates"""
+    coords = {start}
+    queue = [(start, root)]
+
+    while queue:
+        current, node = queue.pop()
+        for child in node.children:
+            coord = current
+            for direction in child.path:
+                dx, dy = Freeman.DIRECTIONS[direction]
+                coord = (coord[0] + dx, coord[1] + dy)
+                coords.add(coord)
+            queue.append((coord, child))
+
+    return coords
+
+def arrowify(root: FreemanNode):
+    """Convert Freeman chain code to directional arrows."""
+    def convert_char(c: str) -> str:
+        return DIRECTIONS_ARROW[cast(King, int(c))] if c.isdigit() else c
+    result = "".join(map(convert_char, str(root)))
+    print(result)
+
+def arrowify1(freeman: FreemanNode) -> None:
+    result = "".join(DIRECTIONS_ARROW[cast(King, int(c))] if c.isdigit() else c
+                    for c in str(freeman))
+    print(result)
 def available_transitions_freeman(is_valid: Callable[[Coord], bool], coordinates: Coord) -> List[Trans]:
     transitions = []
     col, row = coordinates
@@ -130,17 +225,17 @@ def available_transitions_freeman(is_valid: Callable[[Coord], bool], coordinates
 def encode_connected_component(start: Coord, is_valid: Callable[[Coord], bool], method: TraversalModes = TraversalModes.DFS) -> FreemanNode:
     seen = set()
 
-    def coord_to_transitions(coordinates: Coord) -> List[Trans]:
+    def coord_to_transitions(coordinates: Coord) -> list[Trans]:
         return available_transitions_freeman(is_valid, coordinates)
 
     def concatenate(moves: Path, node: FreemanNode) -> FreemanNode:
-        if not node.branches:
+        if not node.children:
             return FreemanNode(moves + node.path, list())
-        elif len(node.branches) == 1:
-            child = next(iter(node.branches))
-            return FreemanNode(moves + node.path + child.path, child.branches)
+        elif len(node.children) == 1:
+            child = next(iter(node.children))
+            return FreemanNode(moves + node.path + child.path, child.children)
         else:
-            return FreemanNode(moves + node.path, node.branches)
+            return FreemanNode(moves + node.path, node.children)
 
     def bfs_traversal(start: Coord) -> FreemanNode:
         queue = deque([(start)])
@@ -164,20 +259,20 @@ def encode_connected_component(start: Coord, is_valid: Callable[[Coord], bool], 
     def dfs_traversal(coord: Coord) -> FreemanNode:
         seen.add(coord)
         transitions = coord_to_transitions(coord)
-        branches = set()
+        branches = list()
 
         for move, ncoord in transitions:
             if ncoord not in seen:
                 nnode = concatenate([move], dfs_traversal(ncoord))
-                branches.add(nnode)
+                branches.append(nnode)
 
-        return concatenate([], FreemanNode([], frozenset(branches)))
+        return concatenate([], FreemanNode([], list(branches)))
 
     if method == TraversalModes.BFS:
         return bfs_traversal(start)
     else:
         return dfs_traversal(start)
-def decode_freeman(tree: FreemanTree) -> Coords:
+def decode_freeman1(tree: FreemanTree) -> Coords:
     coords = set()
     queue_tree = [tree]
 
@@ -187,31 +282,9 @@ def decode_freeman(tree: FreemanTree) -> Coords:
         start, freeman = queue_tree.pop()
         ncoords, nstart = path_to_coords(start, freeman.path)
         coords.update(ncoords)
-        for branch in freeman.branches:
-            queue_tree.append((nstart, branch))
+        for child in freeman.children:
+            queue_tree.append((nstart, child))
     return coords
-#CompressedFreeman = Union[RepeatNode, CompressedNode]
-
-def encode_rl(node: FreemanNode):# -> CompressedNode:
-    path = node.path
-    segments = []
-
-    if path:
-        curr, count = path[0], 1
-
-        for i in range(1, len(path)):
-            next = path[i]
-            if curr == next:
-                count += 1
-            else:
-                segments.append((curr, count))
-                curr, count = next, 1
-
-        segments.append(PatternNode((curr, count), 1))
-
-    return CompressedNode(segments, set(encode_rl(nnode) for nnode in node.branches))
-
-#### Shape tree:
 
 ### Real Freeman boundary
 

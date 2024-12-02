@@ -1,7 +1,18 @@
+Current Plan:
+-> Replace Moves and anything by ConsecutiveNode of Leaf
+-> Replace other parameters by leafs (coords, colors, counts)
+-> Replace Root by a product type?
+-> Create Transformati
 
+
+Issue:
+-> speed: loss filter?
+-> There is indeterminism in the code, I don't know why
 
 
 #### TO DO
+
+Add Rect(Var(0), Var(0)) by default?
 
 -> Improve coding so similar elments for categories,
 -> Improve the code base
@@ -26,6 +37,15 @@ Do You WANT bi symbolic node with parameters of DIFFERENT types?
 -> Immediate coverage is not overlapping
 -> The squares will be as big as possible, given the area in them is maxxed
 
+____
+Full Bias: just put a language to compress repetitions and memorize nested structures
+When going to the variance side, you need to modify the language by adding primitives
+
+Full Variance: Pure statistical memorization of patterns, in a kind of universal code.
+You don't even need to do it on programm space, you can just doing on string / literal space.
+
+Middle ground: Symbolization: you memorize reppeting patterns,
+but allow these patterns to be functional parts of the language.
 
 --------
 Maybe the solution is to coma back to the basic, and describe objects by their frontier:

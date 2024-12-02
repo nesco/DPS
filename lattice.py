@@ -160,7 +160,7 @@ def mask_to_ast(mask: Coords, colors: Colors, proportions: Proportions) -> Optio
         # choose the best option by iterating overstart points and dfs/bfs
         asts=[]
         for start in starts:
-            for method in ["dfs", "bfs"]:
+            for method in ["dfs"]: #["dfs", "bfs"]:
                 ast = Root(start, node['value']['colors'], construct_node1(start, is_valid, method))
                 asts.append(ast)
         return asts
@@ -471,7 +471,7 @@ def symbolize_together(lattices):
 
     # List of list of ASTs to list of ASTs
     lcodes = [code for l in lattices for code in l.codes]
-    lcodes = symbolize(lcodes, nrefs)
+    lcodes, nrefs = symbolize(lcodes, nrefs)
 
     # Reconstruction of lattices codes
     index = 0
@@ -479,18 +479,21 @@ def symbolize_together(lattices):
         for j in range(len(l.codes)):
             l.codes[j] = lcodes[index]
             index += 1
+        l.refs = nrefs
         l.update_unions()
 
     lucodes = []
     urefs = []
     for l in lattices:
+        print("New lattice ----")
         for m, u in enumerate(l.unions):
             print(f'Union: {u} n°{m}')
             lucodes.append(u.background)
             for code in u.codes:
+                print(f'with {code}')
                 lucodes.append(code)
 
-    lucodes = symbolize(lucodes, urefs)
+    lucodes, urefs = symbolize(lucodes, urefs)
 
     # Reconstruction of union codes
     index = 0
@@ -946,8 +949,6 @@ def solve_problem(task = "2dc579da.json"):
     def distance(a, b):
         match a, b:
             case SymbolicNode(i1, _, _), SymbolicNode(i2, _, _) if i1 == i2:
-                return 0
-            case BiSymbolicNode(i1, _, _, _), BiSymbolicNode(i2, _, _, _) if i1 == i2:
                 return 0
             case _, _:
                 return ast_distance(a, b, refs)

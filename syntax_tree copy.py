@@ -29,8 +29,7 @@ from enum import IntEnum
 
 from math import ceil
 
-from typing import Any, Union, Optional, Iterator, Callable, Set, NewType, TypeVar, Generic, cast
-from abc import ABC, abstractmethod
+from typing import Any, List, Union, Optional, Iterator, Callable, Set, Tuple, Dict, NewType, cast
 from helpers import *
 
 from time import sleep
@@ -55,35 +54,10 @@ class BitLength(IntEnum):
 #    '0': (-1, 0), '1': (0, -1), '2': (1, 0), '3': (0, 1),
 #    '4': (1, -1), '5': (1, 1), '6': (-1, 1), '7': (-1, -1)
 #}
-@dataclass(frozen=True)
-class BitLengthAware(ABC):
-    """
-    This is a protocol for classes that 'know' their bit lengths.
-    In the future it should be the length of the category they belong to.
-    """
 
-    @abstractmethod
-    def bit_length(self) -> int:
-        pass
-
-    @abstractmethod
-    def __str__(self) -> str:
-        pass
 
 @dataclass(frozen=True)
-class Move(BitLengthAware):
-    value: King
-
-    def bit_length(self):
-        return BitLength.MOVE
-
-    def __str__(self) -> str:
-        return str(self.value)
-
-T = TypeVar('T', bound=BitLengthAware)
-
-@dataclass(frozen=True)
-class Node(Generic[T], ABC):
+class Node:
     """
     Abstract Node class used to stuff inherited methods.
     """
@@ -100,25 +74,15 @@ class Node(Generic[T], ABC):
         attrs = ', '.join(f"{k}={v!r}" for k, v in self.__dict__.items())
         return f"{self.__class__.__name__}({attrs})"
 
-    def __add__(self, other) -> 'Node':
+    def __add__(self, other) -> 'ASTNode':
         if isinstance(other, ConsecutiveNode):
             return ConsecutiveNode([self] + other.nodes)
         elif isinstance(other, (Variable, Root)):
             return NotImplemented
-        elif issubclass(other.__class__, ASTNode):
+        elif issubclass(other.__class__, Node):
             return ConsecutiveNode([self, other])
         else:
             return NotImplemented
-
-@dataclass(frozen=True)
-class Leaf(Node[T]):
-    data: T
-
-    def __len__(self) -> int:
-        return super().__len__() + self.data.bit_length()
-
-    def __str__(self) -> str:
-        return str(data)
 
 @dataclass(frozen=True)
 class MovesNode(Node):
@@ -490,22 +454,42 @@ class UnionNode():
 
 
 ASTNode = Union[Root, MovesNode, ConsecutiveNode, AlternativeNode, Repeat, SymbolicNode, Variable, Node]
-ASTFunctor = Callable[[Node], Optional[Node]]
-ASTTerminal = Callable[[Node, Optional[bool]], None]
+ASTFunctor = Callable[[ASTNode], Optional[ASTNode]]
+ASTTerminal = Callable[[ASTNode, Optional[bool]], None]
 
 ### Basic functions
 
-def is_leaf_list(input) -> bool:
-    if isinstance(input, ConsecutiveNode):
-        node_list = input.nodes
-    elif isinstance(input, list):
-        node_list = input
-    else:
-        return False
-    return all(isinstance(n, Leaf) for n in node_list)
+# string function
 
-Sequence = Union[list[Node], str]
-def check_for_repeat(sequence: Sequence) -> Optional[Node]:
+def alphabet_to_rolling_hashes_generator(alphabet: str) -> Callable:
+    BASE = len(alphabet)
+    MOD = 2477 # prime number to mod the hash values
+
+
+    def string_to_hash_function(s: str) -> Callable:
+        """
+        Compute the rolling hashes for any string s
+        with the correct alphabet size.
+
+        :param s: the input string
+        """
+        hashes = [0] * (len(s) + 1)
+        for i in range(len(s)):
+            hashes[i+1] = (hashes[i] * BASE + alphabet.index(s[i])) % MOD
+
+        def indices_to_hash(start: int, end: int) -> int:
+            if end < start:
+                raise ValueError(f"Invalid substring to hash: End: {end} < Start: {start}")
+            return ( hashes[end] - hashes[start] * pow(BASE, end - start, MOD) ) % MOD
+
+        return indices_to_hash
+
+    return string_to_hash_function
+
+string_to_hash_function = alphabet_to_rolling_hashes_generator("01234567")
+
+Sequence = Union[list[ASTNode], str]
+def check_for_repeat(sequence: Sequence) -> Optional[ASTNode]:
     """Check the biggest repeat at the current level"""
     n = len(sequence)
 
@@ -564,7 +548,7 @@ def check_for_repeat(sequence: Sequence) -> Optional[Node]:
     # If nothing is found
     return None
 
-def check_for_repeat_within(s: str, start: int, end: int, dp) -> Optional[Node]:
+def check_for_repeat_within(s: str, start: int, end: int, dp) -> Optional[ASTNode]:
     substring = s[start:end]
     substring_length = end - start
 
@@ -586,7 +570,7 @@ def check_for_repeat_within(s: str, start: int, end: int, dp) -> Optional[Node]:
     # No repeat found
     return None
 
-def encode_string(s: str) -> Node:
+def encode_string(s: str) -> ASTNode:
     n = len(s)
     memo = {}
 
@@ -626,7 +610,7 @@ def encode_string(s: str) -> Node:
 
     return dp(0, n)
 
-def dynamic_factorize(sequence: Sequence) -> Optional[Node]:
+def dynamic_factorize(sequence: Sequence) -> Optional[ASTNode]:
     n = len(sequence)
     if n == 0:
         return None
@@ -669,7 +653,7 @@ def dynamic_factorize(sequence: Sequence) -> Optional[Node]:
     # The best encoding for the entire sequence is stored in dp[n]
     return dp[n]
 
-def children(node: Node) -> Iterator[Node]:
+def children(node: ASTNode) -> Iterator[ASTNode]:
     match node:
         case Root(_, _, child) if child:
             return iter((child,))
@@ -775,7 +759,7 @@ def simplify_repetitions(self):
 
         return construct_consecutive_node(result) if len(result) > 1 else result[0]
 
-def construct_consecutive_node(nodes: list[Node]) -> ConsecutiveNode:
+def construct_consecutive_node(nodes: list[ASTNode]) -> ConsecutiveNode:
     nodes_simplified = []
 
     current, nnodes = nodes[0], nodes[1:]
@@ -817,7 +801,7 @@ def construct_consecutive_node(nodes: list[Node]) -> ConsecutiveNode:
 
     return ConsecutiveNode(nodes_simplified)
 
-def breadth_iter(node: Node) -> Iterator[ASTNode]:
+def breadth_iter(node: ASTNode) -> Iterator[ASTNode]:
     match node:
         case Repeat(nnode, count):
             yield nnode
@@ -846,7 +830,7 @@ def breadth_iter(node: Node) -> Iterator[ASTNode]:
         case _:
             return iter(())
 
-def reverse_node(node: Node) -> Node:
+def reverse_node(node: ASTNode) -> ASTNode:
     """Assume that AlternativeNode has already been run-lenght-encoded"""
     match node:
         case MovesNode(moves):
@@ -918,11 +902,6 @@ def moves_to_rect(s: str):
 
 def expand(node) -> str:
     match node:
-        case ConsecutiveNode(nodes) \
-        if all(isinstance(n, Leaf) and isinstance(n.data, Move) for n in nodes):
-            return ''.join([str(n.data.value) for n in nodes])
-        case list if all(isinstance(n, Leaf) and isinstance(n.data, Move) for n in node):
-            return ''.join([str(n.data.value) for n in node])
         case MovesNode(m):
             return m
         case Repeat(n, c) if isinstance(c, int):
@@ -938,17 +917,6 @@ def expand(node) -> str:
         case _:
             return ''
 
-def extract_rects1(node):
-    ex = expand(node)
-    if ex == '':
-        return node
-    else:
-        res =  moves_to_rect(ex)
-        if res:
-            return Rect(res[0], res[1])
-        else:
-            return node
-
 def extract_rects(node):
     ex = expand(node)
     if ex == '':
@@ -961,7 +929,7 @@ def extract_rects(node):
             return node
 
 #### AST
-def node_from_list(nodes: list[Node]) -> Optional[Node]:
+def node_from_list(nodes: list[ASTNode]) -> Optional[ASTNode]:
     if not nodes:
         return None
     elif len(nodes) == 1:
@@ -969,7 +937,7 @@ def node_from_list(nodes: list[Node]) -> Optional[Node]:
     else:
         return ConsecutiveNode(nodes)
 
-def branch_from_list(nodes: list[Node]) -> Optional[Node]:
+def branch_from_list(nodes: list[ASTNode]) -> Optional[ASTNode]:
     if not nodes:
         return None
     elif len(nodes) == 1 and not isinstance(nodes[0], Repeat):
@@ -1024,53 +992,7 @@ def encode_run_length(moves: MovesNode):
 
     return node_from_list(sequence)
 
-def encode_run_length_leaf(leaf_sequence: ConsecutiveNode):
-    """
-    Run-Length Encoding (RLE) is used to compress MovesNode into Repeats of MovesNode.
-    It's an elementary compression method used directly at the creation of AST representin branching chain codes.
-    As it's very simple, it does not lead to risk of over optimisation
-    """
-    def create_node(node: Node, count):
-        if count >= 3:
-            return Repeat(node, count)
-        return ConsecutiveNode([node] * count)
-
-    # Nothing to encode
-    if len(leaf_sequence) <= 2: return leaf_sequence
-
-    sequence = []
-    node_prev, node_current = tuple(leaf_sequence.nodes[:2])
-
-    count = 2 if node_current == node_prev else 1
-    non_repeat_node = node_prev if node_current != node_prev else None
-
-    # Iterating over the 3-character nodes
-    for node_next in sequence[2:]:
-        if node_next == node_current: # _, A, A case
-            count += 1
-        else: # *, A, B
-            if count >= 3: # *, A, A, A, B case
-                if non_repeat_node: # Saving previous non-repeating moves
-                    sequence.append(non_repeat_node)
-                    non_repeat_node = None
-                sequence.append(create_node(node_current, count)) # storing the repetition
-            else: # *, C, _, A, B case
-                non_repeat_node += node_current * count
-            count = 1
-        node_current = node_next
-
-    # Last segment
-    if count >= 3:
-        if non_repeat_node:
-            sequence.append(non_repeat_node)
-        sequence.append(create_node(node_current, count))
-    else:
-        non_repeat_node += node_current * count
-        sequence.append(non_repeat_node)
-
-    return node_from_list(sequence)
-
-def factorize_moves(node: Node):
+def factorize_moves(node: ASTNode):
     if not isinstance(node, (MovesNode, ConsecutiveNode)):
         return node
     if isinstance(node, ConsecutiveNode):
@@ -1107,7 +1029,7 @@ def shift_moves(i: int, node):
             return AlternativeNode([shift_moves(i, n) for n in nodes])
         case _:
             return node
-def get_iterator(node_ls: list[Node]) -> list[Node]:
+def get_iterator(node_ls: list[ASTNode]) -> list[ASTNode]:
     """
     This function tries to find iterators to encode as a single Repeat at the root of AlternativeNode or ConsecutiveNode
     It use the fact that AlternativeNode or ConsecutiveNode can't have a single Repeat as a child to assign a double meaning to it
@@ -1139,7 +1061,7 @@ def get_iterator(node_ls: list[Node]) -> list[Node]:
 
 ### Functions on ASTs
 
-def get_depth(ast: Node):
+def get_depth(ast: ASTNode):
     if not ast:
         return 0
 
@@ -1151,12 +1073,12 @@ def get_depth(ast: Node):
 
     return max_depth + 1
 
-def is_symbolic(ast: Node):
+def is_symbolic(ast: ASTNode):
     if isinstance(ast, SymbolicNode):
         return True
     return any(is_symbolic(child) for child in children(ast))
 
-def is_function(ast: Node):
+def is_function(ast: ASTNode):
     match ast:
         case Variable():
             return True
@@ -1169,14 +1091,14 @@ def is_function(ast: Node):
         case _:
             return False
 
-def get_symbols(ast: Node):
+def get_symbols(ast: ASTNode):
     symbols = [item for child in children(ast) for item in get_symbols(child)]
     match ast:
         case SymbolicNode(i, _, _):
             symbols.append(i)
     return symbols
 
-def ast_map(f: ASTFunctor, node: Optional[Node]) -> Optional[Node]:
+def ast_map(f: ASTFunctor, node: Optional[ASTNode]) -> Optional[ASTNode]:
     """
     Map a function from an single ASTNode to an single AST node to an entire AST.
     :param f: function to map
@@ -1225,7 +1147,7 @@ def ast_map(f: ASTFunctor, node: Optional[Node]) -> Optional[Node]:
 
 ### Helper functions to compress ASTs
 
-def find_repeating_pattern(nodes: list[Node], offset):
+def find_repeating_pattern(nodes: list[ASTNode], offset):
     """
     Find repeating node patterns of any size at the given start index,
     including alternating patterns, given it compresses the code
@@ -1270,7 +1192,7 @@ def find_repeating_pattern(nodes: list[Node], offset):
 
     return best_pattern, best_count, best_reverse
 
-def factorize_nodelist(ast_node: Node):
+def factorize_nodelist(ast_node: ASTNode):
     """
     Detect patterns inside a ConsecutiveNode and factor them in Repeats.
     It takes a general AST Node parameter, as it makes it possible to construct a
@@ -1301,7 +1223,7 @@ def factorize_nodelist(ast_node: Node):
 
     return ConsecutiveNode(nodes=nnodes)
 
-def functionalized(node: Node) -> list[tuple[Node, Any]]:
+def functionalized(node: ASTNode) -> list[tuple[ASTNode, Any]]:
     """
     Return a functionalized version of the node and a parameter.
     As the parameter count of Repeat is not a ASTNode, it's functionalized version
@@ -1374,7 +1296,7 @@ def functionalized(node: Node) -> list[tuple[Node, Any]]:
 
 ### Other helper functions
 ### Main functions
-def update_node_i_by_j(node: Node, i, j):
+def update_node_i_by_j(node: ASTNode, i, j):
     match node:
         case SymbolicNode(index, param, l) if index == i:
             return SymbolicNode(j, param, l)
@@ -1474,11 +1396,11 @@ def construct_node1(coordinates, is_valid: Callable[[Coord], bool], traversal: T
     node = bfs(coordinates) if traversal==TraversalModes.BFS else dfs(coordinates)
     return ast_map(extract_rects, ast_map(factorize_nodelist, node))
 
-def freeman_to_ast(freeman_node: FreemanNode) -> Optional[Node]:
+def freeman_to_ast(freeman_node: FreemanNode) -> Optional[ASTNode]:
     branches = []
     nodelist = []
 
-    for branch in freeman_node.children:
+    for branch in freeman_node.branches:
         node = freeman_to_ast(branch)
         #if isinstance(node, AlternativeNode):
         #    node = AlternativeNode(get_iterator(node.nodes))#encode_run_length(node)
@@ -1504,32 +1426,8 @@ def freeman_to_ast(freeman_node: FreemanNode) -> Optional[Node]:
 
     astnode = node_from_list(nodelist)
     return astnode
-def freeman_to_ast_Leaf(freeman_node: FreemanNode) -> Optional[Node]:
-    branches = []
-    nodelist = []
 
-    for branch in freeman_node.branches:
-        node = freeman_to_ast(branch)
-        branches.append(node)
-
-    # And we compute the main path
-    if len(freeman_node.path) > 0:
-        path = [Leaf(Move(move)) for move in freeman_node.path]
-        rect = extract_rects(path)
-        if is_leaf_list(rect):
-            path = dynamic_factorize(path)
-        else:
-            path = rect
-        nodelist.append(path)
-
-    branches = branch_from_list(branches)
-    if branches is not None:
-        nodelist.append(branches)
-
-    astnode = node_from_list(nodelist)
-    return astnode
-
-def construct_node(freeman_node: FreemanNode) -> Optional[Node]:
+def construct_node(freeman_node: FreemanNode) -> Optional[ASTNode]:
     # Recursive part: first we get the nodes from the different branches
     astnode = freeman_to_ast(freeman_node)
     if GREEDY:
@@ -1540,7 +1438,7 @@ def construct_node(freeman_node: FreemanNode) -> Optional[Node]:
 
 
 ### Symbolic System
-def replace_parameters(node: Node, parameters: tuple):
+def replace_parameters(node: ASTNode, parameters: tuple):
     # Hypothesis: the parameters here are either not ASTNodes, or not symbolic
     if isinstance(node, Variable):
         if node.index < 0 or node.index >= len(parameters):
@@ -1573,9 +1471,9 @@ def replace_parameters(node: Node, parameters: tuple):
 
     return type(node)(**new_attrs)
 
-SymbolTable = list[Node]
+SymbolTable = list[ASTNode]
 
-def symbolize_next(ast_ls: list[Node], refs: SymbolTable, lattice_count=1, include_functionalized=False, include_roots=False) -> tuple[list[ASTNode], SymbolTable, bool]:
+def symbolize_next(ast_ls: list[ASTNode], refs: SymbolTable, lattice_count=1, include_functionalized=False, include_roots=False) -> tuple[list[ASTNode], SymbolTable, bool]:
     # co_symbolize a list of ast
     pattern_counter = Counter()
     pattern_metadata = {}
@@ -1679,7 +1577,7 @@ def symbolize_next(ast_ls: list[Node], refs: SymbolTable, lattice_count=1, inclu
 
 
 @handle_elements
-def symbolize(ast_ls: list[Node], refs: SymbolTable, lattice_count=1) -> tuple[list[Node], SymbolTable]:
+def symbolize(ast_ls: list[ASTNode], refs: SymbolTable, lattice_count=1) -> tuple[list[ASTNode], SymbolTable]:
     """Symbolize ast_ls as much as possible"""
 
     # First symbolize everything that doesn't countains symbols
@@ -1722,7 +1620,7 @@ def symbolize(ast_ls: list[Node], refs: SymbolTable, lattice_count=1) -> tuple[l
 # Could be symbolized in Var
 
 
-def resolve_symbolic(node: Node, symbol_table: SymbolTable) -> Any:
+def resolve_symbolic(node: ASTNode, symbol_table: SymbolTable) -> Any:
     if isinstance(node, SymbolicNode):
         template = symbol_table[node.index]
         params = node.parameters
@@ -1746,7 +1644,7 @@ def resolve_symbolic(node: Node, symbol_table: SymbolTable) -> Any:
 
 
 @handle_elements
-def unsymbolize(ast_ls: list[Node], refs: SymbolTable):
+def unsymbolize(ast_ls: list[ASTNode], refs: SymbolTable):
     """
     Unsymbolize an AST: eliminates all Symbolic Nodes.
 
@@ -1793,7 +1691,7 @@ def unsymbolize(ast_ls: list[Node], refs: SymbolTable):
 
     # Resolved each ASTs using the resolved copy
     return [ast_map(resolve, ast) for ast in ast_ls]
-def factor_by_refs(node: Node, refs: SymbolTable):
+def factor_by_refs(node: ASTNode, refs: SymbolTable):
     """A non-factorize node of an AST in an lattice could possibly match a symbol learned from another lattice.
     Thus it's necessary to check if each node doen't match a an already exiting symbol
     That was added in the symbol table by another lattice.
@@ -1888,7 +1786,7 @@ def fuse_refs(refs_ls: list[SymbolTable]) -> tuple[SymbolTable, list[int]]:
         mapping, nrefs = map_refs(refs, nrefs)
         mappings.append(mapping)
     return nrefs, mappings
-def update_asts(ast_ls: list[Node], nrefs: SymbolTable, mapping: list[int]):
+def update_asts(ast_ls: list[ASTNode], nrefs: SymbolTable, mapping: list[int]):
 
     if DEBUG_ASTMAP:
         nast_ls = []
@@ -1908,7 +1806,7 @@ def update_asts(ast_ls: list[Node], nrefs: SymbolTable, mapping: list[int]):
     ast_ls = [factor_by_refs(ast, nrefs) for ast in ast_ls]
     return ast_ls
 
-def construct_union(code: Optional[Node], codes: list[Node], unions: list[Node], refs: SymbolTable, box: Box):
+def construct_union(code: Optional[ASTNode], codes: list[ASTNode], unions: list[ASTNode], refs: SymbolTable, box: Box):
     # Hypothesess:
         # union elements of union are always already unsymbolized and have a background
         # code elements of codes are symbolized
@@ -2051,7 +1949,7 @@ def construct_union(code: Optional[Node], codes: list[Node], unions: list[Node],
 
     return UnionNode( nsubunions | subcodes, nshadowed, nbackground) # type: ignore
 
-def shift_ast(shift: Coord, node: Node):
+def shift_ast(shift: Coord, node: ASTNode):
     def displace(node):
         match node:
             case Root(s, c, n) if isinstance(s, tuple):
@@ -2062,7 +1960,7 @@ def shift_ast(shift: Coord, node: Node):
     return ast_map(displace, node)
 
 @optional
-def decode(node: Node, coordinates: Coord =(0,0), color: int = 1) -> Tuple[Coord, Points]:
+def decode(node: ASTNode, coordinates: Coord =(0,0), color: int = 1) -> Tuple[Coord, Points]:
     """
     Decode asts into grid without having a particular grid imposed.
     The AST should not be symbolic, it has to have its symbols resolved first.
@@ -2113,15 +2011,6 @@ def decode(node: Node, coordinates: Coord =(0,0), color: int = 1) -> Tuple[Coord
 
     # Searching and processing the non-symbolic traditional nodes
     match node:
-        case Leaf(data) if isinstance(data, Move):
-            col, row = ncoordinates
-            move = data.value
-
-            col += DIRECTIONS_FREEMAN[move][0]
-            row += DIRECTIONS_FREEMAN[move][1]
-
-            points.append((col, row, color))
-            ncoordinates = (col, row)
         case MovesNode(moves):
             for col, row in node.iter_path(coordinates):
                 points.append((col, row, color))
@@ -2134,18 +2023,14 @@ def decode(node: Node, coordinates: Coord =(0,0), color: int = 1) -> Tuple[Coord
             for nnode in node:
                 _, npoints = decode(nnode, ncoordinates, color)
                 points.extend(npoints)
-        case None:
-            pass
-        case _:
-            raise ValueError(f"Unexpected node when decoding: {node}")
 
     return ncoordinates, set(points)
 
-def node_to_grid(node: Node) -> Grid:
+def node_to_grid(node: ASTNode) -> Grid:
     _, points = decode(node)
     return points_to_grid_colored(points)
 
-def ast_distance1(node1: Optional[Node], node2: Optional[Node], refs: SymbolTable) -> int:
+def ast_distance1(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: SymbolTable) -> int:
     def list_edit_distance(list1, list2):
         m, n = len(list1), len(list2)
 
@@ -2342,7 +2227,7 @@ def ast_distance1(node1: Optional[Node], node2: Optional[Node], refs: SymbolTabl
         case _:
             return 0 if node1 == node2 else len(node1) + len(node2)
 
-def ast_distance(node1: Optional[Node], node2: Optional[Node], refs: SymbolTable) -> int:
+def ast_distance(node1: Optional[ASTNode], node2: Optional[ASTNode], refs: SymbolTable) -> int:
     def list_edit_distance(list1, list2):
         m, n = len(list1), len(list2)
 
