@@ -30,7 +30,7 @@ def extract_masks_bicolors(grid):
         masks_bicolors[(color_i, color_i)] = color_coords[color_i]
 
     return masks_bicolors
-def list_components(mask_dict: Dict[Any, Coords], proportions: Proportions, chebyshev = True):
+def list_components(mask_dict: dict[Any, Coords], proportions: Proportions, chebyshev = True):
     """
     list_components creates a list of unique connected components extracted
     from a dictionnary of masks.
@@ -103,7 +103,7 @@ def construct_lattice_ends(grid: Grid):
     component_infimum = {'mask': mask_infinmum, 'box': None}#, 'euler':1, 'colors': None}
 
     return component_supremum, component_infimum
-def get_potential_starting_points(coordinates: List[Coord]) -> List[Coord]:
+def get_potential_starting_points(coordinates: list[Coord]) -> list[Coord]:
     if not coordinates:
         return []
 
@@ -190,7 +190,7 @@ def mask_to_ast(mask: Coords, colors: Colors, proportions: Proportions) -> Optio
 
 class Lattice():
 
-    def __init__(self, grid: GridColored, mask_dict: Dict[Any, Coords]):
+    def __init__(self, grid: GridColored, mask_dict: dict[Any, Coords]):
         self.grid = grid
         self.width, self.height = proportions(grid)
         self.area = self.height * self.width
@@ -555,7 +555,7 @@ def symbolize_together1(lattices):
             u.codes = set_to_quotient(lambda x: x.colors, nucodes)
         l.union_refs = urefs
 
-def distance1(node_val1, node_val2, refs) -> Tuple[float, Coord]:
+def distance1(node_val1, node_val2, refs) -> tuple[float, Coord]:
     prog1 = unsymbolize(node_val1['ast'], refs)
     prog2 = unsymbolize(node_val2['ast'], refs)
 
@@ -564,7 +564,7 @@ def distance1(node_val1, node_val2, refs) -> Tuple[float, Coord]:
 
     return distance_jaccard_optimal(points1, points2)
 
-def distance(node_val1, node_val2, refs) -> Tuple[float, Coord]:
+def distance(node_val1, node_val2, refs) -> tuple[float, Coord]:
     prog1 = unsymbolize(node_val1['ast'], refs)
     prog2 = unsymbolize(node_val2['ast'], refs)
 

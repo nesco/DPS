@@ -3,4 +3,9 @@
 
 # Ignore the myvenv virtual environment directory
 myenv/
+.venv/
+.ruff_cache/
 __pycache__
+
+# Everything containting "tmp"
+*tmp*

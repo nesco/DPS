@@ -1,5 +1,5 @@
 
-from typing import Union, Optional, Iterator, Callable, NewType, Literal, Final
+from typing import Optional, Callable, Literal, Final
 from typing import cast
 
 from collections import deque
@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 Tower = Literal[0, 1, 2, 3]
 Bishop = Literal[4, 5, 6, 7]
-King = Union[Tower, Bishop]
+King = Tower | Bishop
 
 NUM_DIRECTIONS: Final[int] = 8
 NUM_DIRECTIONS_ORTHOGONAL: Final[int] = 4
@@ -36,6 +36,7 @@ LEFT_TURN: Final[int] = -2
 
 def shift4_tower(direction: Tower, shift: int) -> Tower:
     return cast(Tower, (direction + shift) % NUM_DIRECTIONS_ORTHOGONAL)
+
 def shift4_bishop(direction: Bishop, shift: int) -> Bishop:
     return cast(Bishop, (((direction - NUM_DIRECTIONS_ORTHOGONAL) + shift) % NUM_DIRECTIONS_ORTHOGONAL) + NUM_DIRECTIONS_ORTHOGONAL)
 
@@ -47,6 +48,7 @@ def shift4(direction: King, shift: int) -> King:
         return shift4_tower(cast(Tower, direction), shift)
     else:
         return shift4_bishop(cast(Bishop, direction), shift)
+
 def shift8(direction: King, shift: int) -> King:
     """
     Shifting the direction counter-clockwise in the group of 8-directions.
@@ -64,11 +66,11 @@ def inverse(direction: King) -> King:
     return shift4(direction, 2)
 
 # Paths:
-Path = List[King]
-Trans = Tuple[King, Coord] # Transition
-FreemanTree = Tuple[Coord, 'FreemanNode']
+Path = list[King]
+Trans = tuple[King, Coord] # Transition
+FreemanTree = tuple[Coord, 'FreemanNode']
 
-def path_to_coords(start: Coord, path: Path) -> Tuple[Coords, Coord]:
+def path_to_coords(start: Coord, path: Path) -> tuple[Coords, Coord]:
     """
     Integrate over `path` given the initial position `start`
     """
@@ -119,7 +121,7 @@ class Freeman:
         self.is_valid = is_valid_coord
         self.seen: set[Coord] = set()
 
-    def get_valid_moves(self, coord: Coord) -> list[Tuple[King, Coord]]:
+    def get_valid_moves(self, coord: Coord) -> list[tuple[King, Coord]]:
         """Get the list of valid moves from the current coordinates"""
         moves = []
         for direction in range(8):
@@ -210,7 +212,7 @@ def arrowify1(freeman: FreemanNode) -> None:
     result = "".join(DIRECTIONS_ARROW[cast(King, int(c))] if c.isdigit() else c
                     for c in str(freeman))
     print(result)
-def available_transitions_freeman(is_valid: Callable[[Coord], bool], coordinates: Coord) -> List[Trans]:
+def available_transitions_freeman(is_valid: Callable[[Coord], bool], coordinates: Coord) -> list[Trans]:
     transitions = []
     col, row = coordinates
     transitions = []
@@ -303,7 +305,7 @@ def mask_to_boundary(coords: Coords) -> Coords:
            boundary.add(coord)
     return boundary
 
-def next_boundary_cell(coords: Coords, current: Coord, dir: King) -> Optional[Tuple[Coord, King]]:
+def next_boundary_cell(coords: Coords, current: Coord, dir: King) -> Optional[tuple[Coord, King]]:
     for i in range(NUM_DIRECTIONS):
         ndir: King = shift8(dir, LEFT_TURN + i)
         dcol, drow = DIRECTIONS_FREEMAN[ndir]

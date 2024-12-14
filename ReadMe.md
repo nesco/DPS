@@ -1,4 +1,15 @@
-Ideas:
+# DPS - Deep Program Search
+
+## Structure
+
+- localtypes.py: custom types used throughout the project
+- grid.py: defines the main operations on grids
+- helpers.py: helper functions
+- freeman.py: defines the Freeman tree
+- syntax_tree.py: defines the syntax trees, and operation on them
+- lattice.py: defines the operation lattice
+
+## Ideas:
 
 > "What fire together wire together" (neurons) -> "What's close cluster together" (latent/semantics spaces)
 => Group things ""alike"" together
