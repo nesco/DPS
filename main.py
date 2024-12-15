@@ -7,6 +7,8 @@ from operators import *
 from lattice import *
 from rectangles import *
 from freeman import mask_to_boundary, trace_boundary, freeman_to_boundary_coords
+
+from grid import GridOperations, CoordsOperations
 # Tree primitives
 # String:
     # value: move string
@@ -231,8 +233,8 @@ def load_task(task, index):
 
 def print_lattice(grid, lattice):
     if lattice is not None:
-        print_colored_grid(extract(grid, lattice['value']['box']))
-        print_colored_grid(lattice['value']['mask'])
+        GridOperations.print(extract(grid, lattice['value']['box']))
+        GridOperations.print(lattice['value']['mask'])
 
     if lattice['successors'] is not None:
         for el in lattice['successors']:
@@ -279,7 +281,7 @@ def get_sizes():
         for input in inputs:
             masks = extract_masks_bicolors(input)
             component_ls = list_components(masks, proportions(input))
-            l_propins.append([coords_to_proportions(comp['mask']) for comp in component_ls])
+            l_propins.append([CoordsOperations.proportions(comp['mask']) for comp in component_ls])
 
         l_propouts = [proportions(output) for output in outputs]
 

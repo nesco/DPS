@@ -30,7 +30,9 @@ from typing import Concatenate, TypeVar, ParamSpec, overload, Iterator
 from category import *
 from localtypes import *
 
-from grid import GridOperations
+from grid import GridOperations, MaskOperations
+from grid import grid_to_points, coords_to_mask, mask_to_coords, mask_to_grid
+from grid import unpack_coords
 from grid import DIRECTIONS, MOVES
 
 # Shortcuts
@@ -39,37 +41,7 @@ zeros = GridOperations.zeros
 
 ## Constants
 # Define ANSI escape codes for the closest standard terminal colors
-COLORS = {
-    0: "\033[40m",  # black
-    1: "\033[44m",  # blue
-    2: "\033[101m",  # red
-    3: "\033[42m",  # green
-    4: "\033[103m",  # yellow
-    5: "\033[47m",  # white (for gray, best we can do)
-    6: "\033[45m",  # magenta (for fuschia)
-    7: "\033[43m",  # dark yellow (for orange, best we can do)
-    8: "\033[46m",  # cyan (for teal)
-    9: "\033[41m",  # dark red (for brown)
-}
-
-"""
-DIRECTIONS = {
-    "0": (-1, 0),
-    "1": (0, -1),
-    "2": (1, 0),
-    "3": (0, 1),
-    "4": (-1, -1),
-    "5": (1, -1),
-    "6": (1, 1),
-    "7": (-1, 1),
-}
-
-MOVES = "01234567"
-"""
-
-DATA = "../ARC-AGI/data"
-DEBUG = True
-
+from constants import COLORS, DATA, DEBUG
 
 class TraversalModes(StrEnum):
     """Graph Traversal methods"""
@@ -174,10 +146,6 @@ def handle_lists(func: Callable[..., U]) -> Callable[..., list[U] | U]:
 
     return wrapper
 
-
-#
-
-
 ## Basic decorator
 def to_grid(func: Callable[[T], U]) -> Callable[[list[list[T]]], list[list[U]]]:
     @wraps(func)
@@ -186,10 +154,6 @@ def to_grid(func: Callable[[T], U]) -> Callable[[list[list[T]]], list[list[U]]]:
         return [[func(arg[row][col]) for col in range(width)] for row in range(height)]
 
     return wrapper
-
-
-#
-
 
 def coordinate_shift(transformation_ls: list[tuple[Coord, Coord]]) -> Optional[Coord]:
     "Given a list of coordinate changes, find if there is a unique shift"
@@ -200,7 +164,6 @@ def coordinate_shift(transformation_ls: list[tuple[Coord, Coord]]) -> Optional[C
         return shifts.pop()
     else:
         return None
-
 
 def argmin_by_len(lst):
     return min(range(len(lst)), key=lambda i: len(lst[i]))
@@ -244,144 +207,8 @@ def grid_to_list(grid):
 
 # Basic functor
 
-
-def binary_to_bool(binary: Literal[0, 1]) -> bool:
-    return binary == 1
-
-
-# Explicitly annotate the transformed function
-binary_to_bool_grid: Callable[[list[list[Literal[0, 1]]]], list[list[bool]]] = to_grid(
-    binary_to_bool
-)
-
-
-# region Grid Basics
-# Elementary GridColored constructors
-
-# Elementary Mask constructors:
-def falses(height: int, width: int) -> Mask:
-    return [[False for _ in range(width)] for _ in range(height)]
-
-
-def trues(height: int, width: int) -> Mask:
-    return [[True for _ in range(width)] for _ in range(height)]
-
-
-# endregion
-
-
-# region Grid functors
-def map_grid_colored(grid: GridColored, f: Callable[[int], int]) -> GridColored:
-    width, height = proportions(grid)
-    return [[f(grid[row][col]) for col in range(width)] for row in range(height)]
-
-
-def map_mask(mask: Mask, f: Callable[[bool], bool]) -> Mask:
-    width, height = proportions(mask)
-    return [[f(mask[row][col]) for col in range(width)] for row in range(height)]
-
-
-# endregion
-
-
 # Grid <-> Points functors and their own helper functions
 # As Points is only construtced from Grid, it has no separate constructor
-def unpack_coords(coords: CoordsGeneralized) -> tuple[list[int], list[int]]:
-    cols, rows, *_ = zip(*coords)
-    return (cols, rows)
-
-
-def grid_to_points(grid: GridColored) -> Points:
-    width, height = proportions(grid)
-    return set(
-        [(col, row, grid[row][col]) for col in range(width) for row in range(height)]
-    )
-
-
-def populate_grid_colored(grid: GridColored, points: Points) -> None:
-    try:
-        for col, row, val in points:
-            grid[row][col] = val
-    except IndexError as e:
-        raise ValueError("The given list of points do not fit within the grid")
-
-
-def proportions_points(points: Points) -> Proportions:
-    cols, rows, _ = zip(*points)
-
-    # Check for invalid values
-    if any(row < 0 for row in rows) or any(col < 0 for col in cols):
-        raise ValueError("Some points have negative rows or cols")
-
-    # Get the proportions of the grid, beware of the off-by-one error
-    height = max(rows) + 1
-    width = max(cols) + 1
-    return (width, height)
-
-
-def coords_to_proportions(coords: Coords) -> Proportions:
-    cols, rows = unpack_coords(coords)
-
-    # Check for invalid values
-    if any(row < 0 for row in rows) or any(col < 0 for col in cols):
-        raise ValueError("Some points have negative rows or cols")
-
-    # Get the proportions of the grid, beware of the off-by-one error
-    height = max(rows) + 1
-    width = max(cols) + 1
-    return (width, height)
-
-
-def points_to_grid_colored(
-    points: Points, height: Optional[int] = None, width: Optional[int] = None
-) -> GridColored:
-    """
-    Fit the points either in a given grid size, or in the smallest grid possible.
-    """
-    cols, rows, vals = zip(*points)
-
-    # Check for invalid values
-    if any(row < 0 for row in rows) or any(col < 0 for col in cols):
-        raise ValueError("Some points have negative rows or cols")
-
-    if not all(0 <= val < 9 for val in vals):
-        raise ValueError("Some points have a color outside the [0, 9] range")
-
-    # Get the proportions of the grid, beware of the off-by-one error
-    nheight = max(rows) + 1
-    nwidth = max(cols) + 1
-
-    match (width, height):
-        case None, None:
-            width, height = nwidth, nheight
-        case None, _:
-            if height < nheight:
-                raise ValueError(
-                    f"Given height: {height} is too small, it should be at least: {nheight}"
-                )
-            height = nheight
-        case _, None:
-            if width < nwidth:
-                raise ValueError(
-                    f"Given width: {width} is too small, it should be at least: {nwidth}"
-                )
-            width = nwidth
-        case _, _:
-            if width < nwidth:
-                raise ValueError(
-                    f"Given width: {width} is too small, it should be at least: {nwidth}"
-                )
-            if height < nheight:
-                raise ValueError(
-                    f"Given height: {height} is too small, it should be at least: {nheight}"
-                )
-
-    # Constructing the scaffold, and filling it with the extracted points
-    grid = zeros(height, width)
-    populate_grid_colored(grid, points)
-
-    return grid
-
 
 # region Box basics
 # Box constructors
@@ -391,14 +218,6 @@ def points_to_grid_colored(
 #    col_min, col_max = min(cols), max(cols)
 #    return (row_min, col_min),  (row_max, col_max)
 
-
-def coords_to_box(coords: CoordsGeneralized) -> Box:
-    cols, rows = unpack_coords(coords)
-    row_min, row_max = min(rows), max(rows)
-    col_min, col_max = min(cols), max(cols)
-    return (col_min, row_min), (col_max, row_max)
-
-
 def touches_border(coords: CoordsGeneralized, box: Box) -> bool:
     (col_min, row_min), (col_max, row_max) = box
     return any(
@@ -406,22 +225,6 @@ def touches_border(coords: CoordsGeneralized, box: Box) -> bool:
         for item in coords
         for col, row in [item[:2]]
     )
-
-
-def grid_to_box(grid: Grid) -> Box:
-    return proportions_to_box(proportions(grid))
-
-
-def proportions_to_box(prop: Proportions, corner_top_right: Coord = (0, 0)):
-    col_min, row_min = corner_top_right
-    width, height = prop
-    return (col_min, row_min), (col_min + width - 1, row_min + height - 1)
-
-
-def box_to_proportions(box: Box) -> Proportions:
-    (col_min, row_min), (col_max, row_max) = box
-    return (row_max - row_min + 1, col_max - col_min + 1)
-
 
 def is_coord_in_box(coord: Coord, box: Box) -> bool:
     col, row = coord
@@ -541,70 +344,6 @@ def mask_colors(grid, mask):
                 color_set.add(grid[row][col])
     return color_set
 
-
-def mask_to_coords(mask: Mask) -> Coords:
-    width, height = proportions(mask)
-    return set(
-        [(col, row) for row in range(height) for col in range(width) if mask[row][col]]
-    )
-
-
-def populate_mask(mask: Mask, coords: Coords) -> None:
-    try:
-        for col, row in coords:
-            mask[row][col] = True
-    except IndexError as e:
-        raise ValueError("The given list of points do not fit within the grid")
-
-
-def coords_to_mask(
-    coords: Coords, height: Optional[int] = None, width: Optional[int] = None
-) -> Mask:
-    nwidth, nheight = coords_to_proportions(coords)
-
-    match (width, height):
-        case None, None:
-            width, height = nwidth, nheight
-        case None, _:
-            if height < nheight:
-                raise ValueError(
-                    f"Given height: {height} is too small, it should be at least: {nheight}"
-                )
-            height = nheight
-        case _, None:
-            if width < nwidth:
-                raise ValueError(
-                    f"Given width: {width} is too small, it should be at least: {nwidth}"
-                )
-            width = nwidth
-        case _, _:
-            if width < nwidth:
-                raise ValueError(
-                    f"Given width: {width} is too small, it should be at least: {nwidth}"
-                )
-            if height < nheight:
-                raise ValueError(
-                    f"Given height: {height} is too small, it should be at least: {nheight}"
-                )
-
-    # Constructing the scaffold, and filling it with the extracted points
-    mask = falses(height, width)
-    populate_mask(mask, coords)
-
-    return mask
-
-
-def mask_to_grid(mask: Mask, color_map: tuple[Color, Color] = (1, 0)) -> Grid:
-    """
-    Returns the first color if True the second if false
-    """
-    width, height = proportions(mask)
-    return [
-        [color_map[0] if mask[row][col] else color_map[1] for col in range(width)]
-        for row in range(height)
-    ]
-
-
 def grid_to_color_coords(grid: Grid) -> dict[Color, Coords]:
     width, height = proportions(grid)
     colors = set([grid[row][col] for row in range(height) for col in range(width)])
@@ -619,18 +358,12 @@ def grid_to_color_coords(grid: Grid) -> dict[Color, Coords]:
 
     return colors_coords
 
-
 def points_to_color_coords(points: Points) -> dict[Color, Coords]:
     _, _, colors = zip(*points)
     return {
         color: {(col, row) for col, row, value in points if value == color}
         for color in colors
     }
-
-
-def points_to_coords(points: Points) -> Coords:
-    return set((col, row) for col, row, color in points)
-
 
 def ncolors_coords(colors_coords, min_n=2, max_n=10):
     colors = list(colors_coords.keys())
@@ -639,11 +372,6 @@ def ncolors_coords(colors_coords, min_n=2, max_n=10):
         for n in range(min_n, min(max_n, len(colors)) + 1)
         for combo in combinations(colors, n)
     }
-
-
-def coords_to_points(coords: Coords, color: Color = 1):
-    return set([(col, row, color) for col, row in coords])
-
 
 def filter_by_color(grid, color):
     width, height = proportions(grid)
@@ -682,22 +410,6 @@ def distance_levenshtein(chain1: str, chain2: str) -> int:
 
 
 ## Display
-def print_colored_grid(grid):
-    height = len(grid)
-    width = len(grid[0])
-
-    print(f"{COLORS[5]}   " * (width + 2), "\033[0m")
-
-    for row in range(height):
-        print(f"{COLORS[5]}   ", end="")
-        for col in range(width):
-            # Print with the selected color
-            print(f"{COLORS[grid[row][col]]}   ", end="")
-        # Reset color and move to next line
-        print(f"{COLORS[5]}   ", "\033[0m")
-
-    print(f"{COLORS[5]}   " * (width + 2), "\033[0m")
-
 
 def clear_screen():
     # For Windows
@@ -711,7 +423,7 @@ def clear_screen():
 def animate_grid(grids, delay=0.5):
     for grid in grids:
         clear_screen()
-        print_colored_grid(grid)
+        GridOperations.print(grid)
         time.sleep(delay)
 
 

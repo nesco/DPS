@@ -41,6 +41,7 @@ from abc import ABC, abstractmethod
 from helpers import *
 
 from freeman import *
+from grid import points_to_coords
 
 import sys
 

@@ -18,9 +18,9 @@ Color = int
 Colors = set[Color]
 
 # Grid representations
-GridColored = list[list[Color]]  # Functional: grid[row][col] -> color
+ColorGrid = list[list[Color]]  # Functional: grid[row][col] -> color
 Mask = list[list[bool]]         # Boolean mask: grid[row][col] -> is_selected
-Grid = GridColored | Mask # Generic grid type
+Grid = ColorGrid | Mask # Generic grid type
 
 # Coordinate systems
 Coord = tuple[int, int]         # (col, row) coordinates
@@ -56,7 +56,7 @@ __all__ = [
     'Color', 'Colors',
 
     # Grid types
-    'GridColored', 'Mask', 'Grid',
+    'ColorGrid', 'Mask', 'Grid',
 
     # Coordinate types
     'Coord', 'Coords', 'Box', 'Proportions',

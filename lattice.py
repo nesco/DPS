@@ -4,6 +4,8 @@ To make up  for the few data and compute, the lattice acts as a layer of abstrac
 It works because connected components seems to be a strong prior in the ARC challenge dataset.
 """
 
+from grid import MaskOperations, GridOperations, CoordsOperations
+
 from helpers import *
 from operators import *
 from syntax_tree import *
@@ -59,7 +61,7 @@ def list_components(mask_dict: dict[Any, Coords], proportions: Proportions, cheb
 def rank_components(component_list):
     mask_list = [component['mask'] for component in component_list]
     size = len(mask_list)
-    map_contains = falses(size, size)
+    map_contains = MaskOperations.falses(size, size)
     depth_map = {}
 
     # First a tabular representation of the "contains" relation
@@ -88,7 +90,7 @@ def rank_components(component_list):
 
 
     return depth_map, map_contains
-def component_to_object(grid: GridColored, component, chebyshev = True):
+def component_to_object(grid: ColorGrid, component, chebyshev = True):
     color_set = set([grid[row][col] for col, row in component['mask']])
     component['colors'] = color_set
 def construct_lattice_ends(grid: Grid):
@@ -190,13 +192,13 @@ def mask_to_ast(mask: Coords, colors: Colors, proportions: Proportions) -> Optio
 
 class Lattice():
 
-    def __init__(self, grid: GridColored, mask_dict: dict[Any, Coords]):
+    def __init__(self, grid: ColorGrid, mask_dict: dict[Any, Coords]):
         self.grid = grid
         self.width, self.height = proportions(grid)
         self.area = self.height * self.width
         self.refs: SymbolTable = []
         self.union_refs: SymbolTable = []
-        self.unions: List[Optional[UnionNode]] = []
+        self.unions: list[Optional[UnionNode]] = []
 
         # Retrieve all the connected components, except the entire grid if it is in
 
@@ -294,7 +296,7 @@ class Lattice():
         # Then process all nodes
         while to_process:
             i = to_process.pop()
-            box = coords_to_box(self.nodes[i]['value']['mask'])
+            box = CoordsOperations.box(self.nodes[i]['value']['mask'])
             if len(self.nodes[i]['value']['colors']) == 1:
                 self.unions[i] = construct_union(None, [(i, self.codes[i])], self.refs, box)
             else:
@@ -314,7 +316,7 @@ class Lattice():
 
         for i, node in enumerate(self.nodes):
             node_val = node['value']
-            shift_box = -coords_to_box(node_val['mask'])[0][0], -coords_to_box(node_val['mask'])[0][1]
+            shift_box = -CoordsOperations.box(node_val['mask'])[0][0], -CoordsOperations.box(node_val['mask'])[0][1]
             self.unions[i] = shift_ast(shift_box, self.unions[i])
 
         for i, node in enumerate(self.nodes):
@@ -354,7 +356,7 @@ class Lattice():
         # Then process all nodes
         while to_process:
             i = to_process.pop()
-            box = coords_to_box(self.nodes[i]['value']['mask'])
+            box = CoordsOperations.box(self.nodes[i]['value']['mask'])
             if len(self.nodes[i]['value']['colors']) == 1:
                 self.unions[i] = construct_union(None, [self.codes[i]], [], self.refs, box)
             else:
@@ -382,7 +384,7 @@ class Lattice():
 
         for i, node in enumerate(self.nodes):
             node_val = node['value']
-            shift_box = -coords_to_box(node_val['mask'])[0][0], -coords_to_box(node_val['mask'])[0][1]
+            shift_box = -CoordsOperations.box(node_val['mask'])[0][0], -CoordsOperations.box(node_val['mask'])[0][1]
             self.unions[i] = shift_ast(shift_box, self.unions[i])
 
         for i, node in enumerate(self.nodes):
@@ -608,7 +610,7 @@ def test_align(inputs):
     #corr = align_lattice(lattice0, lattice1)
     corr = None
     return corr, lattice0, lattice1
-def input_to_lattice(input: GridColored) -> Lattice:
+def input_to_lattice(input: ColorGrid) -> Lattice:
     masks = extract_masks_bicolors(input)
     return Lattice(input, masks)
 # correspondances, lattice1, lattice2 = test_align(inputs)
@@ -618,8 +620,8 @@ def union_to_grid1(union, refs, height=None, width=None):
     unsymb_union = unsymbolize(union, refs)
     _, _, points = decode(unsymb_union)
     if height is None or width is None:
-        grid = points_to_grid_colored(points)
-        print_colored_grid(grid)
+        grid = GridOperations.from_points(points)
+        GridOperations.print(grid)
     else:
         grid = zeros(height, width)
         populate_grid_colored(grid, points)
@@ -629,8 +631,8 @@ def union_to_grid(union, refs, height=None, width=None):
     unsymb_union = unsymbolize(union, refs)
     _, points = decode(unsymb_union)
     if height is None or width is None:
-        grid = points_to_grid_colored(points)
-        print_colored_grid(grid)
+        grid = GridOperations.from_points(points)
+        GridOperations.print(grid)
     else:
         grid = zeros(height, width)
         populate_grid_colored(grid, points)
@@ -695,7 +697,7 @@ def problem2(task = "2dc579da.json"):
         #for j, inp in enumerate(l_inputs[i].nodes):
         #    node_val = inp['value']
             # shift is - top-left corner
-        #    shift = -coords_to_box(node_val['mask'])[0][0], -coords_to_box(node_val['mask'])[0][1]
+        #    shift = -CoordsOperations.box(node_val['mask'])[0][0], -CoordsOperations.box(node_val['mask'])[0][1]
         #    dist.append((j, distance(shifted(shift, node_val, refs), node_out['value'], refs), True))
 
         dist_min = min(dist, key=lambda x: x[1][0])
@@ -708,7 +710,7 @@ def problem2(task = "2dc579da.json"):
         #shift = -node_val_min['box'][0][0], -node_val_min['box'][0][1]
 
         #shift = factor_by_refs(shift_ast(shift, unsymbolize([union_min], refs)[0]), refs)
-        #shift_box = -coords_to_box(node_val_min['mask'])[0][0], -coords_to_box(node_val_min['mask'])[0][1]
+        #shift_box = -CoordsOperations.box(node_val_min['mask'])[0][0], -CoordsOperations.box(node_val_min['mask'])[0][1]
         shift_proper = dist_min[1][1][0], dist_min[1][1][1]
         print('Target:')
         print(f'Union Out: {union_out}, len: {len(union_out)}')
@@ -754,7 +756,7 @@ def problem1(task = "2dc579da.json"):
         #for j, inp in enumerate(l_inputs[i].nodes):
         #    node_val = inp['value']
             # shift is - top-left corner
-        #    shift = -coords_to_box(node_val['mask'])[0][0], -coords_to_box(node_val['mask'])[0][1]
+        #    shift = -CoordsOperations.box(node_val['mask'])[0][0], -CoordsOperations.box(node_val['mask'])[0][1]
         #    dist.append((j, distance(shifted(shift, node_val, refs), node_out['value'], refs), True))
 
         dist_min = min(dist, key=lambda x: x[1][0])
@@ -769,7 +771,7 @@ def problem1(task = "2dc579da.json"):
         #shift = -node_val_min['box'][0][0], -node_val_min['box'][0][1]
 
         #shift = factor_by_refs(shift_ast(shift, unsymbolize([union_min], refs)[0]), refs)
-        #shift_box = -coords_to_box(node_val_min['mask'])[0][0], -coords_to_box(node_val_min['mask'])[0][1]
+        #shift_box = -CoordsOperations.box(node_val_min['mask'])[0][0], -CoordsOperations.box(node_val_min['mask'])[0][1]
         shift_proper = dist_min[1][1][0], dist_min[1][1][1]
 
         print(f"For problem {i}")
@@ -820,7 +822,7 @@ def problem(task = "2dc579da.json"):
         #for j, inp in enumerate(l_inputs[i].nodes):
         #    node_val = inp['value']
             # shift is - top-left corner
-        #    shift = -coords_to_box(node_val['mask'])[0][0], -coords_to_box(node_val['mask'])[0][1]
+        #    shift = -CoordsOperations.box(node_val['mask'])[0][0], -CoordsOperations.box(node_val['mask'])[0][1]
         #    dist.append((j, distance(shifted(shift, node_val, refs), node_out['value'], refs), True))
 
         dist_min = min(dist, key=lambda x: x[1][0])
@@ -835,7 +837,7 @@ def problem(task = "2dc579da.json"):
         #shift = -node_val_min['box'][0][0], -node_val_min['box'][0][1]
 
         #shift = factor_by_refs(shift_ast(shift, unsymbolize([union_min], refs)[0]), refs)
-        #shift_box = -coords_to_box(node_val_min['mask'])[0][0], -coords_to_box(node_val_min['mask'])[0][1]
+        #shift_box = -CoordsOperations.box(node_val_min['mask'])[0][0], -CoordsOperations.box(node_val_min['mask'])[0][1]
         shift_proper = dist_min[1][1][0], dist_min[1][1][1]
 
         print(f"For problem {i}")
@@ -904,7 +906,7 @@ def solve_problem(task = "2dc579da.json"):
         node_val_min = l_inputs[i].nodes[dist_min[0]]['value']
         #shift = -node_val_min['box'][0][0], -node_val_min['box'][0][1]
 
-        shift_proper = -coords_to_box(node_val_min['mask'])[0][0], -coords_to_box(node_val_min['mask'])[0][1]
+        shift_proper = -CoordsOperations.box(node_val_min['mask'])[0][0], -CoordsOperations.box(node_val_min['mask'])[0][1]
         #shift_proper = dist_min[1][1][0], dist_min[1][1][1]
 
         print(f"For problem {i}")
@@ -1018,7 +1020,7 @@ def solve_problem(task = "2dc579da.json"):
 
 
     print(natural_transformations)
-    print_colored_grid(union_to_grid(output, refs))
+    GridOperations.print(union_to_grid(output, refs))
 
     #print('rest')
     #for dist, u in dists:
