@@ -624,7 +624,7 @@ def union_to_grid1(union, refs, height=None, width=None):
         GridOperations.print(grid)
     else:
         grid = zeros(height, width)
-        populate_grid_colored(grid, points)
+        GridOperations.populate(grid, points)
     return grid
 
 def union_to_grid(union, refs, height=None, width=None):
@@ -635,7 +635,7 @@ def union_to_grid(union, refs, height=None, width=None):
         GridOperations.print(grid)
     else:
         grid = zeros(height, width)
-        populate_grid_colored(grid, points)
+        GridOperations.populate(grid, points)
     return grid
 
 def lattice_to_grid(lattice: Lattice) -> Grid:

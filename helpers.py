@@ -30,9 +30,8 @@ from typing import Concatenate, TypeVar, ParamSpec, overload, Iterator
 from category import *
 from localtypes import *
 
-from grid import GridOperations, MaskOperations
-from grid import grid_to_points, coords_to_mask, mask_to_coords, mask_to_grid
-from grid import unpack_coords
+from grid import GridOperations
+from grid import grid_to_points
 from grid import DIRECTIONS, MOVES
 
 # Shortcuts
