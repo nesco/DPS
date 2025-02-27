@@ -42,6 +42,7 @@ zeros = GridOperations.zeros
 # Define ANSI escape codes for the closest standard terminal colors
 from constants import COLORS, DATA, DEBUG
 
+
 class TraversalModes(StrEnum):
     """Graph Traversal methods"""
 
@@ -145,6 +146,7 @@ def handle_lists(func: Callable[..., U]) -> Callable[..., list[U] | U]:
 
     return wrapper
 
+
 ## Basic decorator
 def to_grid(func: Callable[[T], U]) -> Callable[[list[list[T]]], list[list[U]]]:
     @wraps(func)
@@ -153,6 +155,7 @@ def to_grid(func: Callable[[T], U]) -> Callable[[list[list[T]]], list[list[U]]]:
         return [[func(arg[row][col]) for col in range(width)] for row in range(height)]
 
     return wrapper
+
 
 def coordinate_shift(transformation_ls: list[tuple[Coord, Coord]]) -> Optional[Coord]:
     "Given a list of coordinate changes, find if there is a unique shift"
@@ -163,6 +166,7 @@ def coordinate_shift(transformation_ls: list[tuple[Coord, Coord]]) -> Optional[C
         return shifts.pop()
     else:
         return None
+
 
 def argmin_by_len(lst):
     return min(range(len(lst)), key=lambda i: len(lst[i]))
@@ -217,6 +221,7 @@ def grid_to_list(grid):
 #    col_min, col_max = min(cols), max(cols)
 #    return (row_min, col_min),  (row_max, col_max)
 
+
 def touches_border(coords: CoordsGeneralized, box: Box) -> bool:
     (col_min, row_min), (col_max, row_max) = box
     return any(
@@ -224,6 +229,7 @@ def touches_border(coords: CoordsGeneralized, box: Box) -> bool:
         for item in coords
         for col, row in [item[:2]]
     )
+
 
 def is_coord_in_box(coord: Coord, box: Box) -> bool:
     col, row = coord
@@ -343,6 +349,7 @@ def mask_colors(grid, mask):
                 color_set.add(grid[row][col])
     return color_set
 
+
 def grid_to_color_coords(grid: Grid) -> dict[Color, Coords]:
     width, height = proportions(grid)
     colors = set([grid[row][col] for row in range(height) for col in range(width)])
@@ -357,12 +364,14 @@ def grid_to_color_coords(grid: Grid) -> dict[Color, Coords]:
 
     return colors_coords
 
+
 def points_to_color_coords(points: Points) -> dict[Color, Coords]:
     _, _, colors = zip(*points)
     return {
         color: {(col, row) for col, row, value in points if value == color}
         for color in colors
     }
+
 
 def ncolors_coords(colors_coords, min_n=2, max_n=10):
     colors = list(colors_coords.keys())
@@ -371,6 +380,7 @@ def ncolors_coords(colors_coords, min_n=2, max_n=10):
         for n in range(min_n, min(max_n, len(colors)) + 1)
         for combo in combinations(colors, n)
     }
+
 
 def filter_by_color(grid, color):
     width, height = proportions(grid)
@@ -409,6 +419,7 @@ def distance_levenshtein(chain1: str, chain2: str) -> int:
 
 
 ## Display
+
 
 def clear_screen():
     # For Windows
