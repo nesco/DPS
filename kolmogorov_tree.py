@@ -2,7 +2,7 @@
 Kolmogorov Tree: A representation language for non-deterministic programs and patterns.
 
 This module implements a tree structure for representing non-deterministic programs,
-particularly focused on 2D grid movements and shape descriptions. The representation
+for example to describe shapes using a non-deterministic program representing 2D grid movements (see syntax_tree.py). The representation
 aims to approximate Kolmogorov complexity through minimum description length.
 
 The tree structure consists of:
@@ -25,6 +25,10 @@ The tree can be used to:
 3. Measure and optimize program complexity
 4. Enable search over program space guided by complexity
 
+
+In a way, BitLengthAware is a type encapsulation, so the types "know" their bit length, like types that knows
+their gradients in deep learning.
+
 Example Usage:
 ```python
 # Create a simple pattern
@@ -39,7 +43,7 @@ tree = KolmogorovTree(RootNode((0,0), {1}, program))
 """
 
 
-from typing import Generic, TypeVar, Callable, Iterable, Any
+from typing import Generic, TypeVar, Callable, Iterable, Any, Iterator
 from dataclasses import dataclass, field
 from enum import IntEnum
 from abc import ABC, abstractmethod
@@ -50,17 +54,22 @@ import math
 from tree import RoseTree, Rose
 
 # Type variable for generic programming
-T = TypeVar('T')
 
 # Bit length definitions
 class BitLength(IntEnum):
-    """Defines bit lengths for components in the Kolmogorov Tree."""
+    """Defines bit lengths for generic components in the Kolmogorov Tree."""
+    COUNT = 5      # 5 bits for repeat counts (0-31), specific value suitable for ARC grid sizes
     NODE_TYPE = 3  # 3 bits for up to 8 node types
-    PRIMITIVE = 4  # 4 bits for primitives (e.g., directions 0-7, colors 0-9)
-    COUNT = 5      # 5 bits for repeat counts (0-31), suitable for ARC grid sizes
-    COORD = 10     # 10 bits for coordinates (5 bits per x/y, for 0-31)
-    INDEX = 4      # 4 bits for symbol indices (up to 16 symbols)
+    INDEX = 7      # 7 bits for symbol indices (up to 128 symbols)
     VAR = 2        # 2 bits for variable indices (up to 4 variables per symbol)
+
+class ARCBitLength(IntEnum):
+    """Defines bit lengths for components tailored for ARC AGI."""
+    COORD = 10     # 10 bits for coordinates (5 bits per x/y, for 0-31)
+    COLORS = 4     # 4 bits for primitives (0-9)
+    DIRECTIONS = 3      # 3 bits for primitives (directions 0-7)
+
+
 
 # Base interface for values with bit lengths
 @dataclass(frozen=True)
@@ -77,20 +86,21 @@ class BitLengthAware(ABC):
         """Returns the string representation of this value."""
         pass
 
+T = TypeVar('T', bound=BitLengthAware)
+
 # Base node class
 @dataclass(frozen=True)
 class KNode(Generic[T], ABC):
     def __len__(self) -> int:
-        return BitLength.NODE_TYPE
+        return self.bit_length()
 
     def __eq__(self, other) -> bool:
         if not isinstance(other, self.__class__):
             return False
         return self.__dict__ == other.__dict__
 
-    @abstractmethod
     def bit_length(self) -> int:
-        pass
+        return BitLength.NODE_TYPE
 
     def __or__(self, other: 'KNode[T]') -> 'SumNode[T]':
         """Overloads | for alternatives, unpacking SumNodes."""
@@ -132,65 +142,77 @@ class KNode(Generic[T], ABC):
             raise TypeError("Count must be an integer")
         if count < 0:
             raise ValueError("Count must be non-negative")
-        if isinstance(self, RepeatNode) and isinstance(self.count, int):
+        if isinstance(self, RepeatNode) and isinstance(self.count, CountValue) and self.count.value * count < 2**BitLength.COUNT:
             # Multiply existing count to optimize complexity
-            return RepeatNode(self.node, self.count * count)
-        return RepeatNode(self, count)
+            return RepeatNode(self.node, CountValue(self.count.value * count))
+        return RepeatNode(self, CountValue(count))
 
 # Primitive value types
 @dataclass(frozen=True)
-class MoveValue(BitLengthAware):
-    """Represents a single directional move (0-7 for 8-connectivity)."""
-    direction: int
-
-    def bit_length(self) -> int:
-        return BitLength.PRIMITIVE  # 4 bits
+class Primitive(BitLengthAware):
+    """Base class for all primitives: bit length aware wrapping base values"""
+    value: any
 
     def __str__(self) -> str:
-        return str(self.direction)
+        return str(self.value)
 
 @dataclass(frozen=True)
-class MovesValue(BitLengthAware):
-    """Represents a sequence of directional moves."""
-    directions: tuple[int]
-
-    def bit_length(self) -> int:
-        return BitLength.PRIMITIVE * len(self.directions)
-
-    def __str__(self) -> str:
-        return "".join(map(str, self.directions))
-
-@dataclass(frozen=True)
-class ColorValue(BitLengthAware):
-    """Represents a color value (0-9 in ARC AGI)."""
+class CountValue(Primitive):
+    """Represent a 5-bit int"""
     value: int
 
     def bit_length(self) -> int:
-        return BitLength.PRIMITIVE  # 4 bits
-
-    def __str__(self) -> str:
-        return f"C{self.value}"
+        return BitLength.COUNT
 
 @dataclass(frozen=True)
-class CoordValue(BitLengthAware):
-    """Represents a 2D coordinate pair."""
-    x: int
-    y: int
+class VariableValue(Primitive):
+    """Represents a variable as an index (0-3)."""
+    value: int
 
     def bit_length(self) -> int:
-        return BitLength.COORD  # 10 bits (5 per coordinate)
+        return BitLength.VAR
 
-    def __str__(self) -> str:
-        return f"({self.x}, {self.y})"
+@dataclass(frozen=True)
+class IndexValue(Primitive):
+    """Represents an index in the lookup table (0-127)."""
+    value: int
+
+    def bit_length(self) -> int:
+        return BitLength.INDEX # 7 bits
+
+# ARC Specific primitves
+@dataclass(frozen=True)
+class MoveValue(Primitive):
+    """Represents a single directional move (0-7 for 8-connectivity)."""
+    value: int
+
+    def bit_length(self) -> int:
+        return ARCBitLength.DIRECTIONS  # 4 bits
+
+@dataclass(frozen=True)
+class PaletteValue(Primitive):
+    """Represents a color value (0-9 in ARC AGI)."""
+    value: set[int]
+
+    def bit_length(self) -> int:
+        return ARCBitLength.COLORS * len(self.value)  # 4 bits
+
+@dataclass(frozen=True)
+class CoordValue(Primitive):
+    """Represents a 2D coordinate pair."""
+    value: tuple[int, int]
+
+    def bit_length(self) -> int:
+        return ARCBitLength.COORD  # 10 bits (5 per coordinate)
 
 # Node types for program representation
 @dataclass(frozen=True)
 class PrimitiveNode(KNode[T]):
     """Leaf node holding a primitive value."""
-    value: BitLengthAware
+    value: T
 
     def bit_length(self) -> int:
-        return super().__len__() + self.value.bit_length()
+        return super().bit_length() + self.value.bit_length()
 
     def __str__(self) -> str:
         return str(self.value)
@@ -198,10 +220,10 @@ class PrimitiveNode(KNode[T]):
 @dataclass(frozen=True)
 class VariableNode(KNode[T]):
     """Represents a variable placeholder within a symbol."""
-    index: int  # Variable index (0-3 with 2 bits)
+    index: VariableValue  # Variable index (0-3 with 2 bits)
 
     def bit_length(self) -> int:
-        return super().__len__() + BitLength.VAR  # 3 + 2 bits
+        return super().__len__() + self.index.bit_length()  # 3 + 2 bits
 
     def __str__(self) -> str:
         return f"Var({self.index})"
@@ -210,6 +232,9 @@ class VariableNode(KNode[T]):
 class SequenceNode(KNode[T], ABC):
     """Abstract base class for nodes with multiple children."""
     children: tuple[KNode[T], ...] = field(default_factory=tuple)
+
+    def bit_length(self):
+        return super().bit_length() + sum(child.bit_length() for child in self.children)
 
     def __post_init__(self):
         """Converts children to tuple if provided as a list."""
@@ -220,7 +245,7 @@ class SequenceNode(KNode[T], ABC):
 class ProductNode(SequenceNode[T]):
     """Represents a sequence of actions (AND operation)."""
     def bit_length(self) -> int:
-        return super().__len__() + sum(child.bit_length() for child in self.children)
+        return super().bit_length()
 
     def __str__(self) -> str:
         return "".join(str(child) for child in self.children)
@@ -230,20 +255,27 @@ class SumNode(SequenceNode[T]):
     """Represents a choice among alternatives (OR operation)."""
     def bit_length(self) -> int:
         select_bits = math.ceil(math.log2(len(self.children) + 1)) if self.children else 0
-        return super().__len__() + select_bits + sum(child.bit_length() for child in self.children)
+        return super().bit_length() + select_bits
 
     def __str__(self) -> str:
         return "[" + "|".join(str(child) for child in self.children) + "]"
 
 @dataclass(frozen=True)
-class RepeatNode(KNode[T]):
-    """Represents repetition of a node a specified number of times."""
-    node: KNode[T]
-    count: int | VariableNode  # Count can be fixed or parameterized
+class MetaNode(KNode[T], ABC):
+    """Wraps a single node with additional information. node allows None to handle edge cases for map functions"""
+    node: KNode[T] | None
 
     def bit_length(self) -> int:
-        count_len = BitLength.COUNT if isinstance(self.count, int) else self.count.bit_length()
-        return super().__len__() + self.node.bit_length() + count_len
+        return super().bit_length() + self.node.bit_length()
+
+@dataclass(frozen=True)
+class RepeatNode(MetaNode[T]):
+    """Represents repetition of a node a specified number of times."""
+    count: CountValue | VariableNode  # Count can be fixed or parameterized
+
+    def bit_length(self) -> int:
+        count_len = self.count.bit_length()
+        return super().bit_length() + count_len
 
     def __str__(self) -> str:
         return f"({str(self.node)})*{{{self.count}}}"
@@ -251,37 +283,40 @@ class RepeatNode(KNode[T]):
 @dataclass(frozen=True)
 class SymbolNode(KNode[T]):
     """Represents an abstraction or reusable pattern."""
-    index: int  # Index in the symbol table (0-15 with 4 bits)
+    index: IndexValue  # Index in the symbol table
     parameters: tuple[BitLengthAware, ...] = field(default_factory=tuple)
-    referenced_length: int = 0  # Bit length of the referenced pattern
 
     def bit_length(self) -> int:
         params_len = sum(param.bit_length() for param in self.parameters)
-        return super().__len__() + BitLength.INDEX + params_len
+        return super().bit_length() + self.index.bit_length() + params_len
 
     def __str__(self) -> str:
         if self.parameters:
             return f"s_{self.index}({', '.join(str(p) for p in self.parameters)})"
         return f"s_{self.index}"
 
+    def __post_init__(self):
+        if isinstance(self.index, int):
+            self.index = IndexValue(self.index)
+
+# Kept-here for the example, but belong's to ARC-AGI syntax tree module
+# In fact, it should become "MetadataNode", as it encapsulate data that's not in the
+# main target alphabet the "program" produces'
 @dataclass(frozen=True)
-class RootNode(KNode[T]):
-    """Root node defining the program's starting context."""
-    position: tuple[int, int] | VariableNode  # Starting position
-    colors: set[int] | VariableNode  # Colors used in the shape
-    node: KNode[T] | None = None  # Main program node
+class RootNode(MetaNode[T]):
+    """Root node: it wraps the program's node with its starting context."""
+    position: CoordValue | VariableNode  # Starting position
+    colors: PaletteValue | VariableNode  # Colors used in the shape
 
     def bit_length(self) -> int:
-        pos_len = BitLength.COORD if isinstance(self.position, tuple) else self.position.bit_length()
-        colors_len = (BitLength.PRIMITIVE * len(self.colors)
-                     if isinstance(self.colors, set) else self.colors.bit_length())
-        node_len = self.node.bit_length() if self.node else 0
-        return super().__len__() + pos_len + colors_len + node_len
+        pos_len = self.position.bit_length()
+        colors_len = self.colors.bit_length()
+        return super().bit_length() + pos_len + colors_len
 
     def __str__(self) -> str:
-        pos_str = str(self.position) if isinstance(self.position, tuple) else str(self.position)
-        colors_str = str(self.colors) if isinstance(self.colors, set) else str(self.colors)
-        node_str = str(self.node) if self.node else ""
+        pos_str = str(self.position)
+        colors_str = str(self.colors)
+        node_str = str(self.node)
         return f"Root({pos_str}, {colors_str}, {node_str})"
 
 # Main tree class
@@ -307,55 +342,239 @@ class KolmogorovTree:
         """Approximates Kolmogorov complexity as the total bit length."""
         return self.bit_length()
 
+
+## Functions
+
+# Traversal
+
+def children(knode: KNode) -> Iterator[KNode]:
+    """Unified API to access children  of standard KNodes nodes"""
+    match knode:
+        case SequenceNode(children):
+            return iter(children)
+        case MetaNode(node):
+            return iter((node,))
+        case SymbolicNode(_, parameters):
+            if isinstance(parameters, Variable):
+                return iter((parameters,))
+            return iter((param for param in parameters if isinstance(param, KNode)))
+        case _:
+            return iter(())
+
+def breadth_iter(node: KNode) -> Iterator[KNode]:
+    """
+    Performs a breadth-first traversal of a KNode tree, yielding all nodes level by level.
+
+    Args:
+        node: The root KNode to traverse.
+
+    Yields:
+        KNode: Each node in the tree in breadth-first order.
+    """
+    if node is None:
+        return
+    queue = deque([node])
+    while queue:
+        current = queue.popleft()
+        yield current
+        for child in children(current):
+            if child is not None:
+                queue.append(child)
+
+# Basic operations on Nodes
+def reverse_node(knode: KNode) -> KNode:
+    """
+    Reverses the structure of the given KNode based on its type.
+    Assume that SumNode has already been run-lenght-encoded
+
+    Args:
+        knode: The KNode to reverse.
+
+    Returns:
+        KNode: The reversed node.
+    """
+    match knode:
+        case SequenceNode(children):
+            reversed_children = [reverse_node(child) for child in reversed(children)]
+            return type(knode)(tuple(reversed_children))
+        case RepeatNode(node, count):
+            return RepeatNode(reverse_node(node), count)
+        case SymbolNode(index, parameters):
+            reversed_params = tuple(reverse_node(p) if isinstance(p, KNode) else p for p in reversed(parameters))
+            return SymbolNode(index, reversed_params)
+        case RootNode(node, position, colors):
+            nnode = reverse_node(node) if node else None
+            return RootNode(nnode, position, colors)
+        case _:
+            return node
+
+def encode_run_length(primitives: Iterable[PrimitiveNode[T]]) -> ProductNode[T]:
+    """
+    Encodes an iterable of PrimitiveNode[T] into a ProductNode[T] using run-length encoding.
+    Consecutive identical PrimitiveNodes are compressed into RepeatNodes when the sequence
+    length is 3 or greater.
+
+    Args:
+        primitives: An iterable of PrimitiveNode[T] objects.
+
+    Returns:
+        A ProductNode[T] containing a tuple of KNode[T] (PrimitiveNode[T] or RepeatNode[T]).
+    """
+    # List to store the sequence of nodes
+    sequence: list[KNode[T]] = []
+
+    # Convert the iterable to an iterator and handle the empty case
+    iterator = iter(primitives)
+    try:
+        current = next(iterator)  # Get the first node
+    except StopIteration:
+        return ProductNode(tuple())  # Return an empty ProductNode if iterable is empty
+
+    # Initialize count for the current sequence
+    count = 1
+
+    # Process each node in the iterable
+    for node in iterator:
+        if node == current:
+            # If the node matches the current one, increment the count
+            count += 1
+        else:
+            # If the node differs, decide how to encode the previous sequence
+            if count >= 3:
+                # For sequences of 3 or more, use a RepeatNode
+                repeat_node = RepeatNode(current, CountValue(count))
+                sequence.append(repeat_node)
+            else:
+                # For sequences of 1 or 2, append individual PrimitiveNodes
+                sequence.extend([current] * count)
+            # Update current node and reset count
+            current = node
+            count = 1
+
+    # Handle the last sequence after the loop
+    if count >= 3:
+        repeat_node = RepeatNode(current, CountValue(count))
+        sequence.append(repeat_node)
+    else:
+        sequence.extend([current] * count)
+
+    # Return the sequence as a ProductNode
+    return ProductNode(tuple(sequence))
+
+# High-order functions
+def kmap(knode: KNode, f: Callable[[KNode], KNode]) -> KNode | None:
+    """
+    Map a function alongside a KNode. It updates first childrens, then updates the base node
+
+    Args:
+        knode: The KNode tree to transform
+        f: A function that takes a KNode and returns a transformed KNode, or returning None.
+
+    Returns:
+        KNode: A new KNode tree with the function f applied to each node
+    """
+    match knode:
+        case SumNode(children):
+            mapped_children = tuple(node for child in children if (node := kmap(child, f)) is not None)
+            return SumNode(mapped_children)
+        case ProductNode(children):
+            # Add a compression step here
+            # When the compression step is ready
+            mapped_children = tuple(node for child in children if (node := kmap(child, f)) is not None)
+            return ProductNode(mapped_children)
+        case RepeatNode(node, count):
+            nnode = kmap(node, f)
+            return f(RepeatNode(nnode, count)) if nnode is not None else None
+        case RootNode(node, position, color):
+            nnode = kmap(node, f)
+            return f(RootNode(nnode, position, color))
+        case SymbolicNode(index, parameters):
+            nparameters = tuple(
+                nparam if isinstance(p, KNode) else p for p in parameters if (nparam := kmap(f, p)) is not None
+            )
+            return f(SymbolicNode(i, nparameters))
+        case _:
+            return f(node)
+
 # Symbol resolution and pattern finding
-def resolve_symbols(node: KNode, symbols: list[KNode]) -> KNode:
-    """Resolves symbolic references recursively using the symbol table."""
-    def replace_variables(template: KNode, params: tuple[Any, ...]) -> KNode:
-        if isinstance(template, VariableNode) and template.index < len(params):
-            param = params[template.index]
+def replace_variables(template: KNode, params: tuple[Any, ...]) -> KNode:
+    """
+    Replaces variable placeholders in the template with the corresponding parameters.
+
+    This function recursively traverses the template node and replaces VariableNodes
+    with the provided parameters. It also handles composite nodes by replacing variables
+    in their children or attributes.
+
+    Args:
+        template (KNode): The template node to process.
+        params (tuple[Any, ...]): The parameters to substitute for variables.
+
+    Returns:
+        KNode: The template with variables replaced by parameters.
+    """
+    match template:
+        case VariableNode(index) if index.value < len(params):
+            param = params[index.value]
             return param if isinstance(param, KNode) else PrimitiveNode(param)
-
-        if isinstance(template, ProductNode):
-            return ProductNode([replace_variables(child, params) for child in template.children])
-        if isinstance(template, SumNode):
-            return SumNode([replace_variables(child, params) for child in template.children])
-        if isinstance(template, RepeatNode):
-            new_node = replace_variables(template.node, params)
-            new_count = (replace_variables(template.count, params)
-                        if isinstance(template.count, KNode) else template.count)
+        case ProductNode(children):
+            new_children = [replace_variables(child, params) for child in children]
+            return ProductNode(new_children)
+        case SumNode(children):
+            new_children = [replace_variables(child, params) for child in children]
+            return SumNode(new_children)
+        case RepeatNode(node, count):
+            new_node = replace_variables(node, params)
+            new_count = replace_variables(count, params) if isinstance(count, KNode) else count
             return RepeatNode(new_node, new_count)
-        if isinstance(template, SymbolNode):
-            new_params = tuple(replace_variables(p, params) if isinstance(p, KNode) else p
-                              for p in template.parameters)
-            return SymbolNode(template.index, new_params, template.referenced_length)
-        if isinstance(template, RootNode):
-            new_pos = (replace_variables(template.position, params)
-                      if isinstance(template.position, KNode) else template.position)
-            new_colors = (replace_variables(template.colors, params)
-                         if isinstance(template.colors, KNode) else template.colors)
-            new_node = replace_variables(template.node, params) if template.node else None
+        case SymbolNode(index, parameters):
+            new_params = tuple(
+                replace_variables(p, params) if isinstance(p, KNode) else p
+                for p in parameters
+            )
+            return SymbolNode(index, new_params)
+        case RootNode(node, position, colors):
+            new_pos = replace_variables(position, params) if isinstance(position, KNode) else position
+            new_colors = replace_variables(colors, params) if isinstance(colors, KNode) else colors
+            new_node = replace_variables(node, params) if node else None
             return RootNode(new_pos, new_colors, new_node)
-        return template
+        case _:
+            return template
 
-    if isinstance(node, SymbolNode) and 0 <= node.index < len(symbols):
-        return replace_variables(symbols[node.index], node.parameters)
-    if isinstance(node, ProductNode):
-        return ProductNode([resolve_symbols(child, symbols) for child in node.children])
-    if isinstance(node, SumNode):
-        return SumNode([resolve_symbols(child, symbols) for child in node.children])
-    if isinstance(node, RepeatNode):
-        new_node = resolve_symbols(node.node, symbols)
-        new_count = (resolve_symbols(node.count, symbols)
-                    if isinstance(node.count, KNode) else node.count)
-        return RepeatNode(new_node, new_count)
-    if isinstance(node, RootNode):
-        new_pos = (resolve_symbols(node.position, symbols)
-                  if isinstance(node.position, KNode) else node.position)
-        new_colors = (resolve_symbols(node.colors, symbols)
-                     if isinstance(node.colors, KNode) else node.colors)
-        new_node = resolve_symbols(node.node, symbols) if node.node else None
-        return RootNode(new_pos, new_colors, new_node)
-    return node
+def resolve_symbols(knode: KNode, symbols: list[KNode]) -> KNode:
+    """
+    Resolves symbolic references recursively using the symbol table.
+
+    This function traverses the Kolmogorov Tree and replaces SymbolNodes with their
+    definitions from the symbol table, handling parameter substitution. It recursively
+    resolves all sub-nodes for composite node types.
+
+    Args:
+        node (KNode): The node to resolve.
+        symbols (list[KNode]): The list of symbol definitions.
+
+    Returns:
+        KNode: The resolved node with symbols expanded.
+    """
+    match knode:
+        case SymbolNode(index, parameters) if 0 <= index.value < len(symbols):
+            return replace_variables(symbols[index.value], parameters)
+        case ProductNode(children):
+            resolved_children = [resolve_symbols(child, symbols) for child in children]
+            return ProductNode(resolved_children)
+        case SumNode(children):
+            resolved_children = [resolve_symbols(child, symbols) for child in children]
+            return SumNode(resolved_children)
+        case RepeatNode(node, count):
+            resolved_node = resolve_symbols(node, symbols)
+            resolved_count = resolve_symbols(count, symbols) if isinstance(count, KNode) else count
+            return RepeatNode(resolved_node, resolved_count)
+        case RootNode(node, position, colors):
+            resolved_node = resolve_symbols(node, symbols) if node else None
+            resolved_position = resolve_symbols(position, symbols) if isinstance(position, KNode) else position
+            resolved_colors = resolve_symbols(colors, symbols) if isinstance(colors, KNode) else colors
+            return RootNode(resolved_node, resolved_position, resolved_colors)
+        case _:
+            return knode
 
 def find_common_patterns(trees: list[KolmogorovTree], min_occurrences=2, max_patterns=10) -> list[KNode]:
     """Identifies frequent subtrees across multiple trees for symbolization."""
@@ -408,7 +627,7 @@ def symbolize(trees: list[KolmogorovTree]) -> KolmogorovTree:
             return RepeatNode(process_node(node.node), node.count)
         if isinstance(node, RootNode):
             new_node = process_node(node.node) if node.node else None
-            return RootNode(node.position, node.colors, new_node)
+            return RootNode(new_node, node.position, node.colors)
         return node
 
     if not trees:
@@ -423,7 +642,7 @@ def create_move_node(direction: int) -> PrimitiveNode:
 
 def create_color_node(color: int) -> PrimitiveNode:
     """Creates a node for a color."""
-    return PrimitiveNode(ColorValue(color))
+    return PrimitiveNode(PaletteValue({color}))
 
 def create_coord_node(x: int, y: int) -> PrimitiveNode:
     """Creates a node for a coordinate."""
@@ -461,29 +680,115 @@ def example_usage():
     move_right = create_move_node(2)
     move_down = create_move_node(3)
     sequence = ProductNode([move_right, move_right, move_down])
-    repeat = RepeatNode(ProductNode([move_right, move_down]), 3)
+    repeat = RepeatNode(ProductNode([move_right, move_down]), CountValue(3))
     alternative = SumNode([sequence, repeat])
-    root = RootNode((0, 0), {1}, alternative)
+    root = RootNode(alternative, CoordValue((0, 0)), PaletteValue({1}))
     tree = KolmogorovTree(root)
     print(f"Kolmogorov complexity: {tree.kolmogorov_complexity()} bits")
     return tree
+
+def test_encode_run_length():
+    # Test Case 1: Empty Input
+    result = encode_run_length([])
+    assert result == ProductNode(()), "Test Case 1 Failed: Empty input should return empty ProductNode"
+
+    # Test Case 2: Single Node
+    node = PrimitiveNode(MoveValue(1))
+    result = encode_run_length([node])
+    assert result == ProductNode((node,)), "Test Case 2 Failed: Single node should be wrapped in ProductNode"
+
+    # Test Case 3: No Repeats
+    nodes = [PrimitiveNode(MoveValue(i)) for i in [1, 2, 3]]
+    result = encode_run_length(nodes)
+    assert result == ProductNode(tuple(nodes)), "Test Case 3 Failed: No repeats should remain uncompressed"
+
+    # Test Case 4: Short Repeats
+    nodes = [PrimitiveNode(MoveValue(1)), PrimitiveNode(MoveValue(1)),
+             PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(2))]
+    result = encode_run_length(nodes)
+    assert result == ProductNode(tuple(nodes)), "Test Case 4 Failed: Repeats less than 3 should not be compressed"
+
+    # Test Case 5: Long Repeats
+    nodes = [PrimitiveNode(MoveValue(1))] * 3
+    result = encode_run_length(nodes)
+    expected = ProductNode((RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(3)),))
+    assert result == expected, "Test Case 5 Failed: Three identical nodes should be compressed"
+
+    # Test Case 6: Mixed Sequences
+    nodes = [PrimitiveNode(MoveValue(1))] * 3 + [PrimitiveNode(MoveValue(2))] + [PrimitiveNode(MoveValue(3))] * 2
+    result = encode_run_length(nodes)
+    expected = ProductNode((
+        RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(3)),
+        PrimitiveNode(MoveValue(2)),
+        PrimitiveNode(MoveValue(3)),
+        PrimitiveNode(MoveValue(3))
+    ))
+    assert result == expected, "Test Case 6 Failed: Mixed sequence compression incorrect"
+
+    # Test Case 7: Multiple Repeats
+    nodes = [PrimitiveNode(MoveValue(1))] * 3 + [PrimitiveNode(MoveValue(2))] * 4
+    result = encode_run_length(nodes)
+    expected = ProductNode((
+        RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(3)),
+        RepeatNode(PrimitiveNode(MoveValue(2)), CountValue(4))
+    ))
+    assert result == expected, "Test Case 7 Failed: Multiple repeat sequences not handled correctly"
+
+    # Test Case 8: All Identical
+    nodes = [PrimitiveNode(MoveValue(5))] * 10
+    result = encode_run_length(nodes)
+    expected = ProductNode((RepeatNode(PrimitiveNode(MoveValue(5)), CountValue(10)),))
+    assert result == expected, "Test Case 8 Failed: All identical nodes should compress into one RepeatNode"
+
+    # Test Case 9: Input as Iterator
+    nodes = iter([PrimitiveNode(MoveValue(1))] * 4)
+    result = encode_run_length(nodes)
+    expected = ProductNode((RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(4)),))
+    assert result == expected, "Test Case 9 Failed: Iterator input not handled correctly"
+
+    # Test Case 10: Different Type
+    nodes = [PrimitiveNode(PaletteValue({1}))] * 3
+    result = encode_run_length(nodes)
+    expected = ProductNode((RepeatNode(PrimitiveNode(PaletteValue({1})), CountValue(3)),))
+    assert result == expected, "Test Case 10 Failed: Different type not processed correctly"
+
+    # Test Case 11: Alternating Nodes
+    nodes = [PrimitiveNode(MoveValue(1)), PrimitiveNode(MoveValue(2)),
+             PrimitiveNode(MoveValue(1)), PrimitiveNode(MoveValue(2))]
+    result = encode_run_length(nodes)
+    assert result == ProductNode(tuple(nodes)), "Test Case 11 Failed: Alternating nodes should not be compressed"
+
+    # Test Case 12: Repeats in Different Positions
+    nodes = [PrimitiveNode(MoveValue(1))] * 3 + [PrimitiveNode(MoveValue(2))] + \
+            [PrimitiveNode(MoveValue(3))] * 3 + [PrimitiveNode(MoveValue(4))] * 2
+    result = encode_run_length(nodes)
+    expected = ProductNode((
+        RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(3)),
+        PrimitiveNode(MoveValue(2)),
+        RepeatNode(PrimitiveNode(MoveValue(3)), CountValue(3)),
+        PrimitiveNode(MoveValue(4)),
+        PrimitiveNode(MoveValue(4))
+    ))
+    assert result == expected, "Test Case 12 Failed: Repeats in different positions not handled correctly"
+
+    print("Test 5: `encode_run_length` tests - Passed")
 
 def run_tests():
     """Runs simple tests to verify KolmogorovTree functionality."""
     # Test 1: Basic node creation and bit length
     move_right = PrimitiveNode(MoveValue(2))
-    assert move_right.bit_length() == 7, "PrimitiveNode bit length should be 7 (3 + 4)"
+    assert move_right.bit_length() == 6, "PrimitiveNode bit length should be 6 (3 + 3)"
     product = ProductNode([move_right, move_right])
-    assert product.bit_length() == 17, "ProductNode bit length should be 17 (3 + 7 + 7)"
+    assert product.bit_length() == 15, "ProductNode bit length should be 15 (3 + 6 + 6)"
     move_down = PrimitiveNode(MoveValue(3))
     sum_node = SumNode([move_right, move_down])
-    assert sum_node.bit_length() == 19, "SumNode bit length should be 19 (3 + 2 + 7 + 7)"
-    repeat = RepeatNode(move_right, 3)
-    assert repeat.bit_length() == 15, "RepeatNode bit length should be 15 (3 + 7 + 5)"
-    symbol = SymbolNode(0, ())
-    assert symbol.bit_length() == 7, "SymbolNode bit length should be 7 (3 + 4)"
-    root = RootNode((0, 0), {1}, product)
-    assert root.bit_length() == 34, "RootNode bit length should be 34 (3 + 10 + 4 + 17)"
+    assert sum_node.bit_length() == 17, "SumNode bit length should be 17 (3 + 2 + 6 + 6)"
+    repeat = RepeatNode(move_right, CountValue(3))
+    assert repeat.bit_length() == 14, "RepeatNode bit length should be 14 (3 + 6 + 5)"
+    symbol = SymbolNode(IndexValue(0), ())
+    assert symbol.bit_length() == 10, "SymbolNode bit length should be 10 (3 + 7)"
+    root = RootNode(product, CoordValue((0, 0)), PaletteValue({1}))
+    assert root.bit_length() == 32, "RootNode bit length should be 32 (3 + 15 + 10 + 4)"
     print("Test 1: Basic node creation and bit length - Passed")
 
     # Test 2: String representations
@@ -493,27 +798,29 @@ def run_tests():
     assert str(repeat) == "(2)*{3}", "RepeatNode str should be '(2)*{3}'"
     assert str(symbol) == "s_0", "SymbolNode str should be 's_0'"
     print("root: ", root)
-    assert str(root) == "Root((0, 0), {1}, 22)", "RootNode str should be 'Root((0,0), {1}, 22)'"
+    assert str(root) == "Root((0, 0), {1}, 22)", "RootNode str should be 'Root((0, 0), {1}, 22)'"
     print("Test 2: String representations - Passed")
 
     # Test 3: Operator overloads
     assert (move_right | move_down) == SumNode([move_right, move_down]), "Operator | failed"
     assert (move_right & move_down) == ProductNode([move_right, move_down]), "Operator & failed"
     assert (move_right + move_down) == ProductNode([move_right, move_down]), "Operator + failed"
-    assert (move_right * 3) == RepeatNode(move_right, 3), "Operator * failed"
-    assert ((move_right * 2) * 3) == RepeatNode(move_right, 6), "Nested * failed"
+    assert (move_right * 3) == RepeatNode(move_right, CountValue(3)), "Operator * failed"
+    assert ((move_right * 2) * 3) == RepeatNode(move_right, CountValue(6)), "Nested * failed"
     print("Test 3: Operator overloads - Passed")
 
     # Test 4: Symbol resolution
     symbol_def = ProductNode([move_right, move_down])
     symbols = [symbol_def]
-    symbol_node = SymbolNode(0, ())
-    root_with_symbol = RootNode((0, 0), {1}, ProductNode([symbol_node, move_right]))
+    symbol_node = SymbolNode(IndexValue(0), ())
+    root_with_symbol = RootNode(ProductNode([symbol_node, move_right]), CoordValue((0, 0)), PaletteValue({1}))
     tree = KolmogorovTree(root_with_symbol, symbols)
     resolved = resolve_symbols(tree.root, tree.symbols)
-    expected_resolved = RootNode((0, 0), {1}, ProductNode([symbol_def, move_right]))
+    expected_resolved = RootNode(ProductNode([symbol_def, move_right]), CoordValue((0, 0)), PaletteValue({1}))
     assert resolved == expected_resolved, "Symbol resolution failed"
     print("Test 4: Symbol resolution - Passed")
+
+    test_encode_run_length()
 
 if __name__ == "__main__":
     tree = example_usage()

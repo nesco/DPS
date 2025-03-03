@@ -1,8 +1,10 @@
 """
 Grid can be totally or partially encoded in a lossless fashion into Asbract Syntax Trees.
 The lossless part is essential here because ARC Corpus sets the problem into the low data regime.
-First grids are marginalized into connected components of N colors.
-Those connected components are then represented through their graph traversals using branching freeman chain codes.
+First grids are marginalized into connected components of N colors. Those connected components are "shapes".
+
+Shapes are then represented the following way: extracting a possible branching pathes with a DFS on the connectivity graph,
+then representing thoses branching pathes as a non-deterministic "program", where the output are string representing moves à la  freeman chain codes
 
 The lossless encoding used is basic pattern matching for (meta) repetitions through Repeat and SymbolicNode.
 The language formed by ASTs are simple enough an approximate version of kolmogorov complexity can be computed.
@@ -43,10 +45,17 @@ from helpers import *
 from freeman import *
 from grid import points_to_coords
 
+from kolmogorov_tree import (
+    KNode, BitLengthAware, KolmogorovTree,
+    ProductNode, SumNode, RepeatNode, SymbolNode, RootNode, SymbolNode,
+    MoveValue, PaletteValue, IndexValue, VariableValue, CoordValue, BitLength,
+    resolve_symbols, symbolize, children, breadth_iter, reverse_node, encode_run_length
+)
+
+
 import sys
 
 sys.setrecursionlimit(10000)
-
 
 class BitLength(IntEnum):
     COORD = 10  # Base length for node type (3 bits) because <= 8 types
@@ -58,7 +67,6 @@ class BitLength(IntEnum):
     INDEX_VARIABLE = 1  # Variable can be 0 or 1 so 1 bit
     RECT = 8
 
-
 #### Abstract Syntax Tree Structure
 
 
@@ -66,12 +74,13 @@ class BitLength(IntEnum):
 #    '0': (-1, 0), '1': (0, -1), '2': (1, 0), '3': (0, 1),
 #    '4': (1, -1), '5': (1, 1), '6': (-1, 1), '7': (-1, -1)
 # }
+"""
 @dataclass(frozen=True)
 class BitLengthAware(ABC):
-    """
+    ""
     This is a protocol for classes that 'know' their bit lengths.
     In the future it should be the length of the category they belong to.
-    """
+    ""
 
     @abstractmethod
     def bit_length(self) -> int:
@@ -98,9 +107,9 @@ T = TypeVar("T", bound=BitLengthAware)
 
 @dataclass(frozen=True)
 class Node(Generic[T], ABC):
-    """
+    ""
     Abstract Node class used to stuff inherited methods.
-    """
+    ""
 
     def __len__(self) -> int:
         return BitLength.NODE  # Base length for node type (3 bits) because <= 8 types
@@ -135,10 +144,9 @@ class Leaf(Node[T]):
     def __str__(self) -> str:
         return str(data)
 
-
 @dataclass(frozen=True)
 class MovesNode(Node):
-    """
+    ""
     MovesNode store litteral non branching parts of a Freeman code Chain.
     It's a container for a string of octal digits, each indicating a direction in 8-cconectivity.
     The directions are defined by:
@@ -146,7 +154,7 @@ class MovesNode(Node):
             '0': (-1, 0), '1': (0, -1), '2': (1, 0), '3': (0, 1),
             '4': (1, -1), '5': (1, 1), '6': (-1, 1), '7': (-1, -1)
         }
-    """
+    ""
 
     moves: str = field(hash=True)  # 0, 1, 2, 3, 4, 5, 6, 7 (3 bits)
 
@@ -171,9 +179,9 @@ class MovesNode(Node):
         return iter(self.moves)
 
     def iter_path(self, start) -> Iterator[tuple]:
-        """
+        ""
         Iterator over the path
-        """
+        ""
         col, row = start
         for move in self.moves:
             col += DIRECTIONS[move][0]
@@ -229,10 +237,9 @@ class Repeat(Node):
             case _:
                 return super().__add__(other)
 
-
 @dataclass(frozen=True)
 class SequenceNode(Node):
-    """Abstract Parent class of ConsecutiveNode and AlternativeNode"""
+    ""Abstract Parent class of ConsecutiveNode and AlternativeNode""
 
     nodes: list["ASTNode"] = field(default_factory=list, hash=True)
 
@@ -245,12 +252,12 @@ class SequenceNode(Node):
 
 @dataclass(frozen=True)
 class ConsecutiveNode(SequenceNode):
-    """
+    ""
     ConsecutiveNode is a container representing a possibly Branching Freeman Code chain
     where subparts are encoded AST Nodes.
     As an abstract container designed to replace List() with an object having the right methods,
     it doesn't count for the length.
-    """
+    ""
 
     def __str__(self) -> str:
         return "".join(str(node) for node in self.nodes)
@@ -296,14 +303,14 @@ class ConsecutiveNode(SequenceNode):
 
 @dataclass(frozen=True)
 class AlternativeNode(SequenceNode):
-    """
+    ""
     Represents branching of the traversal of a connected component.
     As a single freeman code chain can't represent all connected components,
     it needs to have branching parts. This node encode the branching.
 
     As a branch is never a single node, it can be used to encode iterators through a Repeat.
     If a AlternativeNode contains a single repeat, then it will act like a positive or negative iterator
-    """
+    ""
 
     def __len__(self) -> int:
         return super().__len__() + BitLength.NODE
@@ -344,9 +351,9 @@ class AlternativeNode(SequenceNode):
 
 @dataclass(frozen=True)
 class Variable(Node):
-    """
+    ""
     This Node serves to reminds where SymbolicNodes parameters need to be pasted.
-    """
+    ""
 
     index: int  # The hash of the replacement pattern to know it will replace this
 
@@ -365,13 +372,13 @@ class Variable(Node):
 
 @dataclass(frozen=True)
 class SymbolicNode(Node):
-    """
+    ""
     To make the AST representations of branching code chains powerful,
     it needs to be able to compress efficiently code chains,
     with the possibility to memorize reoccuring patterns,
     be their constants or abstracted as functions of single parameters.
     The pattern needs to be stored independently in a list of patterns, index is the index of the pattern in this list
-    """
+    ""
 
     index: int  # should not be more than 8 so 3 bits
     parameters: (
@@ -401,9 +408,9 @@ class SymbolicNode(Node):
 
 @dataclass(frozen=True)
 class Root(Node):
-    """
+    ""
     Node representing a path root. Note that the branches here can possibly lead to overlapping paths
-    """
+    ""
 
     start: Coord | Variable
     colors: Colors | Variable
@@ -483,81 +490,23 @@ class Root(Node):
             and (self.node == other.node)
         )
 
+"""
 
 @dataclass(frozen=True)
-class RelativeRoot(Node):
-    """
-    Node representing a path root. Note that the branches here can possibly lead to overlapping paths
-    """
+class Rect(KNode):
+    height: 'int | VariableNode'  # Use VariableNode from kolmogorov_tree.py
+    width: 'int | VariableNode'
 
-    start: Union[Coord, Variable]
-    colors: Union[Colors, Variable]
-    node: Optional["ASTNode"]
+    def bit_length(self) -> int:
+        # 3 bits for node type + 8 bits for ARC-specific rectangle encoding
+        height_len = BitLength.COUNT if isinstance(self.height, int) else self.height.bit_length()
+        width_len = BitLength.COUNT if isinstance(self.width, int) else self.width.bit_length()
+        return super().__len__() + height_len + width_len
 
-    def __post_init(self):
-        if DEBUG_ROOT:
-            match self.node:
-                case Root(_):
-                    print(f"Trying to initialize {self.__repr__()} with another root")
-                    print(f"Root: {self.node}")
-                case SymbolicNode(i, p, _) if isinstance(p, Root):
-                    print(f"Trying to initialize {self.__repr__()} with another root")
-                    print(f"Root: {p}")
-            col, row = self.start
-            if col < 0 or row < 0:
-                print(
-                    f"Trying to initialize {self} at nehative starting point {col}, {row}"
-                )
-
-    def __len__(self):
-        # 10 bits for x and y going from 0 to 32 max on the grids + 4 bits for each color (10 choices)
-        len_node = len(self.node) if self.node is not None else 0
-        return BitLength.COORD + len(self.colors) * BitLength.COLOR + len_node
-
-    def __add__(self, other):
-        match other:
-            case Variable():
-                return NotImplemented
-            case Root(start=(col, row), colors=c, child=n) if not isinstance(
-                self.start, Variable
-            ):
-                if self.start[0] == col and self.start[1] == row:
-                    if (
-                        self.colors != c
-                        or isinstance(self.colors, Variable)
-                        or isinstance(c, Variable)
-                    ):
-                        raise NotImplementedError()
-                    return Root((col, row), c, AlternativeNode([self.node, n]))
-                return AlternativeNode([self, other])
-            case Root(start=s, colors=c, child=n) if (
-                isinstance(self.start, Variable) or isinstance(s, Variable)
-            ):
-                raise NotImplementedError()
-        return Root(self.start, self.colors, AlternativeNode([self.node, other]))
-
-    def __str__(self):
-        return f"{self.colors}->{self.start}:" + str(self.node)
-
-    # def __repr__(self):
-    #    return f"{self.__class__.__name__}(start={self.start.__repr__()}, colors={str(self.colors)}, node={self.node.__repr__()})"
-    def __hash__(self):
-        return hash(self.__repr__())
-
-    def __eq__(self, other):
-        if not isinstance(other, Root):
-            return False
-        # if isinstance(self.start, Variable):
-        #    return (self.colors==other.colors) and (self.node == other.node)
-        return (
-            (self.start == other.start)
-            and (self.colors == other.colors)
-            and (self.node == other.node)
-        )
-
+    def __str__(self) -> str:
+        return f"Rect({self.height}, {self.width})"
 
 # Strategy diviser pour régner avec marginalisation + reconstruction
-
 
 @dataclass()
 class UnionNode:
@@ -565,6 +514,50 @@ class UnionNode:
     Represent a connected component by reconstructing it with the best set of single color programs.
     After marginalisation comes reconstruction, divide and conquer.
     """
+
+    # background: dict['ASTNode', 'ASTNode']
+    codes: set[KNode]
+    shadowed: set[int] | None = None
+    background: KNode | None = None
+
+    def __len__(self):
+        len_codes = 0
+        if self.codes is None:
+            return 0
+        return sum([len(code) for code in self.codes])
+
+    def __add__(self, other):
+        raise NotImplementedError
+
+    def __str__(self):
+        msg = ""
+        if self.background is not None:
+            msg += f"{self.background } < "
+        if self.codes is None:
+            msg += "Ø"
+        else:
+            msg += "U".join([f"{{{code}}}" for code in self.codes])
+        return msg
+
+    def __repr__(self):
+        codes_repr = ",".join(code.__repr__() for code in self.codes)
+        return f"{self.__class__.__name__}(codes={codes_repr})"
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, UnionNode):
+            return False
+        return self.background == other.background and self.codes == other.codes
+
+    def __hash__(self):
+        return hash(self.__repr__())
+
+"""
+@dataclass()
+class UnionNode:
+    ""
+    Represent a connected component by reconstructing it with the best set of single color programs.
+    After marginalisation comes reconstruction, divide and conquer.
+    ""
 
     # background: dict['ASTNode', 'ASTNode']
     codes: set["ASTNode"]
@@ -622,24 +615,25 @@ ASTNode = Union[
 ]
 ASTFunctor = Callable[[Node], Optional[Node]]
 ASTTerminal = Callable[[Node, Optional[bool]], None]
+"""
 
 ### Basic functions
 
 
 def is_leaf_list(input) -> bool:
-    if isinstance(input, ConsecutiveNode):
-        node_list = input.nodes
+    if isinstance(input, ProductNode):
+        node_list = input.children
     elif isinstance(input, list):
         node_list = input
     else:
         return False
-    return all(isinstance(n, Leaf) for n in node_list)
+    return all(isinstance(n, PrimitiveNode) for n in node_list)
 
 
-Sequence = list[Node] | str
+Sequence = list[KNode] | str
 
 
-def check_for_repeat(sequence: Sequence) -> Optional[Node]:
+def check_for_repeat(sequence: Sequence) -> KNode | None:
     """Check the biggest repeat at the current level"""
     n = len(sequence)
 
@@ -702,7 +696,7 @@ def check_for_repeat(sequence: Sequence) -> Optional[Node]:
     return None
 
 
-def check_for_repeat_within(s: str, start: int, end: int, dp) -> Optional[Node]:
+def check_for_repeat_within(s: str, start: int, end: int, dp) -> KNode | None:
     substring = s[start:end]
     substring_length = end - start
 
@@ -728,7 +722,7 @@ def check_for_repeat_within(s: str, start: int, end: int, dp) -> Optional[Node]:
     return None
 
 
-def encode_string(s: str) -> Node:
+def encode_string(s: str) -> KNode:
     n = len(s)
     memo = {}
 
@@ -769,7 +763,7 @@ def encode_string(s: str) -> Node:
     return dp(0, n)
 
 
-def dynamic_factorize(sequence: Sequence) -> Optional[Node]:
+def dynamic_factorize(sequence: Sequence) -> KNode | None:
     n = len(sequence)
     if n == 0:
         return None
@@ -811,23 +805,6 @@ def dynamic_factorize(sequence: Sequence) -> Optional[Node]:
 
     # The best encoding for the entire sequence is stored in dp[n]
     return dp[n]
-
-
-def children(node: Node) -> Iterator[Node]:
-    match node:
-        case Root(_, _, child) if child:
-            return iter((child,))
-        case SymbolicNode(_, parameters, _):
-            if isinstance(parameters, Variable):
-                return iter((parameters,))
-            return iter((param for param in parameters if isinstance(param, ASTNode)))
-        case SequenceNode(nodes):
-            return iter(nodes)
-        case Repeat(n, c):
-            return iter((n,))
-        case _:
-            return iter(())
-
 
 def next_repeating_pattern(sequence: list[T], offset):
     """
@@ -934,7 +911,7 @@ def simplify_repetitions(self):
         return construct_consecutive_node(result) if len(result) > 1 else result[0]
 
 
-def construct_consecutive_node(nodes: list[Node]) -> ConsecutiveNode:
+def construct_consecutive_node(nodes: list[KNode]) -> ConsecutiveNode:
     nodes_simplified = []
 
     current, nnodes = nodes[0], nodes[1:]
@@ -984,8 +961,8 @@ def construct_consecutive_node(nodes: list[Node]) -> ConsecutiveNode:
 
     return ConsecutiveNode(nodes_simplified)
 
-
-def breadth_iter(node: Node) -> Iterator[ASTNode]:
+"""
+def breadth_iter(node: KNode) -> Iterator[KNode]:
     match node:
         case Repeat(nnode, count):
             yield nnode
@@ -1013,10 +990,10 @@ def breadth_iter(node: Node) -> Iterator[ASTNode]:
                 yield from breadth_iter(nnode)
         case _:
             return iter(())
-
-
+"""
+"""
 def reverse_node(node: Node) -> Node:
-    """Assume that AlternativeNode has already been run-lenght-encoded"""
+    ""Assume that AlternativeNode has already been run-lenght-encoded""
     match node:
         case MovesNode(moves):
             return MovesNode(moves[::-1])
@@ -1037,7 +1014,7 @@ def reverse_node(node: Node) -> Node:
             return Root(start, colors, reverse_node(nnode))
         case _:
             return node
-
+"""
 
 def reverse_sequence(sequence: Sequence) -> Sequence:
     if isinstance(sequence, str):
@@ -1051,7 +1028,7 @@ def reverse_sequence(sequence: Sequence) -> Sequence:
 # def compress_freeman(node: FreemanNode):
 #    best_pattern, best_count, best_bit_gain, best_reverse = None, 0, 0, False
 
-
+"""
 def len_param(param) -> int:
     if isinstance(param, ASTNode):
         return len(param)
@@ -1063,7 +1040,7 @@ def len_param(param) -> int:
         return sum([len_param(p) for p in param])
     else:
         return 1
-
+"""
 
 def rect_to_moves(height, width):
     moves = "2" * (width - 1) + "".join(
@@ -1140,7 +1117,7 @@ def extract_rects(node):
 
 
 #### AST
-def node_from_list(nodes: list[Node]) -> Optional[Node]:
+def node_from_list(nodes: list[Node]) -> Node | None:
     if not nodes:
         return None
     elif len(nodes) == 1:
@@ -1149,7 +1126,7 @@ def node_from_list(nodes: list[Node]) -> Optional[Node]:
         return ConsecutiveNode(nodes)
 
 
-def branch_from_list(nodes: list[Node]) -> Optional[Node]:
+def branch_from_list(nodes: list[Node]) -> Node | None:
     if not nodes:
         return None
     elif len(nodes) == 1 and not isinstance(nodes[0], Repeat):
@@ -1157,7 +1134,7 @@ def branch_from_list(nodes: list[Node]) -> Optional[Node]:
     else:
         return AlternativeNode(get_iterator(nodes))
 
-
+""""
 def encode_run_length(moves: MovesNode):
     """
     Run-Length Encoding (RLE) is used to compress MovesNode into Repeats of MovesNode.
@@ -1208,6 +1185,7 @@ def encode_run_length(moves: MovesNode):
 
     return node_from_list(sequence)
 
+"""
 
 def encode_run_length_leaf(leaf_sequence: ConsecutiveNode):
     """
@@ -1376,7 +1354,7 @@ def get_symbols(ast: Node):
             symbols.append(i)
     return symbols
 
-
+"""
 def ast_map(f: ASTFunctor, node: Optional[Node]) -> Optional[Node]:
     """
     Map a function from an single ASTNode to an single AST node to an entire AST.
@@ -1430,7 +1408,7 @@ def ast_map(f: ASTFunctor, node: Optional[Node]) -> Optional[Node]:
             return f(SymbolicNode(i, nparameters, l))
         case _:
             return f(node)
-
+"""
 
 ### Helper functions to compress ASTs
 
