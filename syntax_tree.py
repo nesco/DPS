@@ -47,7 +47,7 @@ from grid import points_to_coords
 
 from kolmogorov_tree import (
     KNode, BitLengthAware, KolmogorovTree,
-    ProductNode, SumNode, RepeatNode, SymbolNode, RootNode, SymbolNode,
+    ProductNode, SumNode, RepeatNode, SymbolNode, RootNode, SymbolNode, PrimitiveNode,
     MoveValue, PaletteValue, IndexValue, VariableValue, CoordValue, BitLength,
     resolve_symbols, symbolize, children, breadth_iter, reverse_node, encode_run_length
 )
@@ -910,7 +910,7 @@ def simplify_repetitions(self):
 
         return construct_consecutive_node(result) if len(result) > 1 else result[0]
 
-
+"""
 def construct_consecutive_node(nodes: list[KNode]) -> ConsecutiveNode:
     nodes_simplified = []
 
@@ -960,6 +960,7 @@ def construct_consecutive_node(nodes: list[KNode]) -> ConsecutiveNode:
         nodes_simplified.append(current)
 
     return ConsecutiveNode(nodes_simplified)
+"""
 
 """
 def breadth_iter(node: KNode) -> Iterator[KNode]:
@@ -1042,14 +1043,15 @@ def len_param(param) -> int:
         return 1
 """
 
-def rect_to_moves(height, width):
+# Refactored
+def rect_to_moves(height, width) -> list[PrimitiveNode[MoveValue]]:
     moves = "2" * (width - 1) + "".join(
         "3" + ("0" if i % 2 else "2") * (width - 1) for i in range(1, height)
     )
+    primitives = [PrimitiveNode(MoveValue(m)) for m in moves]
+    return primitives
 
-    return MovesNode(moves)
-
-
+# To refactor
 def moves_to_rect(s: str):
     if not s:
         return None
@@ -1066,6 +1068,7 @@ def moves_to_rect(s: str):
     return (height, width) if s == expected and height >= 2 and width >= 2 else None
 
 
+# To refactor
 def expand(node) -> str:
     match node:
         case ConsecutiveNode(nodes) if all(
@@ -1103,7 +1106,7 @@ def extract_rects1(node):
         else:
             return node
 
-
+# To refactor
 def extract_rects(node):
     ex = expand(node)
     if ex == "":
@@ -1117,6 +1120,7 @@ def extract_rects(node):
 
 
 #### AST
+"""
 def node_from_list(nodes: list[Node]) -> Node | None:
     if not nodes:
         return None
@@ -1124,6 +1128,7 @@ def node_from_list(nodes: list[Node]) -> Node | None:
         return nodes[0]
     else:
         return ConsecutiveNode(nodes)
+"""
 
 
 def branch_from_list(nodes: list[Node]) -> Node | None:
@@ -1136,11 +1141,11 @@ def branch_from_list(nodes: list[Node]) -> Node | None:
 
 """"
 def encode_run_length(moves: MovesNode):
-    """
+    ""
     Run-Length Encoding (RLE) is used to compress MovesNode into Repeats of MovesNode.
     It's an elementary compression method used directly at the creation of AST representin branching chain codes.
     As it's very simple, it does not lead to risk of over optimisation
-    """
+    ""
 
     def create_node(move, count):
         if count >= 3:
@@ -1187,56 +1192,6 @@ def encode_run_length(moves: MovesNode):
 
 """
 
-def encode_run_length_leaf(leaf_sequence: ConsecutiveNode):
-    """
-    Run-Length Encoding (RLE) is used to compress MovesNode into Repeats of MovesNode.
-    It's an elementary compression method used directly at the creation of AST representin branching chain codes.
-    As it's very simple, it does not lead to risk of over optimisation
-    """
-
-    def create_node(node: Node, count):
-        if count >= 3:
-            return Repeat(node, count)
-        return ConsecutiveNode([node] * count)
-
-    # Nothing to encode
-    if len(leaf_sequence) <= 2:
-        return leaf_sequence
-
-    sequence = []
-    node_prev, node_current = tuple(leaf_sequence.nodes[:2])
-
-    count = 2 if node_current == node_prev else 1
-    non_repeat_node = node_prev if node_current != node_prev else None
-
-    # Iterating over the 3-character nodes
-    for node_next in sequence[2:]:
-        if node_next == node_current:  # _, A, A case
-            count += 1
-        else:  # *, A, B
-            if count >= 3:  # *, A, A, A, B case
-                if non_repeat_node:  # Saving previous non-repeating moves
-                    sequence.append(non_repeat_node)
-                    non_repeat_node = None
-                sequence.append(
-                    create_node(node_current, count)
-                )  # storing the repetition
-            else:  # *, C, _, A, B case
-                non_repeat_node += node_current * count
-            count = 1
-        node_current = node_next
-
-    # Last segment
-    if count >= 3:
-        if non_repeat_node:
-            sequence.append(non_repeat_node)
-        sequence.append(create_node(node_current, count))
-    else:
-        non_repeat_node += node_current * count
-        sequence.append(non_repeat_node)
-
-    return node_from_list(sequence)
-
 
 def factorize_moves(node: Node):
     if not isinstance(node, (MovesNode, ConsecutiveNode)):
@@ -1259,7 +1214,7 @@ def factorize_moves(node: Node):
     #        return factorized
     #        raise ValueError
 
-
+"""
 def shift_moves(i: int, node):
     match node:
         case MovesNode(moves):
@@ -1278,7 +1233,7 @@ def shift_moves(i: int, node):
             return AlternativeNode([shift_moves(i, n) for n in nodes])
         case _:
             return node
-
+"""
 
 def get_iterator(node_ls: list[Node]) -> list[Node]:
     """
@@ -1356,11 +1311,11 @@ def get_symbols(ast: Node):
 
 """
 def ast_map(f: ASTFunctor, node: Optional[Node]) -> Optional[Node]:
-    """
+    ""
     Map a function from an single ASTNode to an single AST node to an entire AST.
     :param f: function to map
     :param node:
-    """
+    ""
     match node:
         case None:
             return None
