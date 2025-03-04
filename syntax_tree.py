@@ -962,61 +962,6 @@ def construct_consecutive_node(nodes: list[KNode]) -> ConsecutiveNode:
     return ConsecutiveNode(nodes_simplified)
 """
 
-"""
-def breadth_iter(node: KNode) -> Iterator[KNode]:
-    match node:
-        case Repeat(nnode, count):
-            yield nnode
-            if isinstance(nnode, (AlternativeNode, Repeat, ConsecutiveNode)):
-                yield from breadth_iter(nnode)
-        case ConsecutiveNode(nodes=nodes):
-            iterators = []
-            for nnode in nodes:
-                yield nnode
-                if isinstance(nnode, (AlternativeNode, Repeat, ConsecutiveNode)):
-                    iterators.append(breadth_iter(nnode))
-            for it in iterators:
-                yield from it
-        case AlternativeNode(nodes=nodes):
-            iterators = []
-            for nnode in nodes:
-                yield nnode
-                if isinstance(nnode, (AlternativeNode, Repeat, ConsecutiveNode)):
-                    iterators.append(breadth_iter(nnode))
-            for it in iterators:
-                yield from it
-        case Root(start, colors, nnode) if nnode is not None:
-            yield nnode
-            if isinstance(nnode, (AlternativeNode, Repeat, ConsecutiveNode)):
-                yield from breadth_iter(nnode)
-        case _:
-            return iter(())
-"""
-"""
-def reverse_node(node: Node) -> Node:
-    ""Assume that AlternativeNode has already been run-lenght-encoded""
-    match node:
-        case MovesNode(moves):
-            return MovesNode(moves[::-1])
-        case Repeat(nnode, count):
-            return Repeat(reverse_node(nnode), count)
-        case ConsecutiveNode(nodes=nodes):
-            reverse_list = nodes[::-1]
-            nnodes = [reverse_node(nnode) for nnode in reverse_list]
-            return ConsecutiveNode(nnodes)
-        case AlternativeNode(nodes=nodes):
-            reverse_list = nodes[::-1]
-            nnodes = [reverse_node(nnode) for nnode in reverse_list]
-            return AlternativeNode(nnodes)
-        case SymbolicNode(index, parameters, len_ref):
-            nparameters = tuple(reverse_node(param) for param in reversed(parameters))
-            return SymbolicNode(index, nparameters, len_ref)
-        case Root(start, colors, nnode) if nnode is not None:
-            return Root(start, colors, reverse_node(nnode))
-        case _:
-            return node
-"""
-
 def reverse_sequence(sequence: Sequence) -> Sequence:
     if isinstance(sequence, str):
         return sequence[::-1]
@@ -1121,78 +1066,6 @@ def extract_rects(node):
 
 #### AST
 """
-def node_from_list(nodes: list[Node]) -> Node | None:
-    if not nodes:
-        return None
-    elif len(nodes) == 1:
-        return nodes[0]
-    else:
-        return ConsecutiveNode(nodes)
-"""
-
-
-def branch_from_list(nodes: list[Node]) -> Node | None:
-    if not nodes:
-        return None
-    elif len(nodes) == 1 and not isinstance(nodes[0], Repeat):
-        return nodes[0]
-    else:
-        return AlternativeNode(get_iterator(nodes))
-
-""""
-def encode_run_length(moves: MovesNode):
-    ""
-    Run-Length Encoding (RLE) is used to compress MovesNode into Repeats of MovesNode.
-    It's an elementary compression method used directly at the creation of AST representin branching chain codes.
-    As it's very simple, it does not lead to risk of over optimisation
-    ""
-
-    def create_node(move, count):
-        if count >= 3:
-            return Repeat(MovesNode(move), count)
-        return MovesNode(move * count)
-
-    seq = moves.moves
-    if len(seq) <= 2:
-        return MovesNode(seq)
-
-    sequence = []
-    move_prev = seq[0]
-    move_current = seq[1]
-    count = 2 if move_current == move_prev else 1
-    non_repeat_moves = move_prev if move_current != move_prev else ""
-
-    # Iterating over the 3-character nodes
-    for move_next in seq[2:]:
-        if move_next == move_current:  # _, A, A case
-            count += 1
-        else:  # *, A, B
-            if count >= 3:  # *, A, A, A, B case
-                if non_repeat_moves:  # Saving previous non-repeating moves
-                    sequence.append(MovesNode(non_repeat_moves))
-                    non_repeat_moves = ""
-                sequence.append(
-                    create_node(move_current, count)
-                )  # storing the repetition
-            else:  # *, C, _, A, B case
-                non_repeat_moves += move_current * count
-            count = 1
-        move_current = move_next
-
-    # Last segment
-    if count >= 3:
-        if non_repeat_moves:
-            sequence.append(MovesNode(non_repeat_moves))
-        sequence.append(create_node(move_current, count))
-    else:
-        non_repeat_moves += move_current * count
-        sequence.append(MovesNode(non_repeat_moves))
-
-    return node_from_list(sequence)
-
-"""
-
-
 def factorize_moves(node: Node):
     if not isinstance(node, (MovesNode, ConsecutiveNode)):
         return node
@@ -1213,80 +1086,15 @@ def factorize_moves(node: Node):
     #    case _:
     #        return factorized
     #        raise ValueError
-
 """
-def shift_moves(i: int, node):
-    match node:
-        case MovesNode(moves):
-            return MovesNode("".join([str((int(m) + i) % 8) for m in moves]))
-        case Root(s, c, node):
-            return Root(s, c, shift_moves(i, node))
-        case Repeat(node, c):
-            return Repeat(shift_moves(i, node), c)
-        case SymbolicNode(index, parameters, len_ref):
-            return SymbolicNode(
-                index, tuple(shift_moves(i, param) for param in parameters), len_ref
-            )
-        case ConsecutiveNode(nodes=nodes):
-            return construct_consecutive_node([shift_moves(i, n) for n in nodes])
-        case AlternativeNode(nodes=nodes):
-            return AlternativeNode([shift_moves(i, n) for n in nodes])
-        case _:
-            return node
-"""
-
-def get_iterator(node_ls: list[Node]) -> list[Node]:
-    """
-    This function tries to find iterators to encode as a single Repeat at the root of AlternativeNode or ConsecutiveNode
-    It use the fact that AlternativeNode or ConsecutiveNode can't have a single Repeat as a child to assign a double meaning to it
-    Yes, it's a bit hacky but it helps to increase the language expressiveness cost free by compressing
-    enumerations
-    """
-    if not (1 < len(node_ls) <= 7):
-        return node_ls
-
-    prev = node_ls[0]
-    curr = node_ls[1]
-
-    increment = 1
-
-    # To get an iterator, it should either iterate in a the direct or reverse sense
-    if curr == shift_moves(-1, prev):
-        increment = -1
-    elif curr != shift_moves(1, prev):
-        return node_ls
-
-    for i in range(2, len(node_ls)):
-        prev = node_ls[i - 1]
-        curr = node_ls[i]
-        if curr != shift_moves(increment, prev):
-            return node_ls
-
-    # if we got this far, we got our iterator
-    return [Repeat(node_ls[0], increment * len(node_ls))]
-
 
 ### Functions on ASTs
-
-
-def get_depth(ast: Node):
-    if not ast:
-        return 0
-
-    max_depth = 0
-    for child in children(ast):
-        depth = get_depth(child)
-        if depth > max_depth:
-            max_depth = depth
-
-    return max_depth + 1
-
-
+""""
 def is_symbolic(ast: Node):
     if isinstance(ast, SymbolicNode):
         return True
     return any(is_symbolic(child) for child in children(ast))
-
+"""
 
 def is_function(ast: Node):
     match ast:
@@ -1308,62 +1116,6 @@ def get_symbols(ast: Node):
         case SymbolicNode(i, _, _):
             symbols.append(i)
     return symbols
-
-"""
-def ast_map(f: ASTFunctor, node: Optional[Node]) -> Optional[Node]:
-    ""
-    Map a function from an single ASTNode to an single AST node to an entire AST.
-    :param f: function to map
-    :param node:
-    ""
-    match node:
-        case None:
-            return None
-        case Root(start=s, colors=c, node=n):
-            nnode = ast_map(f, n)
-            return f(Root(s, c, nnode))
-        case AlternativeNode(nodes=nodes):
-            nnodes = [
-                nnode for cnode in nodes if (nnode := ast_map(f, cnode)) is not None
-            ]
-            return f(AlternativeNode(nnodes))
-        case ConsecutiveNode(nodes=node_ls):
-            try:
-                nnodes = [
-                    nnode for n in node_ls if (nnode := ast_map(f, n)) is not None
-                ]
-                return f(construct_consecutive_node(nnodes))
-            except NotImplementedError as e:
-                print(f"Caught a NotImplementedError: {e}")
-                print(f"Traceback: {print_trace(e)}")
-                print("List of subnodes: ")
-                for n in node_ls:
-                    print(f"Node: {n}")
-            return NotImplemented
-        case UnionNode(codes, shadowed, background):
-            ncodes = set([ncode for n in codes if (ncode := ast_map(f, n)) is not None])
-            if shadowed:
-                nshadowed = set(
-                    [ncode for n in shadowed if (ncode := ast_map(f, n)) is not None]
-                )
-            else:
-                nshadowed = None
-            nbackground = ast_map(f, background) if background else None
-            return f(UnionNode(ncodes, nshadowed, nbackground))
-        case Repeat(node=n, count=c):
-            nnode = ast_map(f, n)
-            if nnode is not None:
-                return f(Repeat(nnode, c))  # if nnode is not None else None
-            else:
-                return None
-        case SymbolicNode(index=i, parameters=parameters, len_ref=l):
-            nparameters = tuple(
-                ast_map(f, p) if isinstance(p, ASTNode) else p for p in parameters
-            )
-            return f(SymbolicNode(i, nparameters, l))
-        case _:
-            return f(node)
-"""
 
 ### Helper functions to compress ASTs
 

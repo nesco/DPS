@@ -89,7 +89,7 @@ class BitLengthAware(ABC):
 @dataclass(frozen=True)
 class Primitive(BitLengthAware):
     """Base class for all primitives: bit length aware wrapping base values"""
-    value: any
+    value: Any
 
     def __str__(self) -> str:
         return str(self.value)
@@ -102,6 +102,11 @@ class Alphabet(Primitive):
     def shift(self) -> 'Alphabet':
         """Shifts the primitive value by k steps."""
         pass
+
+    @staticmethod
+    def size() -> int:
+        """Size of the alphabet"""
+        return 0
 
 @dataclass(frozen=True)
 class CountValue(Primitive):
@@ -138,6 +143,10 @@ class MoveValue(Alphabet):
 
     def shift(self, k: int) -> 'Alphabet':
         return MoveValue((self.value + k) % 8)
+
+    @staticmethod
+    def size():
+        return 8
 
 @dataclass(frozen=True)
 class PaletteValue(Primitive):
@@ -240,7 +249,7 @@ class VariableNode(KNode[T]):
         return f"Var({self.index})"
 
 @dataclass(frozen=True)
-class SequenceNode(KNode[T], ABC):
+class TupleNode(KNode[T], ABC):
     """Abstract base class for nodes with multiple children."""
     children: tuple[KNode[T], ...] = field(default_factory=tuple)
 
@@ -253,7 +262,7 @@ class SequenceNode(KNode[T], ABC):
             object.__setattr__(self, 'children', tuple(self.children))
 
 @dataclass(frozen=True)
-class ProductNode(SequenceNode[T]):
+class ProductNode(TupleNode[T]):
     """Represents a sequence of actions (AND operation)."""
     def bit_length(self) -> int:
         return super().bit_length()
@@ -262,7 +271,7 @@ class ProductNode(SequenceNode[T]):
         return "".join(str(child) for child in self.children)
 
 @dataclass(frozen=True)
-class SumNode(SequenceNode[T]):
+class SumNode(TupleNode[T]):
     """Represents a choice among alternatives (OR operation)."""
     def bit_length(self) -> int:
         select_bits = math.ceil(math.log2(len(self.children) + 1)) if self.children else 0
@@ -363,6 +372,47 @@ def shift_f(node: KNode[T], k: int) -> KNode[T]:
         return PrimitiveNode(shifted_value)
     return node
 
+def next_layer(layer: Iterable[KNode]) -> tuple[KNode, ...] :
+    """Used for BFS-like traversal of a K-Tree. It's basically `children` for iterable"""
+    return tuple(child for node in layer for child in children(node))
+
+
+# Only useful for ARC? What if the alphabet is too large?
+def get_iterator(nodes: Iterable[KNode[T]]) -> tuple[KNode[T], ...]:
+    """
+    This function identifies if the input nodes form an arithmetic sequence and encodes it as a single RepeatNode.
+    It leverages a hacky double meaning: while a standard RepeatNode(X, N) means "X for _ in range(N)",
+    when used as the sole child of a SumNode, e.g., SumNode((Repeat(X, N),)), it represents
+    "SumNode(tuple(shift(X, k) for k in range(N)))" if N > 0, or shifts with negative increments if N < 0.
+    This compresses arithmetic enumerations cost-free, enhancing expressiveness.
+    """
+    node_ls: list[KNode[T]] = list(nodes)
+    if len(node_ls) < 2:
+        return tuple(node_ls)
+
+    # Check if the sequence has a consistent increment (1 or -1)
+    prev = node_ls[0]
+    curr = node_ls[1]
+
+    # Determine the increment based on the first pair
+    if curr == shift(prev, 1):
+        increment = 1
+    elif curr == shift(prev, -1):
+        increment = -1
+    else:
+        return tuple(node_ls)
+
+    # Validate the entire sequence
+    for i in range(2, len(node_ls)):
+        prev = node_ls[i - 1]
+        curr = node_ls[i]
+        if curr != shift(prev, increment):
+            return tuple(node_ls)
+
+    # If we reach here, the sequence is arithmetic; encode it as a RepeatNode
+    # Use increment * length to encode direction and length
+    return (RepeatNode(node_ls[0], increment * len(node_ls)),)
+
 # Constructors
 
 def construct_product_node(nodes: Iterable[KNode[T]]) -> ProductNode[T]:
@@ -423,7 +473,7 @@ def construct_product_node(nodes: Iterable[KNode[T]]) -> ProductNode[T]:
 
     return ProductNode(tuple(simplified))
 
-def product_or(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
+def iterable_to_product(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
     nodes: list[KNode[T]] = list(iterable)
     if not nodes:
         return None
@@ -432,14 +482,14 @@ def product_or(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
     else:
         return construct_product_node(nodes)
 
-def sum_or(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
+def iterable_to_sum(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
     nodes: list[KNode[T]] = list(iterable)
     if not nodes:
         return None
     elif len(nodes) == 1:
         return nodes[0]
     else:
-        return SumNode(tuple(nodes))
+        return SumNode(get_iterator(nodes))
 
 
 # Traversal
@@ -447,7 +497,7 @@ def sum_or(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
 def children(knode: KNode) -> Iterator[KNode]:
     """Unified API to access children  of standard KNodes nodes"""
     match knode:
-        case SequenceNode(children):
+        case TupleNode(children):
             return iter(children)
         case MetaNode(node):
             return iter((node,))
@@ -458,7 +508,7 @@ def children(knode: KNode) -> Iterator[KNode]:
         case _:
             return iter(())
 
-def breadth_iter(node: KNode) -> Iterator[KNode]:
+def breadth_iter(node: KNode | None) -> Iterator[KNode]:
     """
     Performs a breadth-first traversal of a KNode tree, yielding all nodes level by level.
 
@@ -478,6 +528,19 @@ def breadth_iter(node: KNode) -> Iterator[KNode]:
             if child is not None:
                 queue.append(child)
 
+
+def depth(node: KNode) -> Iterator[KNode]:
+    if node is None:
+        return 0
+
+    max_depth = 0
+    layer = (node,)
+    while queue:
+        max_depth += 1
+        layer = next_layer(layer)
+
+    return depth
+
 # Basic operations on Nodes
 def reverse_node(knode: KNode) -> KNode:
     """
@@ -491,7 +554,7 @@ def reverse_node(knode: KNode) -> KNode:
         KNode: The reversed node.
     """
     match knode:
-        case SequenceNode(children):
+        case TupleNode(children):
             reversed_children = [reverse_node(child) for child in reversed(children)]
             return type(knode)(tuple(reversed_children))
         case RepeatNode(node, count):
@@ -592,6 +655,24 @@ def encode_run_length(primitives: Iterable[PrimitiveNode[T]]) -> ProductNode[T]:
 
     # Return the sequence as a ProductNode
     return ProductNode(tuple(sequence))
+
+# Tests
+def is_symbolized(node: KNode) -> bool:
+    """Return True if and only if node contains at least one SymbolNode in its subnodes"""
+    subnodes = breadth_iter(node)
+    return any(isinstance(node, SymbolNode) for node in subnodes)
+
+# Retrievial
+def contained_symbols(node: KNode) -> tuple[KNode, ...]:
+    symbols = []
+    layer = [node]
+
+    while layer:
+        symbols.extend([node.index for node in layer if isinstance(node, SymbolNode)])
+        layer = next_layer(layer)
+
+    return tuple(symbols)
+
 
 # High-order functions
 def kmap(knode: KNode, f: Callable[[KNode], KNode]) -> KNode | None:
@@ -1041,6 +1122,63 @@ def test_shift():
 
     print("Test shift operations - Passed")
 
+def test_get_iterator():
+    """Tests the get_iterator function for detecting and compressing arithmetic sequences."""
+    # Test Case 1: Empty Input
+    result = get_iterator([])
+    assert result == (), "Test Case 1 Failed: Empty input should return empty tuple"
+
+    # Test Case 2: Single Node
+    node = PrimitiveNode(MoveValue(1))
+    result = get_iterator([node])
+    assert result == (node,), "Test Case 2 Failed: Single node should return tuple with that node"
+
+    # Test Case 3: Sequence with Increment +1
+    nodes_pos = [PrimitiveNode(MoveValue(i)) for i in [0, 1, 2]]
+    result_pos = get_iterator(nodes_pos)
+    expected_pos = (RepeatNode(nodes_pos[0], 3),)
+    assert result_pos == expected_pos, "Test Case 3 Failed: Sequence [0,1,2] should be compressed to RepeatNode(0, 3)"
+
+    # Test Case 4: Sequence with Increment -1
+    nodes_neg = [PrimitiveNode(MoveValue(i)) for i in [2, 1, 0]]
+    result_neg = get_iterator(nodes_neg)
+    expected_neg = (RepeatNode(nodes_neg[0], CountValue(-3)),)
+    assert result_neg == expected_neg, "Test Case 4 Failed: Sequence [2,1,0] should be compressed to RepeatNode(2, -3)"
+
+    # Test Case 5: Non-Sequence
+    nodes_non = [PrimitiveNode(MoveValue(i)) for i in [0, 2, 1]]
+    result_non = get_iterator(nodes_non)
+    assert result_non == tuple(nodes_non), "Test Case 5 Failed: Non-sequence should return original nodes"
+
+    # Test Case 6: Boundary Conditions (Wrap-around with Increment +1)
+    nodes_wrap = [PrimitiveNode(MoveValue(i)) for i in [7, 0, 1]]
+    result_wrap = get_iterator(nodes_wrap)
+    expected_wrap = (RepeatNode(nodes_wrap[0], 3),)
+    assert result_wrap == expected_wrap, "Test Case 7 Failed: Wrap-around sequence [7,0,1] should be compressed"
+
+    # Test Case 7: Long Sequence with Wrap-around
+    nodes_long = [PrimitiveNode(MoveValue(i % 8)) for i in range(10)]  # [0,1,2,3,4,5,6,7,0,1]
+    result_long = get_iterator(nodes_long)
+    expected_long = (RepeatNode(nodes_long[0], CountValue(10)),)
+    assert result_long == expected_long, "Test Case 8 Failed: Long sequence [0,1,2,3,4,5,6,7,0,1] should be compressed"
+
+    # Test Case 8: Partial Sequence
+    nodes_partial = [PrimitiveNode(MoveValue(i)) for i in [0, 1, 2, 4]]
+    result_partial = get_iterator(nodes_partial)
+    assert result_partial == tuple(nodes_partial), "Test Case 9 Failed: Partial sequence [0,1,2,4] should not be compressed"
+
+    # Test Case 9: Different Increment
+    nodes_diff_inc = [PrimitiveNode(MoveValue(i)) for i in [0, 2, 4, 6]]
+    result_diff_inc = get_iterator(nodes_diff_inc)
+    assert result_diff_inc == tuple(nodes_diff_inc), "Test Case 10 Failed: Sequence with increment +2 should not be compressed"
+
+    # Test Case 10: Changing Increment
+    nodes_change_inc = [PrimitiveNode(MoveValue(i)) for i in [0, 1, 2, 1, 0]]
+    result_change_inc = get_iterator(nodes_change_inc)
+    assert result_change_inc == tuple(nodes_change_inc), "Test Case 11 Failed: Sequence with changing increment should not be compressed"
+
+    print("Test get_iterator - Passed")
+
 def run_tests():
     """Runs simple tests to verify KolmogorovTree functionality."""
     # Test 1: Basic node creation and bit length
@@ -1091,6 +1229,7 @@ def run_tests():
     test_encode_run_length()
     test_construct_product_node()
     test_shift()
+    test_get_iterator()
 
 if __name__ == "__main__":
     tree = example_usage()
