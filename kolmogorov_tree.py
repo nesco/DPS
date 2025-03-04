@@ -43,11 +43,11 @@ tree = KolmogorovTree(RootNode((0,0), {1}, program))
 """
 
 
-from typing import Generic, TypeVar, Callable, Iterable, Any, Iterator
+from typing import Generic, TypeVar, Callable, Iterable, Any, Iterator, Self
 from dataclasses import dataclass, field
 from enum import IntEnum
 from abc import ABC, abstractmethod
-from collections import Counter
+from collections import Counter, deque
 import math
 
 # Assuming RoseTree is defined elsewhere; import it
@@ -99,7 +99,7 @@ class Alphabet(Primitive):
     """Base class for all types which are program outputs. The generic type 'T' is bound to it. It offers a shifting operation"""
 
     @abstractmethod
-    def shift(self) -> 'Alphabet':
+    def shift(self, k: int) -> Self:
         """Shifts the primitive value by k steps."""
         pass
 
@@ -141,7 +141,7 @@ class MoveValue(Alphabet):
     def bit_length(self) -> int:
         return ARCBitLength.DIRECTIONS  # 4 bits
 
-    def shift(self, k: int) -> 'Alphabet':
+    def shift(self, k: int) -> 'MoveValue':
         return MoveValue((self.value + k) % 8)
 
     @staticmethod
@@ -168,7 +168,7 @@ T = TypeVar('T', bound=Alphabet)
 
 # Base node class
 @dataclass(frozen=True)
-class KNode(Generic[T], ABC):
+class KNode(Generic[T], BitLengthAware, ABC):
     def __len__(self) -> int:
         return self.bit_length()
 
@@ -231,6 +231,11 @@ class PrimitiveNode(KNode[T]):
     """Leaf node holding a primitive value."""
     value: T
 
+    @property
+    def data(self) -> Any:
+        """Returns the underlying data of the PrimitiveNode."""
+        return self.value.value
+
     def bit_length(self) -> int:
         return super().bit_length() + self.value.bit_length()
 
@@ -283,7 +288,7 @@ class SumNode(TupleNode[T]):
 @dataclass(frozen=True)
 class MetaNode(KNode[T], ABC):
     """Wraps a single node with additional information. node allows None to handle edge cases for map functions"""
-    node: KNode[T] | None
+    node: KNode[T]
 
     def bit_length(self) -> int:
         return super().bit_length() + self.node.bit_length()
@@ -305,6 +310,7 @@ class SymbolNode(KNode[T]):
     """Represents an abstraction or reusable pattern."""
     index: IndexValue  # Index in the symbol table
     parameters: tuple[BitLengthAware, ...] = field(default_factory=tuple)
+    reference_length: int = 0
 
     def bit_length(self) -> int:
         params_len = sum(param.bit_length() for param in self.parameters)
@@ -314,10 +320,6 @@ class SymbolNode(KNode[T]):
         if self.parameters:
             return f"s_{self.index}({', '.join(str(p) for p in self.parameters)})"
         return f"s_{self.index}"
-
-    def __post_init__(self):
-        if isinstance(self.index, int):
-            self.index = IndexValue(self.index)
 
 # Kept-here for the example, but belong's to ARC-AGI syntax tree module
 # In fact, it should become "MetadataNode", as it encapsulate data that's not in the
@@ -341,16 +343,16 @@ class RootNode(MetaNode[T]):
 
 # Main tree class
 @dataclass
-class KolmogorovTree:
+class KolmogorovTree(Generic[T]):
     """Represents a complete program with a root node and symbol table."""
-    root: KNode
-    symbols: list[KNode] = field(default_factory=list)
+    root: KNode[T]
+    symbols: list[KNode[T]] = field(default_factory=list)
 
     def bit_length(self) -> int:
         """Total bit length includes root and symbol definitions."""
         return self.root.bit_length() + sum(symbol.bit_length() for symbol in self.symbols)
 
-    def resolve_symbols(self) -> KNode:
+    def resolve_symbols(self) -> KNode[T]:
         """Expands all symbols into a fully resolved tree."""
         return resolve_symbols(self.root, self.symbols)
 
@@ -369,7 +371,7 @@ class KolmogorovTree:
 def shift_f(node: KNode[T], k: int) -> KNode[T]:
     if isinstance(node, PrimitiveNode) and isinstance(node.value, Alphabet):
         shifted_value = node.value.shift(k)
-        return PrimitiveNode(shifted_value)
+        return PrimitiveNode[T](shifted_value)
     return node
 
 def next_layer(layer: Iterable[KNode]) -> tuple[KNode, ...] :
@@ -411,7 +413,7 @@ def get_iterator(nodes: Iterable[KNode[T]]) -> tuple[KNode[T], ...]:
 
     # If we reach here, the sequence is arithmetic; encode it as a RepeatNode
     # Use increment * length to encode direction and length
-    return (RepeatNode(node_ls[0], increment * len(node_ls)),)
+    return (RepeatNode(node_ls[0], CountValue(increment * len(node_ls))),)
 
 # Constructors
 
@@ -449,7 +451,7 @@ def construct_product_node(nodes: Iterable[KNode[T]]) -> ProductNode[T]:
                 primitives = [current]
                 j = i + 1
                 while j < len(simplified) and isinstance(simplified[j], PrimitiveNode):
-                    primitives.append(simplified[j])
+                    primitives.append(simplified[j]) # type: ignore[reportArgumentType]
                     j += 1
                 if len(primitives) > 1:
                     # Replace with run-length encoded version (assumes encode_run_length exists)
@@ -495,14 +497,14 @@ def iterable_to_sum(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
 # Traversal
 
 def children(knode: KNode) -> Iterator[KNode]:
-    """Unified API to access children  of standard KNodes nodes"""
+    """Unified API to access children of standard KNodes nodes"""
     match knode:
         case TupleNode(children):
             return iter(children)
         case MetaNode(node):
             return iter((node,))
-        case SymbolicNode(_, parameters):
-            if isinstance(parameters, Variable):
+        case SymbolNode(_, parameters):
+            if isinstance(parameters, VariableNode):
                 return iter((parameters,))
             return iter((param for param in parameters if isinstance(param, KNode)))
         case _:
@@ -519,7 +521,7 @@ def breadth_iter(node: KNode | None) -> Iterator[KNode]:
         KNode: Each node in the tree in breadth-first order.
     """
     if node is None:
-        return
+        return iter(())
     queue = deque([node])
     while queue:
         current = queue.popleft()
@@ -529,20 +531,18 @@ def breadth_iter(node: KNode | None) -> Iterator[KNode]:
                 queue.append(child)
 
 
-def depth(node: KNode) -> Iterator[KNode]:
-    if node is None:
-        return 0
-
+def depth(node: KNode) -> int:
+    """Returns the depth of a Kolmogorov tree"""
     max_depth = 0
     layer = (node,)
-    while queue:
+    while layer:
         max_depth += 1
         layer = next_layer(layer)
 
-    return depth
+    return max_depth
 
 # Basic operations on Nodes
-def reverse_node(knode: KNode) -> KNode:
+def reverse_node(knode: KNode[T]) -> KNode[T]:
     """
     Reverses the structure of the given KNode based on its type.
     Assume that SumNode has already been run-lenght-encoded
@@ -563,10 +563,10 @@ def reverse_node(knode: KNode) -> KNode:
             reversed_params = tuple(reverse_node(p) if isinstance(p, KNode) else p for p in reversed(parameters))
             return SymbolNode(index, reversed_params)
         case RootNode(node, position, colors):
-            nnode = reverse_node(node) if node else None
+            nnode = reverse_node(node)
             return RootNode(nnode, position, colors)
         case _:
-            return node
+            return knode
 
 def shift(node: KNode[T], k: int) -> KNode[T]:
     """
@@ -592,13 +592,13 @@ def shift(node: KNode[T], k: int) -> KNode[T]:
     ---------
     >>> node = PrimitiveNode(MoveValue(1))
     >>> shifted = shift(node, 1)
-    >>> shifted.value.value  # Assuming MoveValue shifts modulo 8
+    >>> shifted.data  # Assuming MoveValue shifts modulo 8
     2
     >>> node = ProductNode((PrimitiveNode(MoveValue(1)), PrimitiveNode(CountValue(2))))
     >>> shifted = shift(node, 1)
-    >>> shifted.children[0].value.value  # Shifted MoveValue
+    >>> shifted.children[0].data  # Shifted MoveValue
     2
-    >>> shifted.children[1].value.value  # Unchanged CountValue
+    >>> shifted.children[1].data  # Unchanged CountValue
     2
     """
     return kmap(node, lambda n: shift_f(n, k))
@@ -675,7 +675,7 @@ def contained_symbols(node: KNode) -> tuple[KNode, ...]:
 
 
 # High-order functions
-def kmap(knode: KNode, f: Callable[[KNode], KNode]) -> KNode | None:
+def kmap(knode: KNode, f: Callable[[KNode], KNode]) -> KNode:
     """
     Map a function alongside a KNode. It updates first childrens, then updates the base node
 
@@ -688,31 +688,65 @@ def kmap(knode: KNode, f: Callable[[KNode], KNode]) -> KNode | None:
     """
     match knode:
         case SumNode(children):
-            mapped_children = tuple(node for child in children if (node := kmap(child, f)) is not None)
+            mapped_children = tuple(kmap(child, f) for child in children)
             return SumNode(mapped_children)
         case ProductNode(children):
             # TODO
             # Add a compression step here
             # When the compression step is ready
-            mapped_children = tuple(node for child in children if (node := kmap(child, f)) is not None)
+            mapped_children = tuple(kmap(child, f) for child in children)
             return ProductNode(mapped_children)
         case RepeatNode(node, count):
             nnode = kmap(node, f)
-            return f(RepeatNode(nnode, count)) if nnode is not None else None
+            return f(RepeatNode(nnode, count))
         case RootNode(node, position, color):
             nnode = kmap(node, f)
             return f(RootNode(nnode, position, color))
         case SymbolNode(index, parameters):
             nparameters = tuple(
-                nparam for p in parameters
-                if (nparam := (kmap(p, f) if isinstance(p, KNode) else p)) is not None
+                (kmap(p, f) if isinstance(p, KNode) else p) for p in parameters
             )
             return f(SymbolNode(index, nparameters))
         case _:
             return f(knode)
 
+def kmap_unsafe(knode: KNode, f: Callable[[KNode], KNode | None]) -> KNode | None:
+    """
+    Map a function alongside a KNode. It updates first childrens, then updates the base node
+
+    Args:
+        knode: The KNode tree to transform
+        f: A function that takes a KNode and returns a transformed KNode, or returning None.
+
+    Returns:
+        KNode: A new KNode tree with the function f applied to each node
+    """
+    match knode:
+        case SumNode(children):
+            mapped_children = tuple(node for child in children if (node := kmap_unsafe(child, f)) is not None)
+            return SumNode(mapped_children)
+        case ProductNode(children):
+            # TODO
+            # Add a compression step here
+            # When the compression step is ready
+            mapped_children = tuple(node for child in children if (node := kmap_unsafe(child, f)) is not None)
+            return ProductNode(mapped_children)
+        case RepeatNode(node, count):
+            nnode = kmap_unsafe(node, f)
+            return f(RepeatNode(nnode, count)) if nnode is not None else None
+        case RootNode(node, position, color):
+            nnode = kmap_unsafe(node, f)
+            return f(RootNode(nnode, position, color)) if nnode is not None else None
+        case SymbolNode(index, parameters):
+            nparameters = tuple(
+                nparam for p in parameters
+                if (nparam := (kmap_unsafe(p, f) if isinstance(p, KNode) else p)) is not None
+            )
+            return f(SymbolNode(index, nparameters))
+        case _:
+            return f(knode)
 # Symbol resolution and pattern finding
-def replace_variables(template: KNode, params: tuple[Any, ...]) -> KNode:
+def replace_variables(template: KNode[T], params: tuple[Any, ...]) -> KNode[T]:
     """
     Replaces variable placeholders in the template with the corresponding parameters.
 
@@ -732,14 +766,16 @@ def replace_variables(template: KNode, params: tuple[Any, ...]) -> KNode:
             param = params[index.value]
             return param if isinstance(param, KNode) else PrimitiveNode(param)
         case ProductNode(children):
-            new_children = [replace_variables(child, params) for child in children]
+            new_children = tuple(replace_variables(child, params) for child in children)
             return ProductNode(new_children)
         case SumNode(children):
-            new_children = [replace_variables(child, params) for child in children]
+            new_children = tuple(replace_variables(child, params) for child in children)
             return SumNode(new_children)
         case RepeatNode(node, count):
             new_node = replace_variables(node, params)
             new_count = replace_variables(count, params) if isinstance(count, KNode) else count
+            if isinstance(new_count, KNode) and not isinstance(new_count, VariableNode): # To make Pyright happy
+                raise TypeError(f"New count must be CountValue or VariableNode, got {type(new_count)}")
             return RepeatNode(new_node, new_count)
         case SymbolNode(index, parameters):
             new_params = tuple(
@@ -750,12 +786,19 @@ def replace_variables(template: KNode, params: tuple[Any, ...]) -> KNode:
         case RootNode(node, position, colors):
             new_pos = replace_variables(position, params) if isinstance(position, KNode) else position
             new_colors = replace_variables(colors, params) if isinstance(colors, KNode) else colors
-            new_node = replace_variables(node, params) if node else None
-            return RootNode(new_pos, new_colors, new_node)
+            new_node = replace_variables(node, params)
+
+            # To make Pyright happy
+            if isinstance(new_pos, KNode) and not isinstance(new_pos, VariableNode):
+                raise TypeError(f"New position must be CoordValue or VariableNode, got {type(new_pos)}")
+            if isinstance(new_colors, KNode) and not isinstance(new_colors, VariableNode):
+                raise TypeError(f"New colors must be PaletteValue or VariableNode, got {type(new_colors)}")
+
+            return RootNode(new_node, new_pos, new_colors)
         case _:
             return template
 
-def resolve_symbols(knode: KNode, symbols: list[KNode]) -> KNode:
+def resolve_symbols(knode: KNode[T], symbols: list[KNode[T]]) -> KNode[T]:
     """
     Resolves symbolic references recursively using the symbol table.
 
@@ -775,18 +818,27 @@ def resolve_symbols(knode: KNode, symbols: list[KNode]) -> KNode:
             return replace_variables(symbols[index.value], parameters)
         case ProductNode(children):
             resolved_children = [resolve_symbols(child, symbols) for child in children]
-            return ProductNode(resolved_children)
+            return ProductNode(tuple(resolved_children))
         case SumNode(children):
             resolved_children = [resolve_symbols(child, symbols) for child in children]
-            return SumNode(resolved_children)
+            return SumNode(tuple(resolved_children))
         case RepeatNode(node, count):
             resolved_node = resolve_symbols(node, symbols)
             resolved_count = resolve_symbols(count, symbols) if isinstance(count, KNode) else count
+            if isinstance(resolved_count, KNode) and not isinstance(resolved_count, VariableNode): # To make Pyright happy
+                raise TypeError(f"Resolved count must be CountValue or VariableNode, got {type(resolved_count)}")
             return RepeatNode(resolved_node, resolved_count)
         case RootNode(node, position, colors):
-            resolved_node = resolve_symbols(node, symbols) if node else None
+            resolved_node = resolve_symbols(node, symbols)
             resolved_position = resolve_symbols(position, symbols) if isinstance(position, KNode) else position
             resolved_colors = resolve_symbols(colors, symbols) if isinstance(colors, KNode) else colors
+
+            # To make Pyright happy
+            if isinstance(resolved_position, KNode) and not isinstance(resolved_position, VariableNode):
+                raise TypeError(f"Resolved position must be CoordValue or VariableNode, got {type(resolved_position)}")
+            if isinstance(resolved_colors, KNode) and not isinstance(resolved_colors, VariableNode):
+                raise TypeError(f"Resolved colors must be PaletteValue or VariableNode, got {type(resolved_colors)}")
+
             return RootNode(resolved_node, resolved_position, resolved_colors)
         case _:
             return knode
@@ -825,28 +877,28 @@ def find_common_patterns(trees: list[KolmogorovTree], min_occurrences=2, max_pat
     common_nodes.sort(key=lambda n: (-counter[str(n)], -n.bit_length()))
     return common_nodes[:max_patterns]
 
-def symbolize(trees: list[KolmogorovTree]) -> KolmogorovTree:
+def symbolize(trees: list[KolmogorovTree]) -> KolmogorovTree | None:
     """Creates a new tree with common patterns replaced by symbols."""
     common_patterns = find_common_patterns(trees)
     symbols = list(common_patterns)
 
-    def process_node(node):
+    def process_node(node: KNode[T]) -> KNode[T]:
         for i, pattern in enumerate(common_patterns):
             if str(node) == str(pattern):
-                return SymbolNode(i, (), pattern.bit_length())
+                return SymbolNode(IndexValue(i), (), pattern.bit_length())
         if isinstance(node, ProductNode):
-            return ProductNode([process_node(child) for child in node.children])
+            return ProductNode(tuple([process_node(child) for child in node.children]))
         if isinstance(node, SumNode):
-            return SumNode([process_node(child) for child in node.children])
+            return SumNode(tuple([process_node(child) for child in node.children]))
         if isinstance(node, RepeatNode):
             return RepeatNode(process_node(node.node), node.count)
         if isinstance(node, RootNode):
-            new_node = process_node(node.node) if node.node else None
+            new_node = process_node(node.node)
             return RootNode(new_node, node.position, node.colors)
         return node
 
     if not trees:
-        return KolmogorovTree(ProductNode([]))
+        return None
     new_root = process_node(trees[0].root)
     return KolmogorovTree(new_root, symbols)
 
@@ -855,18 +907,10 @@ def create_move_node(direction: int) -> PrimitiveNode:
     """Creates a node for a directional move."""
     return PrimitiveNode(MoveValue(direction))
 
-def create_color_node(color: int) -> PrimitiveNode:
-    """Creates a node for a color."""
-    return PrimitiveNode(PaletteValue({color}))
-
-def create_coord_node(x: int, y: int) -> PrimitiveNode:
-    """Creates a node for a coordinate."""
-    return PrimitiveNode(CoordValue(x, y))
-
-def create_moves_sequence(directions: str) -> KNode:
+def create_moves_sequence(directions: str) -> KNode | None:
     """Creates a sequence of moves from a direction string."""
     if not directions:
-        return ProductNode([])
+        return None
     moves = [create_move_node(int(d)) for d in directions]
     if len(moves) >= 3:
         for pattern_len in range(1, len(moves) // 2 + 1):
@@ -875,13 +919,13 @@ def create_moves_sequence(directions: str) -> KNode:
                 repeat_count = len(moves) // pattern_len
                 if all(moves[i * pattern_len:(i + 1) * pattern_len] == pattern
                        for i in range(repeat_count)) and repeat_count > 1:
-                    return RepeatNode(ProductNode(pattern), repeat_count)
-    return ProductNode(moves)
+                    return RepeatNode(ProductNode(tuple(pattern)), CountValue(repeat_count))
+    return ProductNode(tuple(moves))
 
-def create_rect(height: int, width: int) -> KNode:
+def create_rect(height: int, width: int) -> KNode | None:
     """Creates a node for a rectangle shape."""
     if height < 2 or width < 2:
-        return ProductNode([])
+        return None
     first_row = "2" * (width - 1)  # Move right
     other_rows = ""
     for i in range(1, height):
@@ -889,14 +933,14 @@ def create_rect(height: int, width: int) -> KNode:
         other_rows += "3" + direction * (width - 1)  # Down then horizontal
     return create_moves_sequence(first_row + other_rows)
 
-# Example usage@
+# Example usage
 def example_usage():
     """Demonstrates creating and evaluating a KolmogorovTree."""
     move_right = create_move_node(2)
     move_down = create_move_node(3)
-    sequence = ProductNode([move_right, move_right, move_down])
-    repeat = RepeatNode(ProductNode([move_right, move_down]), CountValue(3))
-    alternative = SumNode([sequence, repeat])
+    sequence = ProductNode((move_right, move_right, move_down))
+    repeat = RepeatNode(ProductNode((move_right, move_down)), CountValue(3))
+    alternative = SumNode((sequence, repeat))
     root = RootNode(alternative, CoordValue((0, 0)), PaletteValue({1}))
     tree = KolmogorovTree(root)
     print(f"Kolmogorov complexity: {tree.kolmogorov_complexity()} bits")
@@ -961,19 +1005,13 @@ def test_encode_run_length():
     expected = ProductNode((RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(4)),))
     assert result == expected, "Test Case 9 Failed: Iterator input not handled correctly"
 
-    # Test Case 10: Different Type
-    nodes = [PrimitiveNode(PaletteValue({1}))] * 3
-    result = encode_run_length(nodes)
-    expected = ProductNode((RepeatNode(PrimitiveNode(PaletteValue({1})), CountValue(3)),))
-    assert result == expected, "Test Case 10 Failed: Different type not processed correctly"
-
-    # Test Case 11: Alternating Nodes
+    # Test Case 10: Alternating Nodes
     nodes = [PrimitiveNode(MoveValue(1)), PrimitiveNode(MoveValue(2)),
              PrimitiveNode(MoveValue(1)), PrimitiveNode(MoveValue(2))]
     result = encode_run_length(nodes)
     assert result == ProductNode(tuple(nodes)), "Test Case 11 Failed: Alternating nodes should not be compressed"
 
-    # Test Case 12: Repeats in Different Positions
+    # Test Case 11: Repeats in Different Positions
     nodes = [PrimitiveNode(MoveValue(1))] * 3 + [PrimitiveNode(MoveValue(2))] + \
             [PrimitiveNode(MoveValue(3))] * 3 + [PrimitiveNode(MoveValue(4))] * 2
     result = encode_run_length(nodes)
@@ -1011,7 +1049,7 @@ def test_construct_product_node():
 
     # Test 4: Preserving SumNodes
     # Confirms that SumNodes are kept intact and not merged
-    sum_node = SumNode([PrimitiveNode(MoveValue(3)), PrimitiveNode(MoveValue(4))])
+    sum_node = SumNode(tuple([PrimitiveNode(MoveValue(3)), PrimitiveNode(MoveValue(4))]))
     nodes = [PrimitiveNode(MoveValue(1)), sum_node, PrimitiveNode(MoveValue(2))]
     result = construct_product_node(nodes)
     expected = ProductNode((PrimitiveNode(MoveValue(1)), sum_node, PrimitiveNode(MoveValue(2))))
@@ -1028,97 +1066,94 @@ def test_shift():
     node = create_move_node(2)
     shifted = shift(node, 1)
     assert isinstance(shifted, PrimitiveNode), "Shifted node should be a PrimitiveNode"
-    assert isinstance(shifted.value, MoveValue), "Shifted value should be a MoveValue"
-    assert shifted.value.value == 3, "MoveValue should shift from 2 to 3 with k=1"
+    assert shifted.data == 3, "MoveValue should shift from 2 to 3 with k=1"
 
     # Test 2: Shifting by 0 (no change)
     shifted_zero = shift(node, 0)
     assert shifted_zero == node, "Shifting by 0 should return the same node"
-    assert shifted_zero.value.value == 2, "Value should remain 2 when k=0"
+    assert isinstance(shifted_zero, PrimitiveNode), "Shifted node should be a PrimitiveNode"
+    assert shifted_zero.data == 2, "Value should remain 2 when k=0"
 
-    # Test 3: Shifting non-shiftable node
-    color_node = create_color_node(1)
-    shifted_color = shift(color_node, 5)
-    assert shifted_color == color_node, "Non-shiftable node should remain unchanged"
-    assert shifted_color.value.value == {1}, "PaletteValue should not be shifted"
-
-    # Test 4: Shifting ProductNode with mixed primitives
-    move1 = create_move_node(1)
-    move2 = create_move_node(3)
-    color = create_color_node(2)
-    product = ProductNode([move1, color, move2])
-    shifted_product = shift(product, 2)
-    assert isinstance(shifted_product, ProductNode), "Shifted result should be a ProductNode"
-    assert len(shifted_product.children) == 3, "ProductNode should retain 3 children"
-    assert shifted_product.children[0].value.value == 3, "First MoveValue should shift to 3"
-    assert shifted_product.children[1] is color, "Non-shiftable node should be unchanged"
-    assert shifted_product.children[2].value.value == 5, "Second MoveValue should shift to 5"
-
-    # Test 5: Shifting SumNode
-    sum_node = SumNode([create_move_node(0), create_move_node(4)])
+    # Test 3: Shifting SumNode
+    sum_node = SumNode((create_move_node(0), create_move_node(4)))
     shifted_sum = shift(sum_node, 2)
     assert isinstance(shifted_sum, SumNode), "Shifted result should be a SumNode"
     assert len(shifted_sum.children) == 2, "SumNode should retain 2 children"
-    assert shifted_sum.children[0].value.value == 2, "First child should shift to 2"
-    assert shifted_sum.children[1].value.value == 6, "Second child should shift to 6"
+    assert isinstance(shifted_sum.children[0], PrimitiveNode), "First child should be PrimitiveNode"
+    assert shifted_sum.children[0].data == 2, "First child should shift to 2"
+    assert isinstance(shifted_sum.children[1], PrimitiveNode), "Second child should be PrimitiveNode"
+    assert shifted_sum.children[1].data == 6, "Second child should shift to 6"
 
-    # Test 6: Shifting RepeatNode
-    sequence = ProductNode([create_move_node(2), create_move_node(3)])
+    # Test 4: Shifting RepeatNode
+    sequence = ProductNode((create_move_node(2), create_move_node(3)))
     repeat = RepeatNode(sequence, CountValue(3))
     shifted_repeat = shift(repeat, 1)
     assert isinstance(shifted_repeat, RepeatNode), "Shifted result should be a RepeatNode"
     assert isinstance(shifted_repeat.node, ProductNode), "Repeated node should be a ProductNode"
-    assert shifted_repeat.node.children[0].value.value == 3, "First MoveValue should shift to 3"
-    assert shifted_repeat.node.children[1].value.value == 4, "Second MoveValue should shift to 4"
+    assert isinstance(shifted_repeat.node.children[0], PrimitiveNode), "First child should be PrimitiveNode"
+    assert shifted_repeat.node.children[0].data == 3, "First MoveValue should shift to 3"
+    assert isinstance(shifted_repeat.node.children[1], PrimitiveNode), "Second child should be PrimitiveNode"
+    assert shifted_repeat.node.children[1].data == 4, "Second MoveValue should shift to 4"
+    assert isinstance(shifted_repeat.count, CountValue), "COunt should be CountValue"
     assert shifted_repeat.count.value == 3, "Count should remain unchanged"
 
-    # Test 7: Shifting SymbolNode
+    # Test 5: Shifting SymbolNode
     param1 = create_move_node(1)
-    param2 = create_color_node(2)
+    param2 = PaletteValue({2})
     symbol = SymbolNode(IndexValue(0), (param1, param2))
     shifted_symbol = shift(symbol, 1)
     assert isinstance(shifted_symbol, SymbolNode), "Shifted result should be a SymbolNode"
     assert len(shifted_symbol.parameters) == 2, "SymbolNode should retain 2 parameters"
-    assert shifted_symbol.parameters[0].value.value == 2, "MoveValue parameter should shift to 2"
+    assert isinstance(shifted_symbol.parameters[0], PrimitiveNode), "Parameter should be PrimitiveNode"
+    assert shifted_symbol.parameters[0].data == 2, "MoveValue parameter should shift to 2"
     assert shifted_symbol.parameters[1] is param2, "Non-shiftable parameter should be unchanged"
 
-    # Test 8: Shifting RootNode
-    program = ProductNode([create_move_node(0), create_move_node(1)])
+    # Test 6: Shifting RootNode
+    program = ProductNode((create_move_node(0), create_move_node(1)))
     root = RootNode(program, CoordValue((0, 0)), PaletteValue({1}))
     shifted_root = shift(root, 2)
     assert isinstance(shifted_root, RootNode), "Shifted result should be a RootNode"
     assert isinstance(shifted_root.node, ProductNode), "Root program should be a ProductNode"
-    assert shifted_root.node.children[0].value.value == 2, "First MoveValue should shift to 2"
-    assert shifted_root.node.children[1].value.value == 3, "Second MoveValue should shift to 3"
+    assert isinstance(shifted_root.node.children[0], PrimitiveNode), "First child should be PrimitiveNode"
+    assert shifted_root.node.children[0].data == 2, "First MoveValue should shift to 2"
+    assert isinstance(shifted_root.node.children[1], PrimitiveNode), "Second child should be PrimitiveNode"
+    assert shifted_root.node.children[1].data == 3, "Second MoveValue should shift to 3"
     assert shifted_root.position == CoordValue((0, 0)), "Position should be unchanged"
     assert shifted_root.colors == PaletteValue({1}), "Colors should be unchanged"
 
-    # Test 9: Shifting with large k (wrapping around)
+    # Test 7: Shifting with large k (wrapping around)
     node_large = create_move_node(7)
     shifted_large = shift(node_large, 10)  # 7 + 10 = 17 ≡ 1 mod 8
-    assert shifted_large.value.value == 1, "Large shift should wrap around to 1"
+    assert isinstance(shifted_large, PrimitiveNode), "Shifted node should be a PrimitiveNode"
+    assert shifted_large.data == 1, "Large shift should wrap around to 1"
 
-    # Test 10: Shifting with negative k
+    # Test 8: Shifting with negative k
     shifted_neg = shift(node_large, -3)  # 7 - 3 = 4
-    assert shifted_neg.value.value == 4, "Negative shift should result in 4"
+    assert isinstance(shifted_neg, PrimitiveNode), "Shifted node should be a PrimitiveNode"
+    assert shifted_neg.data == 4, "Negative shift should result in 4"
 
-    # Test 11: Shifting nested composite nodes
-    inner_product = ProductNode([create_move_node(5), create_move_node(6)])
+    # Test 9: Shifting nested composite nodes
+    inner_product = ProductNode((create_move_node(5), create_move_node(6)))
     repeat_inner = RepeatNode(inner_product, CountValue(2))
-    outer_sum = SumNode([repeat_inner, create_move_node(7)])
+    outer_sum = SumNode((repeat_inner, create_move_node(7)))
     shifted_outer = shift(outer_sum, 1)
     assert isinstance(shifted_outer, SumNode), "Shifted outer node should be a SumNode"
     assert isinstance(shifted_outer.children[0], RepeatNode), "First child should be a RepeatNode"
     assert isinstance(shifted_outer.children[0].node, ProductNode), "Repeated node should be ProductNode"
-    assert shifted_outer.children[0].node.children[0].value.value == 6, "First nested MoveValue should shift to 6"
-    assert shifted_outer.children[0].node.children[1].value.value == 7, "Second nested MoveValue should shift to 7"
-    assert shifted_outer.children[1].value.value == 0, "Outer MoveValue should shift from 7 to 0"
+    assert isinstance(shifted_outer.children[0].node.children[0], PrimitiveNode), "Nested child should be PrimitiveNode"
+    assert shifted_outer.children[0].node.children[0].data == 6, "First nested MoveValue should shift to 6"
+    assert isinstance(shifted_outer.children[0].node.children[1], PrimitiveNode), "Nested child should be PrimitiveNode"
+    assert shifted_outer.children[0].node.children[1].data == 7, "Second nested MoveValue should shift to 7"
+    assert isinstance(shifted_outer.children[1], PrimitiveNode), "Outer child should be PrimitiveNode"
+    assert shifted_outer.children[1].data == 0, "Outer MoveValue should shift from 7 to 0"
 
-    # Test 12: Original node remains unchanged
+    # Test 10: Original node remains unchanged
     original_node = create_move_node(2)
     shifted_node = shift(original_node, 1)
-    assert original_node.value.value == 2, "Original node value should remain 2"
-    assert shifted_node.value.value == 3, "Shifted node value should be 3"
+    assert isinstance(original_node, PrimitiveNode), "Original node should be PrimitiveNode"
+    assert original_node.data == 2, "Original node value should remain 2"
+    assert isinstance(shifted_node, PrimitiveNode), "Shifted node should be PrimitiveNode"
+    assert shifted_node.data == 3, "Shifted node value should be 3"
 
     print("Test shift operations - Passed")
 
@@ -1136,7 +1171,7 @@ def test_get_iterator():
     # Test Case 3: Sequence with Increment +1
     nodes_pos = [PrimitiveNode(MoveValue(i)) for i in [0, 1, 2]]
     result_pos = get_iterator(nodes_pos)
-    expected_pos = (RepeatNode(nodes_pos[0], 3),)
+    expected_pos = (RepeatNode(nodes_pos[0], CountValue(3)),)
     assert result_pos == expected_pos, "Test Case 3 Failed: Sequence [0,1,2] should be compressed to RepeatNode(0, 3)"
 
     # Test Case 4: Sequence with Increment -1
@@ -1153,7 +1188,7 @@ def test_get_iterator():
     # Test Case 6: Boundary Conditions (Wrap-around with Increment +1)
     nodes_wrap = [PrimitiveNode(MoveValue(i)) for i in [7, 0, 1]]
     result_wrap = get_iterator(nodes_wrap)
-    expected_wrap = (RepeatNode(nodes_wrap[0], 3),)
+    expected_wrap = (RepeatNode(nodes_wrap[0], CountValue(3)),)
     assert result_wrap == expected_wrap, "Test Case 7 Failed: Wrap-around sequence [7,0,1] should be compressed"
 
     # Test Case 7: Long Sequence with Wrap-around
@@ -1184,10 +1219,10 @@ def run_tests():
     # Test 1: Basic node creation and bit length
     move_right = PrimitiveNode(MoveValue(2))
     assert move_right.bit_length() == 6, "PrimitiveNode bit length should be 6 (3 + 3)"
-    product = ProductNode([move_right, move_right])
+    product = ProductNode((move_right, move_right))
     assert product.bit_length() == 15, "ProductNode bit length should be 15 (3 + 6 + 6)"
     move_down = PrimitiveNode(MoveValue(3))
-    sum_node = SumNode([move_right, move_down])
+    sum_node = SumNode((move_right, move_down))
     assert sum_node.bit_length() == 17, "SumNode bit length should be 17 (3 + 2 + 6 + 6)"
     repeat = RepeatNode(move_right, CountValue(3))
     assert repeat.bit_length() == 14, "RepeatNode bit length should be 14 (3 + 6 + 5)"
@@ -1208,21 +1243,21 @@ def run_tests():
     print("Test 2: String representations - Passed")
 
     # Test 3: Operator overloads
-    assert (move_right | move_down) == SumNode([move_right, move_down]), "Operator | failed"
-    assert (move_right & move_down) == ProductNode([move_right, move_down]), "Operator & failed"
-    assert (move_right + move_down) == ProductNode([move_right, move_down]), "Operator + failed"
+    assert (move_right | move_down) == SumNode((move_right, move_down)), "Operator | failed"
+    assert (move_right & move_down) == ProductNode((move_right, move_down)), "Operator & failed"
+    assert (move_right + move_down) == ProductNode((move_right, move_down)), "Operator + failed"
     assert (move_right * 3) == RepeatNode(move_right, CountValue(3)), "Operator * failed"
     assert ((move_right * 2) * 3) == RepeatNode(move_right, CountValue(6)), "Nested * failed"
     print("Test 3: Operator overloads - Passed")
 
     # Test 4: Symbol resolution
-    symbol_def = ProductNode([move_right, move_down])
-    symbols = [symbol_def]
+    symbol_def = ProductNode((move_right, move_down))
+    symbols: list[KNode[MoveValue]] = [symbol_def]
     symbol_node = SymbolNode(IndexValue(0), ())
-    root_with_symbol = RootNode(ProductNode([symbol_node, move_right]), CoordValue((0, 0)), PaletteValue({1}))
-    tree = KolmogorovTree(root_with_symbol, symbols)
+    root_with_symbol = RootNode(ProductNode((symbol_node, move_right)), CoordValue((0, 0)), PaletteValue({1}))
+    tree = KolmogorovTree[MoveValue](root_with_symbol, symbols)
     resolved = resolve_symbols(tree.root, tree.symbols)
-    expected_resolved = RootNode(ProductNode([symbol_def, move_right]), CoordValue((0, 0)), PaletteValue({1}))
+    expected_resolved = RootNode(ProductNode((symbol_def, move_right)), CoordValue((0, 0)), PaletteValue({1}))
     assert resolved == expected_resolved, "Symbol resolution failed"
     print("Test 4: Symbol resolution - Passed")
 
