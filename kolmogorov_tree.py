@@ -43,7 +43,7 @@ tree = KolmogorovTree(RootNode((0,0), {1}, program))
 """
 
 
-from typing import Generic, TypeVar, Callable, Iterable, Any, Iterator, Self
+from typing import Generic, TypeVar, Callable, Iterable, Any, Iterator, Self, Sequence
 from dataclasses import dataclass, field
 from enum import IntEnum
 from abc import ABC, abstractmethod
@@ -283,6 +283,9 @@ class SumNode(TupleNode[T]):
         return super().bit_length() + select_bits
 
     def __str__(self) -> str:
+        # Horrible hack for the already horrible iterator hack
+        if len(self.children) == 1 and isinstance(self.children[0], RepeatNode):
+            return "[+" + str(self.children[0]) + "]"
         return "[" + "|".join(str(child) for child in self.children) + "]"
 
 @dataclass(frozen=True)
@@ -378,6 +381,23 @@ def next_layer(layer: Iterable[KNode]) -> tuple[KNode, ...] :
     """Used for BFS-like traversal of a K-Tree. It's basically `children` for iterable"""
     return tuple(child for node in layer for child in children(node))
 
+Parameters = tuple[BitLengthAware, ...]
+
+def generate_abstraction(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
+    """Generate abstracted versions of a KNode by replacing subparts with variables."""
+    abstractions: list[tuple[KNode[T], Parameters] = []
+
+    match knode:
+        case TupleNode(children) if len(children) > 2:
+            pass
+        case RepeatNode(node, count):
+            pass
+        case Root(node, position, colors):
+            pass
+        #case Rect()
+            #pass
+
+    return abstractions
 
 # Only useful for ARC? What if the alphabet is too large?
 def get_iterator(nodes: Iterable[KNode[T]]) -> tuple[KNode[T], ...]:
@@ -662,17 +682,145 @@ def is_symbolized(node: KNode) -> bool:
     subnodes = breadth_iter(node)
     return any(isinstance(node, SymbolNode) for node in subnodes)
 
+def is_function(node: KNode) -> bool:
+    """Return True if and only if node contains at least one VariableNode in its subnodes"""
+    subnodes = breadth_iter(node)
+    return any(isinstance(node, VariableNode) for node in subnodes)
+
 # Retrievial
-def contained_symbols(node: KNode) -> tuple[KNode, ...]:
-    symbols = []
-    layer = [node]
+def contained_symbols(knode: KNode) -> tuple[IndexValue, ...]:
+    subnodes = breadth_iter(knode)
+    return tuple(node.index for node in subnodes if isinstance(node, SymbolNode))
 
-    while layer:
-        symbols.extend([node.index for node in layer if isinstance(node, SymbolNode)])
-        layer = next_layer(layer)
+# Compression
+def find_repeating_pattern(nodes: Sequence[KNode[T]], offset: int) -> tuple[KNode[T] | None, int, bool]:
+    """
+    Finds the best repeating pattern in a list of KNodes starting at the given offset, including alternating (reversed) patterns,
+    optimizing for bit-length compression.
 
-    return tuple(symbols)
+    Args:
+        nodes: List of KNode[T] to search for patterns.
+        offset: Starting index in the list to begin the search.
 
+    Returns:
+        Tuple of (pattern_node, count, is_reversed):
+        - pattern_node: The KNode representing the repeating unit (None if no pattern found).
+        - count: Number of repetitions (positive or negative based on reversal).
+        - is_reversed: True if the pattern alternates with its reverse.
+
+    """
+    if offset >= len(nodes):
+        return None, 0, False
+
+    best_pattern: KNode[T] | None = None
+    best_count = 0
+    best_bit_gain = 0
+    best_reverse = False
+    max_pattern_len = (len(nodes) - offset + 1) // 2  # Need at least 2 occurrences
+
+    for pattern_len in range(1, max_pattern_len + 1):
+        pattern = nodes[offset:offset + pattern_len]
+        pattern_node = construct_product_node(pattern) if len(pattern) > 1 else pattern[0]
+
+        for reverse in [False, True]:
+            count = 1
+            i = offset + pattern_len
+            while i < len(nodes):
+                if i + pattern_len > len(nodes):
+                    break
+
+                match = True
+                segment = nodes[i:i + pattern_len]
+                compare_node = reverse_node(pattern_node) if (reverse and count % 2 == 1) else pattern_node
+
+                # Compare the segment with the pattern or its reverse
+                if len(segment) == pattern_len:
+                    segment_node = construct_product_node(segment) if len(segment) > 1 else segment[0]
+                    if segment_node != compare_node:
+                        match = False
+                else:
+                    match = False
+
+                if match:
+                    count += 1
+                    i += pattern_len
+                else:
+                    break
+
+            if count > 1:
+                # Calculate bit-length savings
+                original_bits = sum(node.bit_length() for node in nodes[offset:offset + pattern_len * count])
+                compressed = RepeatNode(pattern_node, CountValue(count if not reverse else -count))
+                compressed_bits = compressed.bit_length()
+                bit_gain = original_bits - compressed_bits
+
+                if bit_gain > best_bit_gain:
+                    best_pattern = pattern_node
+                    best_count = count
+                    best_bit_gain = bit_gain
+                    best_reverse = reverse
+
+    return best_pattern, best_count if not best_reverse else -best_count, best_reverse
+
+def factorize_tuple(node: KNode[T]) -> KNode[T]:
+    """
+    Compresses a ProductNode or SumNode by detecting and encoding repeating patterns with RepeatNodes.
+
+    Args:
+        node: A KNode[T], typically a ProductNode or SumNode, to factorize.
+
+    Returns:
+        A new KNode[T] with repeating patterns compressed.
+    """
+    if isinstance(node, SumNode):
+        # For SumNode, delegate to get_iterator for arithmetic sequence compression
+        children = get_iterator(node.children)
+        #return SumNode(children) if len(children) > 1 else children[0] if children else node
+        # For the iterator hack, no unpacking
+        return SumNode(children)
+
+    if not isinstance(node, ProductNode):
+        return node
+
+    # Handle ProductNode compression
+    children = list(node.children)
+    if len(children) < 2:
+        return node
+
+    simplified: list[KNode[T]] = []
+    i = 0
+    while i < len(children):
+        pattern, count, is_reversed = find_repeating_pattern(children, i)
+        if pattern is not None and abs(count) > 1:
+            repeat_node = RepeatNode(pattern, CountValue(count))
+            simplified.append(repeat_node)
+            i += abs(count) * (len(pattern.children) if isinstance(pattern, ProductNode) else 1)
+        else:
+            simplified.append(children[i])
+            i += 1
+
+    # Reconstruct the ProductNode with simplified children
+    if len(simplified) == 1 and simplified[0] == node:
+        return node  # Avoid unnecessary reconstruction
+    return construct_product_node(simplified)
+
+# Optional: Apply factorization across the entire tree
+def factorize_tree(tree: KolmogorovTree[T]) -> KolmogorovTree[T]:
+    """
+    Applies factorization to all ProductNodes and SumNodes in a KolmogorovTree.
+
+    Args:
+        tree: The KolmogorovTree to factorize.
+
+    Returns:
+        A new KolmogorovTree with compressed patterns.
+    """
+    def factorize_node(n: KNode[T]) -> KNode[T]:
+        return factorize_tuple(n)
+
+    new_root = kmap(tree.root, factorize_node)
+    new_symbols = [kmap(symbol, factorize_node) for symbol in tree.symbols]
+    return KolmogorovTree(new_root, new_symbols)
 
 # High-order functions
 def kmap(knode: KNode, f: Callable[[KNode], KNode]) -> KNode:
@@ -687,15 +835,9 @@ def kmap(knode: KNode, f: Callable[[KNode], KNode]) -> KNode:
         KNode: A new KNode tree with the function f applied to each node
     """
     match knode:
-        case SumNode(children):
+        case TupleNode(children):
             mapped_children = tuple(kmap(child, f) for child in children)
-            return SumNode(mapped_children)
-        case ProductNode(children):
-            # TODO
-            # Add a compression step here
-            # When the compression step is ready
-            mapped_children = tuple(kmap(child, f) for child in children)
-            return ProductNode(mapped_children)
+            return f(factorize_tuple(type(knode)(mapped_children)))
         case RepeatNode(node, count):
             nnode = kmap(node, f)
             return f(RepeatNode(nnode, count))
@@ -722,15 +864,9 @@ def kmap_unsafe(knode: KNode, f: Callable[[KNode], KNode | None]) -> KNode | Non
         KNode: A new KNode tree with the function f applied to each node
     """
     match knode:
-        case SumNode(children):
+        case TupleNode(children):
             mapped_children = tuple(node for child in children if (node := kmap_unsafe(child, f)) is not None)
-            return SumNode(mapped_children)
-        case ProductNode(children):
-            # TODO
-            # Add a compression step here
-            # When the compression step is ready
-            mapped_children = tuple(node for child in children if (node := kmap_unsafe(child, f)) is not None)
-            return ProductNode(mapped_children)
+            return f(factorize_tuple(type(knode)(mapped_children)))
         case RepeatNode(node, count):
             nnode = kmap_unsafe(node, f)
             return f(RepeatNode(nnode, count)) if nnode is not None else None
@@ -746,6 +882,111 @@ def kmap_unsafe(knode: KNode, f: Callable[[KNode], KNode | None]) -> KNode | Non
         case _:
             return f(knode)
 # Symbol resolution and pattern finding
+
+def generate_abstractions(node: KNode[T]) -> list[tuple[KNode[T], tuple[BitLengthAware, ...]]]:
+    """Generate abstracted versions of a KNode by replacing subparts with variables."""
+    abstractions = []
+
+    match node:
+        case RootNode(nnode, position, colors):
+            # Avoid re-abstracting if already a variable
+            # Only abstract if components are not already variables
+            if (
+                not isinstance(position, VariableNode)
+                and not isinstance(colors, VariableNode)
+                and not isinstance(nnode, VariableNode)
+            ):
+                # Abstract position only
+                abs_pos = RootNode(
+                    position=VariableNode(VariableValue(0)),
+                    colors=colors,
+                    node=nnode
+                )
+                abstractions.append((abs_pos, (position,)))
+
+                # Abstract position and node
+                abs_pos_node = RootNode(
+                    position=VariableNode(VariableValue(0)),
+                    colors=colors,
+                    node=VariableNode(VariableValue(1))
+                )
+                abstractions.append((abs_pos_node, (position, nnode)))
+
+                # If colors is a single color, abstract position and colors
+                if isinstance(colors, PaletteValue) and len(colors.value) == 1:
+                    abs_pos_colors = RootNode(
+                        position=VariableNode(VariableValue(0)),
+                        colors=VariableNode(VariableValue(1)),
+                        node=nnode
+                    )
+                    abstractions.append((abs_pos_colors, (position, colors)))
+        case ProductNode(children):
+            if not any(isinstance(c, VariableNode) for c in children):
+                # Sort children by bit length to prioritize replacing larger subtrees
+                child_set = set(children)
+                max_children = sorted(child_set, key=lambda x: x.bit_length(), reverse=True)[:2]
+
+                # Abstract the most frequent/largest child
+                nodes1 = tuple(VariableNode(VariableValue(0)) if c == max_children[0] else c for c in children)
+                abstractions.append((ProductNode(nodes1), (max_children[0],)))
+
+                # If there are at least two distinct children and length > 2, abstract the top two
+                if len(max_children) > 1 and len(children) > 2:
+                    nodes2 = tuple(VariableNode(VariableValue(max_children.index(c))) if c in max_children else c
+                                 for c in children)
+                    abstractions.append((ProductNode(nodes2), tuple(max_children)))
+
+        case RepeatNode(nnode, count) if not isinstance(nnode, VariableNode) and not isinstance(count, VariableNode):
+            # Abstract the repeated node
+            abstractions.append((RepeatNode(VariableNode(VariableValue(0)), count), (nnode,)))
+            # Abstract the count (if count is a CountValue, wrap it appropriately)
+            if isinstance(count, BitLengthAware):
+                abstractions.append((RepeatNode(nnode, VariableNode(VariableValue(0))), (count,)))
+
+    return abstractions
+
+def matches(pattern: KNode[T], subtree: KNode[T]) -> [dict[int, KNode[T]] | None:
+    """Match a pattern with variables against a concrete subtree, returning variable bindings."""
+    bindings: dict[int, KNode[T]] = {}
+
+    def unify(p: KNode[T], s: KNode[T]) -> dict[int, KNode[T]] | None:
+        if isinstance(p, VariableNode):
+            idx = p.index.value
+            if idx in bindings:
+                return bindings if bindings[idx] == s else None
+            bindings[idx] = s
+            return bindings
+
+        if type(p) != type(s):
+            return None
+
+        match p:
+            case PrimitiveNode(value=pv):
+                if isinstance(s, PrimitiveNode) and pv == s.value:
+                    return bindings
+                return None
+            case RootNode(position=pp, colors=pc, node=pn):
+                if isinstance(s, RootNode):
+                    return (unify(pp, s.position) and
+                            unify(pc, s.colors) and
+                            unify(pn, s.node))
+            case ProductNode(children=pc) if isinstance(s, ProductNode):
+                if len(pc) != len(s.children):
+                    return None
+                for pc_child, sc_child in zip(pc, s.children):
+                    result = unify(pc_child, sc_child)
+                    if result is None:
+                        return None
+                return bindings
+            case RepeatNode(node=pn, count=pc) if isinstance(s, RepeatNode):
+                if pc != s.count:
+                    return None
+                return unify(pn, s.node)
+            case _:
+                return bindings if p == s else None
+
+    return unify(pattern, subtree)
+
 def replace_variables(template: KNode[T], params: tuple[Any, ...]) -> KNode[T]:
     """
     Replaces variable placeholders in the template with the corresponding parameters.
@@ -843,63 +1084,111 @@ def resolve_symbols(knode: KNode[T], symbols: list[KNode[T]]) -> KNode[T]:
         case _:
             return knode
 
-def find_common_patterns(trees: list[KolmogorovTree], min_occurrences=2, max_patterns=10) -> list[KNode]:
-    """Identifies frequent subtrees across multiple trees for symbolization."""
+def find_common_subtrees_exact(trees: list[KolmogorovTree], min_occurrences=2, max_patterns=10) -> list[KNode]:
+    """Identifies frequent subtrees across multiple trees for symbolization using breadth_iter."""
     all_subtrees = []
-
-    def collect_subtrees(node, collection):
-        collection.append(node)
-        if isinstance(node, (ProductNode, SumNode)):
-            for child in node.children:
-                collect_subtrees(child, collection)
-        elif isinstance(node, RepeatNode):
-            collect_subtrees(node.node, collection)
-        elif isinstance(node, RootNode) and node.node:
-            collect_subtrees(node.node, collection)
-        elif isinstance(node, SymbolNode):
-            for param in node.parameters:
-                if isinstance(param, KNode):
-                    collect_subtrees(param, collection)
-
     for tree in trees:
-        collect_subtrees(tree.root, all_subtrees)
+        # Collect all subtrees starting from the root
+        all_subtrees.extend(breadth_iter(tree.root))
         for symbol in tree.symbols:
-            collect_subtrees(symbol, all_subtrees)
+            all_subtrees.extend(breadth_iter(symbol))
 
+    # Count frequencies using string representations
     counter = Counter(str(node) for node in all_subtrees)
     common_nodes = []
+    seen = set()
     for node in all_subtrees:
         node_str = str(node)
-        if (counter[node_str] >= min_occurrences and
-            node_str not in [str(n) for n in common_nodes]):
+        if counter[node_str] >= min_occurrences and node_str not in seen:
             common_nodes.append(node)
+            seen.add(node_str)
 
+    # Sort by frequency (descending) and bit length (descending)
     common_nodes.sort(key=lambda n: (-counter[str(n)], -n.bit_length()))
     return common_nodes[:max_patterns]
 
-def symbolize(trees: list[KolmogorovTree]) -> KolmogorovTree | None:
-    """Creates a new tree with common patterns replaced by symbols."""
-    common_patterns = find_common_patterns(trees)
+def find_common_subtrees(trees: list[KolmogorovTree], min_occurrences: int = 2, max_patterns: int = 10) -> list[KNode]:
+    """Identify frequent concrete and abstracted subtrees across multiple KolmogorovTrees."""
+    all_subtrees = []
+    for tree in trees:
+        all_subtrees.extend(breadth_iter(tree.root))
+        for symbol in tree.symbols:
+            all_subtrees.extend(breadth_iter(symbol))
+
+    # Collect candidate patterns: concrete and abstracted
+    pattern_counter = Counter()
+    pattern_instances = defaultdict(list)  # Maps pattern to list of (subtree, params) matches
+
+    for subtree in all_subtrees:
+        # Add concrete subtree
+        pattern_counter[subtree] += 1
+        pattern_instances[subtree].append((subtree, ()))
+
+        # Add abstracted versions
+        for abs_pattern, params in generate_abstractions(subtree):
+            pattern_counter[abs_pattern] += 1
+            pattern_instances[abs_pattern].append((subtree, params))
+
+    # Filter patterns by minimum occurrences
+    common_patterns = []
+    seen_patterns = set()
+
+    for pattern, count in pattern_counter.items():
+        if count >= min_occurrences and pattern not in seen_patterns:
+            # For abstracted patterns, verify distinct matches
+            if any(isinstance(n, VariableNode) for n in breadth_iter(pattern)):
+                distinct_matches = set()
+                for s, _ in pattern_instances[pattern]:
+                    if str(s) not in distinct_matches:
+                        distinct_matches.add(str(s))
+                if len(distinct_matches) >= min_occurrences:
+                    common_patterns.append(pattern)
+                    seen_patterns.add(pattern)
+            else:
+                common_patterns.append(pattern)
+                seen_patterns.add(pattern)
+
+    # Sort by bit gain (frequency * savings) and limit to max_patterns
+    def bit_gain(pat: KNode) -> int:
+        count = len(set(s for s, _ in pattern_instances[pat]))  # Distinct subtrees matched
+        avg_len = sum(s.bit_length() for s, _ in pattern_instances[pat]) / count
+        param_len = sum(p.bit_length() for _, ps in pattern_instances[pat] for p in ps) / count
+        symb_len = BitLength.NODE_TYPE + BitLength.INDEX + int(param_len)
+        return (count - 1) * (avg_len - symb_len) - pat.bit_length()
+
+    common_patterns.sort(key=lambda p: (-bit_gain(p), -p.bit_length()))
+    return common_patterns[:max_patterns]
+
+def symbolize(trees: list[KolmogorovTree]) -> Optional[KolmogorovTree]:
+    """Symbolize trees by replacing common patterns (concrete or abstracted) with SymbolNodes."""
+    common_patterns = find_common_subtrees(trees)
+    if not common_patterns or not trees:
+        return None if not trees else KolmogorovTree(trees[0].root, [])
+
     symbols = list(common_patterns)
 
-    def process_node(node: KNode[T]) -> KNode[T]:
+    def replace_node(node: KNode[T]) -> KNode[T]:
         for i, pattern in enumerate(common_patterns):
-            if str(node) == str(pattern):
+            if pattern == node:
                 return SymbolNode(IndexValue(i), (), pattern.bit_length())
-        if isinstance(node, ProductNode):
-            return ProductNode(tuple([process_node(child) for child in node.children]))
-        if isinstance(node, SumNode):
-            return SumNode(tuple([process_node(child) for child in node.children]))
-        if isinstance(node, RepeatNode):
-            return RepeatNode(process_node(node.node), node.count)
-        if isinstance(node, RootNode):
-            new_node = process_node(node.node)
-            return RootNode(new_node, node.position, node.colors)
-        return node
+            bindings = match(pattern, node)
+            if bindings is not None:
+                params = tuple(bindings.get(j, PrimitiveNode(0)) for j in range(max(bindings.keys(), default=-1) + 1))
+                return SymbolNode(IndexValue(i), params, pattern.bit_length())
 
-    if not trees:
-        return None
-    new_root = process_node(trees[0].root)
+        match node:
+            case ProductNode(children=ch):
+                return ProductNode(tuple(replace_node(c) for c in ch))
+            case SumNode(children=ch):
+                return SumNode(tuple(replace_node(c) for c in ch))
+            case RepeatNode(node=n, count=c):
+                return RepeatNode(replace_node(n), c)
+            case RootNode(node=n, position=p, colors=col):
+                return RootNode(replace_node(n), p, col)
+            case _:
+                return node
+
+    new_root = replace_node(trees[0].root)
     return KolmogorovTree(new_root, symbols)
 
 # Factory functions for common patterns
@@ -1214,6 +1503,173 @@ def test_get_iterator():
 
     print("Test get_iterator - Passed")
 
+def test_find_repeating_pattern():
+    """Tests the find_repeating_pattern function for detecting repeating patterns."""
+    # Test Case 1: Empty Input
+    result = find_repeating_pattern([], 0)
+    assert result == (None, 0, False), "Test Case 1 Failed: Empty input should return (None, 0, False)"
+
+    # Test Case 2: Single Node
+    node = PrimitiveNode(MoveValue(1))
+    result = find_repeating_pattern([node], 0)
+    assert result == (None, 0, False), "Test Case 2 Failed: Single node should return (None, 0, False)"
+
+    # Test Case 3: Simple Repeat
+    nodes = [PrimitiveNode(MoveValue(2))] * 3
+    pattern, count, is_reversed = find_repeating_pattern(nodes, 0)
+    assert pattern == nodes[0], "Test Case 3 Failed: Pattern should be MoveValue(2)"
+    assert count == 3, "Test Case 3 Failed: Count should be 3"
+    assert not is_reversed, "Test Case 3 Failed: Should not be reversed"
+
+    # Test Case 4: Alternating Repeat
+    nodes = [
+        PrimitiveNode(MoveValue(2)),
+        PrimitiveNode(MoveValue(0)),
+        PrimitiveNode(MoveValue(0)),
+        PrimitiveNode(MoveValue(2)),
+        PrimitiveNode(MoveValue(2)),
+        PrimitiveNode(MoveValue(0)),
+    ]
+    pattern, count, is_reversed = find_repeating_pattern(nodes, 0)
+    assert isinstance(pattern, ProductNode) and str(pattern) == "20", "Test Case 4 Failed: Pattern should be 20"
+    assert count == -3, "Test Case 4 Failed: Count should be -3 for alternating"
+    assert is_reversed, "Test Case 4 Failed: Should be reversed"
+
+    # Test Case 5: Multi-Node Pattern
+    pattern_nodes = [PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3))]
+    nodes = pattern_nodes * 2  # 2,3,2,3
+    pattern, count, is_reversed = find_repeating_pattern(nodes, 0)
+    assert isinstance(pattern, ProductNode) and pattern.children == tuple(pattern_nodes), "Test Case 5 Failed: Incorrect pattern"
+    assert count == 2, "Test Case 5 Failed: Count should be 2"
+    assert not is_reversed, "Test Case 5 Failed: Should not be reversed"
+
+    # Test Case 6: No Repeat
+    nodes = [PrimitiveNode(MoveValue(i)) for i in [1, 2, 3]]
+    result = find_repeating_pattern(nodes, 0)
+    assert result == (None, 0, False), "Test Case 6 Failed: Non-repeating sequence should return (None, 0, False)"
+
+    # Test Case 7: Offset Pattern
+    nodes = [PrimitiveNode(MoveValue(1))] + [PrimitiveNode(MoveValue(2))] * 3
+    pattern, count, is_reversed = find_repeating_pattern(nodes, 1)
+    assert pattern == PrimitiveNode(MoveValue(2)), "Test Case 7 Failed: Pattern should be MoveValue(2)"
+    assert count == 3, "Test Case 7 Failed: Count should be 3"
+    assert not is_reversed, "Test Case 7 Failed: Should not be reversed"
+
+    print("Test find_repeating_pattern - Passed")
+
+def test_factorize_tuple():
+    """Tests the factorize_tuple function for compressing ProductNode and SumNode."""
+    # Test Case 1: Empty ProductNode
+    node = ProductNode(())
+    result = factorize_tuple(node)
+    assert result == node, "Test Case 1 Failed: Empty ProductNode should remain unchanged"
+
+    # Test Case 2: Single Node ProductNode
+    node = ProductNode((PrimitiveNode(MoveValue(1)),))
+    result = factorize_tuple(node)
+    assert result == node, "Test Case 2 Failed: Single node ProductNode should remain unchanged"
+
+    # Test Case 3: Repeating ProductNode
+    nodes = [PrimitiveNode(MoveValue(2))] * 3
+    product = ProductNode(tuple(nodes))
+    result = factorize_tuple(product)
+    expected = ProductNode((RepeatNode(PrimitiveNode(MoveValue(2)), CountValue(3)),))
+    assert result == expected, "Test Case 3 Failed: Repeating nodes should be compressed"
+
+    # Test Case 4: Alternating ProductNode
+    nodes = [
+        PrimitiveNode(MoveValue(2)),
+        PrimitiveNode(MoveValue(0)),
+        PrimitiveNode(MoveValue(0)),
+        PrimitiveNode(MoveValue(2)),
+        PrimitiveNode(MoveValue(2)),
+        PrimitiveNode(MoveValue(0)),
+    ]
+
+    product = ProductNode(tuple(nodes))
+    result = factorize_tuple(product)
+    expected = ProductNode((RepeatNode(ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(0)))), CountValue(-3)),))
+    assert result == expected, "Test Case 4 Failed: Alternating pattern should be compressed with negative count"
+
+    # Test Case 5: Mixed ProductNode
+    nodes = [PrimitiveNode(MoveValue(1))] * 3 + [PrimitiveNode(MoveValue(2))]
+    product = ProductNode(tuple(nodes))
+    result = factorize_tuple(product)
+    expected = ProductNode((
+        RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(3)),
+        PrimitiveNode(MoveValue(2))
+    ))
+    assert result == expected, "Test Case 5 Failed: Mixed sequence compression incorrect"
+
+    # Test Case 6: SumNode Arithmetic Sequence
+    sum_node = SumNode(tuple([PrimitiveNode(MoveValue(i)) for i in [0, 1, 2]]))
+    result = factorize_tuple(sum_node)
+    expected = SumNode((RepeatNode(PrimitiveNode(MoveValue(0)), CountValue(3)),))
+    assert result == expected, "Test Case 6 Failed: SumNode arithmetic sequence should be compressed"
+
+    # Test Case 7: SumNode Non-Sequence
+    sum_node = SumNode(tuple([PrimitiveNode(MoveValue(i)) for i in [0, 2, 1]]))
+    result = factorize_tuple(sum_node)
+    assert result == sum_node, "Test Case 7 Failed: Non-sequence SumNode should remain unchanged"
+
+    # Test Case 8: Non-Product/Sum Node
+    node = PrimitiveNode(MoveValue(1))
+    result = factorize_tuple(node)
+    assert result == node, "Test Case 8 Failed: Non-Product/Sum node should remain unchanged"
+
+    print("Test factorize_tuple - Passed")
+
+def test_factorize_tree():
+    """Tests the factorize_tree function for tree-wide compression."""
+    # Test Case 1: Empty Tree
+    tree = KolmogorovTree(RootNode(ProductNode(()), CoordValue((0, 0)), PaletteValue({1})))
+    result = factorize_tree(tree)
+    assert result.root == tree.root and result.symbols == tree.symbols, "Test Case 1 Failed: Empty tree should remain unchanged"
+
+    # Test Case 2: Simple Repeating ProductNode
+    nodes = [PrimitiveNode(MoveValue(2))] * 3
+    root = RootNode(ProductNode(tuple(nodes)), CoordValue((0, 0)), PaletteValue({1}))
+    tree = KolmogorovTree(root)
+    result = factorize_tree(tree)
+    expected_root = RootNode(
+        ProductNode((RepeatNode(PrimitiveNode(MoveValue(2)), CountValue(3)),)),
+        CoordValue((0, 0)),
+        PaletteValue({1})
+    )
+    assert result.root == expected_root and result.symbols == [], "Test Case 2 Failed: Repeating ProductNode not compressed"
+
+    # Test Case 3: Tree with Symbols
+    symbol = ProductNode((
+        PrimitiveNode(MoveValue(2)),
+        PrimitiveNode(MoveValue(2)),
+        PrimitiveNode(MoveValue(2))
+    ))
+    symbol_node = SymbolNode(IndexValue(0), ())
+    root = RootNode(ProductNode((symbol_node, PrimitiveNode(MoveValue(3)))), CoordValue((0, 0)), PaletteValue({1}))
+    tree = KolmogorovTree(root, [symbol])
+    result = factorize_tree(tree)
+    expected_symbol = ProductNode((RepeatNode(PrimitiveNode(MoveValue(2)), CountValue(3)),))
+    expected_root = RootNode(
+        ProductNode((SymbolNode(IndexValue(0), ()), PrimitiveNode(MoveValue(3)))),
+        CoordValue((0, 0)),
+        PaletteValue({1})
+    )
+    assert result.root == expected_root and result.symbols == [expected_symbol], "Test Case 3 Failed: Symbol not factorized"
+    # Test Case 4: Nested SumNode
+    inner_sum = SumNode(tuple([PrimitiveNode(MoveValue(i)) for i in [0, 1, 2]]))
+    root = RootNode(ProductNode((inner_sum, PrimitiveNode(MoveValue(3)))), CoordValue((0, 0)), PaletteValue({1}))
+    tree = KolmogorovTree(root)
+    result = factorize_tree(tree)
+    expected_inner = SumNode((RepeatNode(PrimitiveNode(MoveValue(0)), CountValue(3)),))
+    expected_root = RootNode(
+        ProductNode((expected_inner, PrimitiveNode(MoveValue(3)))),
+        CoordValue((0, 0)),
+        PaletteValue({1})
+    )
+    assert result.root == expected_root and result.symbols == [], "Test Case 4 Failed: Nested SumNode not compressed"
+
+    print("Test factorize_tree - Passed")
+
 def run_tests():
     """Runs simple tests to verify KolmogorovTree functionality."""
     # Test 1: Basic node creation and bit length
@@ -1265,6 +1721,10 @@ def run_tests():
     test_construct_product_node()
     test_shift()
     test_get_iterator()
+
+    test_find_repeating_pattern()
+    test_factorize_tuple()
+    test_factorize_tree()
 
 if __name__ == "__main__":
     tree = example_usage()

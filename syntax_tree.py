@@ -49,7 +49,7 @@ from kolmogorov_tree import (
     KNode, BitLengthAware, KolmogorovTree,
     ProductNode, SumNode, RepeatNode, SymbolNode, RootNode, SymbolNode, PrimitiveNode,
     MoveValue, PaletteValue, IndexValue, VariableValue, CoordValue, BitLength,
-    resolve_symbols, symbolize, children, breadth_iter, reverse_node, encode_run_length
+    resolve_symbols, symbolize, children, breadth_iter, reverse_node, encode_run_length, is_function, contained_symbols
 )
 
 
@@ -1088,43 +1088,14 @@ def factorize_moves(node: Node):
     #        raise ValueError
 """
 
-### Functions on ASTs
-""""
-def is_symbolic(ast: Node):
-    if isinstance(ast, SymbolicNode):
-        return True
-    return any(is_symbolic(child) for child in children(ast))
-"""
-
-def is_function(ast: Node):
-    match ast:
-        case Variable():
-            return True
-        case SymbolicNode(_, param) if isinstance(param, ASTNode):
-            return is_function(param)
-        case Repeat(n, _) | Root(_, _, n):
-            return is_function(n)
-        case AlternativeNode(nodes=nls) | ConsecutiveNode(nodes=nls):
-            return any([is_function(n) for n in nls])
-        case _:
-            return False
-
-
-def get_symbols(ast: Node):
-    symbols = [item for child in children(ast) for item in get_symbols(child)]
-    match ast:
-        case SymbolicNode(i, _, _):
-            symbols.append(i)
-    return symbols
-
 ### Helper functions to compress ASTs
 
-
+"""
 def find_repeating_pattern(nodes: list[Node], offset):
-    """
+    ""
     Find repeating node patterns of any size at the given start index,
     including alternating patterns, given it compresses the code
-    """
+    ""
     best_pattern, best_count, best_bit_gain, best_reverse = None, 0, 0, False
     length_pattern_max = (
         len(nodes) - offset + 1
@@ -1172,13 +1143,14 @@ def find_repeating_pattern(nodes: list[Node], offset):
 
     return best_pattern, best_count, best_reverse
 
-
+"""
+"""
 def factorize_nodelist(ast_node: Node):
-    """
+    ""
     Detect patterns inside a ConsecutiveNode and factor them in Repeats.
     It takes a general AST Node parameter, as it makes it possible to construct a
     structural inducing version with ast_map
-    """
+    ""
 
     if not isinstance(ast_node, (ConsecutiveNode, AlternativeNode)):
         return ast_node
@@ -1205,7 +1177,7 @@ def factorize_nodelist(ast_node: Node):
             i += 1
 
     return ConsecutiveNode(nodes=nnodes)
-
+"""
 
 def functionalized(node: Node) -> list[tuple[Node, Any]]:
     """
@@ -1408,7 +1380,6 @@ def construct_node1(
 
     node = bfs(coordinates) if traversal == TraversalModes.BFS else dfs(coordinates)
     return ast_map(extract_rects, ast_map(factorize_nodelist, node))
-
 
 def freeman_to_ast(freeman_node: FreemanNode) -> Optional[Node]:
     branches = []
