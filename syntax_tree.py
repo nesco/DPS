@@ -46,16 +46,37 @@ from freeman import *
 from grid import points_to_coords
 
 from kolmogorov_tree import (
-    KNode, BitLengthAware, KolmogorovTree,
-    ProductNode, SumNode, RepeatNode, SymbolNode, RootNode, SymbolNode, PrimitiveNode,
-    MoveValue, PaletteValue, IndexValue, VariableValue, CoordValue, BitLength,
-    resolve_symbols, symbolize, children, breadth_iter, reverse_node, encode_run_length, is_function, contained_symbols
+    KNode,
+    BitLengthAware,
+    KolmogorovTree,
+    ProductNode,
+    SumNode,
+    RepeatNode,
+    SymbolNode,
+    RootNode,
+    SymbolNode,
+    PrimitiveNode,
+    MoveValue,
+    PaletteValue,
+    IndexValue,
+    VariableValue,
+    CoordValue,
+    BitLength,
+    resolve_symbols,
+    symbolize,
+    children,
+    breadth_iter,
+    reverse_node,
+    encode_run_length,
+    is_function,
+    contained_symbols,
 )
 
 
 import sys
 
 sys.setrecursionlimit(10000)
+
 
 class BitLength(IntEnum):
     COORD = 10  # Base length for node type (3 bits) because <= 8 types
@@ -66,6 +87,7 @@ class BitLength(IntEnum):
     INDEX = 3  # should not be more than 8 so 3 bits
     INDEX_VARIABLE = 1  # Variable can be 0 or 1 so 1 bit
     RECT = 8
+
 
 #### Abstract Syntax Tree Structure
 
@@ -492,21 +514,30 @@ class Root(Node):
 
 """
 
+
 @dataclass(frozen=True)
 class Rect(KNode):
-    height: 'int | VariableNode'  # Use VariableNode from kolmogorov_tree.py
-    width: 'int | VariableNode'
+    height: "int | VariableNode"  # Use VariableNode from kolmogorov_tree.py
+    width: "int | VariableNode"
 
     def bit_length(self) -> int:
         # 3 bits for node type + 8 bits for ARC-specific rectangle encoding
-        height_len = BitLength.COUNT if isinstance(self.height, int) else self.height.bit_length()
-        width_len = BitLength.COUNT if isinstance(self.width, int) else self.width.bit_length()
+        height_len = (
+            BitLength.COUNT
+            if isinstance(self.height, int)
+            else self.height.bit_length()
+        )
+        width_len = (
+            BitLength.COUNT if isinstance(self.width, int) else self.width.bit_length()
+        )
         return super().__len__() + height_len + width_len
 
     def __str__(self) -> str:
         return f"Rect({self.height}, {self.width})"
 
+
 # Strategy diviser pour régner avec marginalisation + reconstruction
+
 
 @dataclass()
 class UnionNode:
@@ -550,6 +581,7 @@ class UnionNode:
 
     def __hash__(self):
         return hash(self.__repr__())
+
 
 """
 @dataclass()
@@ -806,6 +838,7 @@ def dynamic_factorize(sequence: Sequence) -> KNode | None:
     # The best encoding for the entire sequence is stored in dp[n]
     return dp[n]
 
+
 def next_repeating_pattern(sequence: list[T], offset):
     """
     Find repeating pattern at offset, return (pattern, )
@@ -910,6 +943,7 @@ def simplify_repetitions(self):
 
         return construct_consecutive_node(result) if len(result) > 1 else result[0]
 
+
 """
 def construct_consecutive_node(nodes: list[KNode]) -> ConsecutiveNode:
     nodes_simplified = []
@@ -962,6 +996,7 @@ def construct_consecutive_node(nodes: list[KNode]) -> ConsecutiveNode:
     return ConsecutiveNode(nodes_simplified)
 """
 
+
 def reverse_sequence(sequence: Sequence) -> Sequence:
     if isinstance(sequence, str):
         return sequence[::-1]
@@ -988,6 +1023,7 @@ def len_param(param) -> int:
         return 1
 """
 
+
 # Refactored
 def rect_to_moves(height, width) -> list[PrimitiveNode[MoveValue]]:
     moves = "2" * (width - 1) + "".join(
@@ -995,6 +1031,7 @@ def rect_to_moves(height, width) -> list[PrimitiveNode[MoveValue]]:
     )
     primitives = [PrimitiveNode(MoveValue(m)) for m in moves]
     return primitives
+
 
 # To refactor
 def moves_to_rect(s: str):
@@ -1050,6 +1087,7 @@ def extract_rects1(node):
             return Rect(res[0], res[1])
         else:
             return node
+
 
 # To refactor
 def extract_rects(node):
@@ -1179,12 +1217,14 @@ def factorize_nodelist(ast_node: Node):
     return ConsecutiveNode(nodes=nnodes)
 """
 
+
+""""
 def functionalized(node: Node) -> list[tuple[Node, Any]]:
-    """
+    ""
     Return a functionalized version of the node and a parameter.
     As the parameter count of Repeat is not a ASTNode, it's functionalized version
     is 0 to mark it needs to be replaced, -index once replaced
-    """
+    ""
     match node:
         # chained function calls
         # For now only output two-chains, but should also propose n-chains if they exist
@@ -1267,7 +1307,7 @@ def functionalized(node: Node) -> list[tuple[Node, Any]]:
             return [(Rect(Variable(0), w), (h,)), (Rect(h, Variable(0)), (w,))]
         case _:
             return []
-
+"""
 
 ### Other helper functions
 ### Main functions
@@ -1381,6 +1421,7 @@ def construct_node1(
     node = bfs(coordinates) if traversal == TraversalModes.BFS else dfs(coordinates)
     return ast_map(extract_rects, ast_map(factorize_nodelist, node))
 
+
 def freeman_to_ast(freeman_node: FreemanNode) -> Optional[Node]:
     branches = []
     nodelist = []
@@ -1454,6 +1495,8 @@ def construct_node(freeman_node: FreemanNode) -> Optional[Node]:
 
 
 ### Symbolic System
+
+"""
 def replace_parameters(node: Node, parameters: tuple):
     # Hypothesis: the parameters here are either not ASTNodes, or not symbolic
     if isinstance(node, Variable):
@@ -1490,7 +1533,7 @@ def replace_parameters(node: Node, parameters: tuple):
             new_attrs[f.name] = replace_parameters(value, parameters)
 
     return type(node)(**new_attrs)
-
+"""
 
 SymbolTable = list[Node]
 
@@ -1668,7 +1711,7 @@ def symbolize(
 # Symbol n°8:  s_13( s_2( s_0(6)))
 # Could be symbolized in Var
 
-
+"""
 def resolve_symbolic(node: Node, symbol_table: SymbolTable) -> Any:
     if isinstance(node, SymbolicNode):
         template = symbol_table[node.index]
@@ -1696,7 +1739,7 @@ def resolve_symbolic(node: Node, symbol_table: SymbolTable) -> Any:
         for p in params
     )
     return replace_parameters(template, params_resolved)
-
+"""
 
 @handle_elements
 def unsymbolize(ast_ls: list[Node], refs: SymbolTable):

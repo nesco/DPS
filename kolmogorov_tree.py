@@ -47,7 +47,7 @@ from typing import Generic, TypeVar, Callable, Iterable, Any, Iterator, Self, Se
 from dataclasses import dataclass, field
 from enum import IntEnum
 from abc import ABC, abstractmethod
-from collections import Counter, deque
+from collections import Counter, deque, defaultdict
 import math
 
 # Assuming RoseTree is defined elsewhere; import it
@@ -324,6 +324,31 @@ class SymbolNode(KNode[T]):
             return f"s_{self.index}({', '.join(str(p) for p in self.parameters)})"
         return f"s_{self.index}"
 
+
+# Dirty hack for ARC
+# It will need to be an abstraction
+# That will be pre-populated in the symbol table
+# akin to pre-training
+@dataclass(frozen=True)
+class RectNode(KNode):
+    height: "CountValue | VariableNode"  # Use VariableNode from kolmogorov_tree.py
+    width: "CountValue | VariableNode"
+
+    def bit_length(self) -> int:
+        # 3 bits for node type + 8 bits for ARC-specific rectangle encoding
+        height_len = (
+            BitLength.COUNT
+            if isinstance(self.height, int)
+            else self.height.bit_length()
+        )
+        width_len = (
+            BitLength.COUNT if isinstance(self.width, int) else self.width.bit_length()
+        )
+        return super().__len__() + height_len + width_len
+
+    def __str__(self) -> str:
+        return f"Rect({self.height}, {self.width})"
+
 # Kept-here for the example, but belong's to ARC-AGI syntax tree module
 # In fact, it should become "MetadataNode", as it encapsulate data that's not in the
 # main target alphabet the "program" produces'
@@ -344,31 +369,8 @@ class RootNode(MetaNode[T]):
         node_str = str(self.node)
         return f"Root({pos_str}, {colors_str}, {node_str})"
 
-# Main tree class
-@dataclass
-class KolmogorovTree(Generic[T]):
-    """Represents a complete program with a root node and symbol table."""
-    root: KNode[T]
-    symbols: list[KNode[T]] = field(default_factory=list)
 
-    def bit_length(self) -> int:
-        """Total bit length includes root and symbol definitions."""
-        return self.root.bit_length() + sum(symbol.bit_length() for symbol in self.symbols)
-
-    def resolve_symbols(self) -> KNode[T]:
-        """Expands all symbols into a fully resolved tree."""
-        return resolve_symbols(self.root, self.symbols)
-
-    def __str__(self) -> str:
-        symbols_str = "\n".join(f"s_{i}: {str(s)}" for i, s in enumerate(self.symbols))
-        return f"Symbols:\n{symbols_str}\n\nProgram:\n{str(self.root)}"
-
-    def kolmogorov_complexity(self) -> int:
-        """Approximates Kolmogorov complexity as the total bit length."""
-        return self.bit_length()
-
-
-## Functions
+## Functions on KNodes
 
 # Helpers
 def shift_f(node: KNode[T], k: int) -> KNode[T]:
@@ -381,21 +383,67 @@ def next_layer(layer: Iterable[KNode]) -> tuple[KNode, ...] :
     """Used for BFS-like traversal of a K-Tree. It's basically `children` for iterable"""
     return tuple(child for node in layer for child in children(node))
 
-Parameters = tuple[BitLengthAware, ...]
+type Parameters = tuple[BitLengthAware, ...]
 
-def generate_abstraction(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
+def generate_abstractions(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
     """Generate abstracted versions of a KNode by replacing subparts with variables."""
-    abstractions: list[tuple[KNode[T], Parameters] = []
+    abstractions: list[tuple[KNode[T], Parameters]] = []
+
+    # If the node is already a lambda-abstraction
+    # It should not be abstracted further
+    if is_abstraction(knode):
+        return abstractions
 
     match knode:
         case TupleNode(children) if len(children) > 2:
-            pass
+            # Abstract up to two distinct elements for now
+            child_set = set(children)
+            max_children = sorted(child_set, key=lambda x: x.bit_length(), reverse=True)[:2]
+
+            # Abstract the most frequent/largest child
+            nodes1 = tuple(VariableNode(VariableValue(0)) if c == max_children[0] else c for c in children)
+            abstractions.append((type(knode)(nodes1), (max_children[0],)))
+
+            # If there are at least two distinct children and length > 2, abstract the top two
+            if len(max_children) > 1 and len(children) > 2:
+                nodes2 = tuple(VariableNode(VariableValue(max_children.index(c))) if c in max_children else c
+                             for c in children)
+                abstractions.append((type(knode)(nodes2), tuple(max_children)))
         case RepeatNode(node, count):
+            # For a RepeatNode, either the node or the count can be abstracted
+            abstractions.extend(
+                [
+                    (RepeatNode(VariableNode(VariableValue(0)), count), (node, )),
+                    (RepeatNode(node, VariableNode(VariableValue(0))), (count, ))
+                ]
+            )
+        case RootNode(node, position, colors):
+            # In the case of a RootNode,
+            # because of ARC, we don't want the position to be memorized alone
+            # It would defeat the objectification lattice step'
+            # TODO
+            # See if the above is still applicable
+            # Understand the further 'colors.value' == 1 condition
+            abstractions.extend(
+                [
+                    # 1 parameter
+                    (RootNode(VariableNode(VariableValue(0)), position, colors), (node, )),
+                    (RootNode(node, VariableNode(VariableValue(0)), colors), (position, )),
+                    # 2 parameters
+                    (RootNode(VariableNode(VariableValue(0)), position, VariableNode(VariableValue(1))), (node, colors))
+                ]
+            )
+            if len(colors.value) == 1: # type: ignore -> because of 'is_abstraction', it can't be a Variable'
+                abstractions.append((RootNode(node, VariableNode(VariableValue(0)), VariableNode(VariableValue(1))), (position, colors)))
+        case RectNode(heigth, width):
+            if heigth == width:
+                abstractions.append((RectNode(VariableNode(VariableValue(0)), VariableNode(VariableValue(0))), (heigth,)))
+                abstractions.extend([
+                    (RectNode(VariableNode(VariableValue(0)), width), (heigth,)),
+                    (RectNode(heigth, VariableNode(VariableValue(0))), (width,))
+                ])
+        case _:
             pass
-        case Root(node, position, colors):
-            pass
-        #case Rect()
-            #pass
 
     return abstractions
 
@@ -530,6 +578,30 @@ def children(knode: KNode) -> Iterator[KNode]:
         case _:
             return iter(())
 
+def subvalues(knode: KNode[T]) -> Iterator[BitLengthAware]:
+    """
+    Yields all member variables of the given KNode that are instances of BitLengthAware.
+    For fields that are tuples or lists, yields each element that is BitLengthAware.
+
+    Args:
+        knode (KNode[T]): The KNode instance to extract subvalues from.
+
+    Yields:
+        BitLengthAware: Each member variable or element within a collection that is BitLengthAware.
+
+    Raises:
+        ValueError: If a tuple or list field contains an element that is not BitLengthAware.
+    """
+    for field_name in knode.__dataclass_fields__.keys():
+        value = getattr(knode, field_name)
+        if isinstance(value, BitLengthAware):
+            yield value
+        elif isinstance(value, (tuple, list)):
+            for elem in value:
+                if not isinstance(elem, BitLengthAware):
+                    raise ValueError(f"Field {field_name} contains non-BitLengthAware element: {elem}")
+                yield elem
+
 def breadth_iter(node: KNode | None) -> Iterator[KNode]:
     """
     Performs a breadth-first traversal of a KNode tree, yielding all nodes level by level.
@@ -550,6 +622,26 @@ def breadth_iter(node: KNode | None) -> Iterator[KNode]:
             if child is not None:
                 queue.append(child)
 
+def all_bitlengthaware_breadth(knode: KNode[T]) -> Iterator[BitLengthAware]:
+    """
+    Yields all BitLengthAware instances in the tree rooted at knode, in breadth-first order.
+    This includes the knode itself and all its subvalues recursively.
+
+    Args:
+        knode: The root KNode to start the traversal from.
+
+    Yields:
+        BitLengthAware: Each BitLengthAware instance in the tree, including KNodes and their subvalues.
+    """
+    queue = deque([knode])
+    while queue:
+        current = queue.popleft()
+        yield current  # Yield the current KNode, which is a BitLengthAware instance
+        for value in subvalues(current):
+            if isinstance(value, KNode):
+                queue.append(value)  # Enqueue KNode subvalues for further processing
+            else:
+                yield value  # Yield non-KNode BitLengthAware subvalues immediately
 
 def depth(node: KNode) -> int:
     """Returns the depth of a Kolmogorov tree"""
@@ -592,7 +684,7 @@ def shift(node: KNode[T], k: int) -> KNode[T]:
     """
     Shifts the values of all PrimitiveNodes in the KolmogorovTree that contain Alphabet subclasses by k.
 
-    This function recursively traverses the KolmogorovTree using the kmap function and applies the shift
+    This function recursively traverses the KolmogorovTree using the postmap function and applies the shift
     operation to any PrimitiveNode that holds a value of a type that is a subclass of Alphabet. The shift
     operation is defined by the `shift` method of the Alphabet subclass.
 
@@ -621,7 +713,7 @@ def shift(node: KNode[T], k: int) -> KNode[T]:
     >>> shifted.children[1].data  # Unchanged CountValue
     2
     """
-    return kmap(node, lambda n: shift_f(n, k))
+    return postmap(node, lambda n: shift_f(n, k))
 
 def encode_run_length(primitives: Iterable[PrimitiveNode[T]]) -> ProductNode[T]:
     """
@@ -682,10 +774,10 @@ def is_symbolized(node: KNode) -> bool:
     subnodes = breadth_iter(node)
     return any(isinstance(node, SymbolNode) for node in subnodes)
 
-def is_function(node: KNode) -> bool:
-    """Return True if and only if node contains at least one VariableNode in its subnodes"""
-    subnodes = breadth_iter(node)
-    return any(isinstance(node, VariableNode) for node in subnodes)
+def is_abstraction(node: KNode) -> bool:
+    """Return True if and only if node contains at least one VariableNode in its subvalues"""
+    subvalues = all_bitlengthaware_breadth(node)
+    return any(isinstance(value, VariableNode) for value in subvalues)
 
 # Retrievial
 def contained_symbols(knode: KNode) -> tuple[IndexValue, ...]:
@@ -804,55 +896,75 @@ def factorize_tuple(node: KNode[T]) -> KNode[T]:
         return node  # Avoid unnecessary reconstruction
     return construct_product_node(simplified)
 
-# Optional: Apply factorization across the entire tree
-def factorize_tree(tree: KolmogorovTree[T]) -> KolmogorovTree[T]:
-    """
-    Applies factorization to all ProductNodes and SumNodes in a KolmogorovTree.
-
-    Args:
-        tree: The KolmogorovTree to factorize.
-
-    Returns:
-        A new KolmogorovTree with compressed patterns.
-    """
-    def factorize_node(n: KNode[T]) -> KNode[T]:
-        return factorize_tuple(n)
-
-    new_root = kmap(tree.root, factorize_node)
-    new_symbols = [kmap(symbol, factorize_node) for symbol in tree.symbols]
-    return KolmogorovTree(new_root, new_symbols)
-
 # High-order functions
-def kmap(knode: KNode, f: Callable[[KNode], KNode]) -> KNode:
+def postmap(knode: KNode, f: Callable[[KNode], KNode], factorize: bool = True) -> KNode:
     """
     Map a function alongside a KNode. It updates first childrens, then updates the base node
 
     Args:
         knode: The KNode tree to transform
         f: A function that takes a KNode and returns a transformed KNode, or returning None.
+        factorize: Wether to automatically factorize the TupleNodes of the tree
 
     Returns:
         KNode: A new KNode tree with the function f applied to each node
     """
     match knode:
         case TupleNode(children):
-            mapped_children = tuple(kmap(child, f) for child in children)
-            return f(factorize_tuple(type(knode)(mapped_children)))
+            mapped_children = tuple(postmap(child, f) for child in children)
+            node = type(knode)(mapped_children)
+            if factorize:
+                node = factorize_tuple(node)
+            return f(node)
         case RepeatNode(node, count):
-            nnode = kmap(node, f)
+            nnode = postmap(node, f)
             return f(RepeatNode(nnode, count))
         case RootNode(node, position, color):
-            nnode = kmap(node, f)
+            nnode = postmap(node, f)
             return f(RootNode(nnode, position, color))
         case SymbolNode(index, parameters):
             nparameters = tuple(
-                (kmap(p, f) if isinstance(p, KNode) else p) for p in parameters
+                (postmap(p, f) if isinstance(p, KNode) else p) for p in parameters
             )
             return f(SymbolNode(index, nparameters))
         case _:
             return f(knode)
 
-def kmap_unsafe(knode: KNode, f: Callable[[KNode], KNode | None]) -> KNode | None:
+def premap(knode: KNode, f: Callable[[KNode], KNode], factorize: bool = True) -> KNode:
+    """
+    Map a function alongside a KNode. It updates the base node first, then updates the children
+
+    Args:
+        knode: The KNode tree to transform
+        f: A function that takes a KNode and returns a transformed KNode, or returning None.
+        factorize: Wether to automatically factorize the TupleNodes of the tree
+
+    Returns:
+        KNode: A new KNode tree with the function f applied to each node
+    """
+    knode = f(knode)
+    match knode:
+        case TupleNode(children):
+            mapped_children = tuple(premap(child, f) for child in children)
+            node = type(knode)(mapped_children)
+            if factorize:
+                node = factorize_tuple(node)
+            return f(node)
+        case RepeatNode(node, count):
+            nnode = premap(node, f)
+            return RepeatNode(nnode, count)
+        case RootNode(node, position, color):
+            nnode = premap(node, f)
+            return RootNode(nnode, position, color)
+        case SymbolNode(index, parameters):
+            nparameters = tuple(
+                (premap(p, f) if isinstance(p, KNode) else p) for p in parameters
+            )
+            return SymbolNode(index, nparameters)
+        case _:
+            return knode
+
+def postmap_unsafe(knode: KNode, f: Callable[[KNode], KNode | None]) -> KNode | None:
     """
     Map a function alongside a KNode. It updates first childrens, then updates the base node
 
@@ -865,179 +977,137 @@ def kmap_unsafe(knode: KNode, f: Callable[[KNode], KNode | None]) -> KNode | Non
     """
     match knode:
         case TupleNode(children):
-            mapped_children = tuple(node for child in children if (node := kmap_unsafe(child, f)) is not None)
+            mapped_children = tuple(node for child in children if (node := postmap_unsafe(child, f)) is not None)
             return f(factorize_tuple(type(knode)(mapped_children)))
         case RepeatNode(node, count):
-            nnode = kmap_unsafe(node, f)
+            nnode = postmap_unsafe(node, f)
             return f(RepeatNode(nnode, count)) if nnode is not None else None
         case RootNode(node, position, color):
-            nnode = kmap_unsafe(node, f)
+            nnode = postmap_unsafe(node, f)
             return f(RootNode(nnode, position, color)) if nnode is not None else None
         case SymbolNode(index, parameters):
             nparameters = tuple(
                 nparam for p in parameters
-                if (nparam := (kmap_unsafe(p, f) if isinstance(p, KNode) else p)) is not None
+                if (nparam := (postmap_unsafe(p, f) if isinstance(p, KNode) else p)) is not None
             )
             return f(SymbolNode(index, nparameters))
         case _:
             return f(knode)
 # Symbol resolution and pattern finding
 
-def generate_abstractions(node: KNode[T]) -> list[tuple[KNode[T], tuple[BitLengthAware, ...]]]:
-    """Generate abstracted versions of a KNode by replacing subparts with variables."""
-    abstractions = []
+#def matches(pattern: KNode[T], subtree: KNode[T]) -> dict[int, KNode[T]] | None:
+#    """Match a pattern with variables against a concrete subtree, returning variable bindings."""
+#    bindings: dict[int, KNode[T]] = {}
+#
+#    def unify(p: KNode[T], s: KNode[T]) -> dict[int, KNode[T]] | None:
+#        if isinstance(p, VariableNode):
+#            idx = p.index.value
+#            if idx in bindings:
+#                return bindings if bindings[idx] == s else None
+#            bindings[idx] = s
+#            return bindings
+#
+#        if type(p) != type(s):
+#            return None
+#
+#        match p:
+#            case PrimitiveNode(value=pv):
+#                if isinstance(s, PrimitiveNode) and pv == s.value:
+#                    return bindings
+#                return None
+#            case RootNode(position=pp, colors=pc, node=pn):
+#                if isinstance(s, RootNode):
+#                    return (unify(pp, s.position) and
+#                            unify(pc, s.colors) and
+#                            unify(pn, s.node))
+#            case ProductNode(children=pc) if isinstance(s, ProductNode):
+#                if len(pc) != len(s.children):
+#                    return None
+#                for pc_child, sc_child in zip(pc, s.children):
+#                    result = unify(pc_child, sc_child)
+#                    if result is None:
+#                        return None
+#                return bindings
+#            case RepeatNode(node=pn, count=pc) if isinstance(s, RepeatNode):
+#                if pc != s.count:
+#                    return None
+#                return unify(pn, s.node)
+#            case _:
+#                return bindings if p == s else None
+#
+#    return unify(pattern, subtree)
 
-    match node:
-        case RootNode(nnode, position, colors):
-            # Avoid re-abstracting if already a variable
-            # Only abstract if components are not already variables
-            if (
-                not isinstance(position, VariableNode)
-                and not isinstance(colors, VariableNode)
-                and not isinstance(nnode, VariableNode)
-            ):
-                # Abstract position only
-                abs_pos = RootNode(
-                    position=VariableNode(VariableValue(0)),
-                    colors=colors,
-                    node=nnode
-                )
-                abstractions.append((abs_pos, (position,)))
-
-                # Abstract position and node
-                abs_pos_node = RootNode(
-                    position=VariableNode(VariableValue(0)),
-                    colors=colors,
-                    node=VariableNode(VariableValue(1))
-                )
-                abstractions.append((abs_pos_node, (position, nnode)))
-
-                # If colors is a single color, abstract position and colors
-                if isinstance(colors, PaletteValue) and len(colors.value) == 1:
-                    abs_pos_colors = RootNode(
-                        position=VariableNode(VariableValue(0)),
-                        colors=VariableNode(VariableValue(1)),
-                        node=nnode
-                    )
-                    abstractions.append((abs_pos_colors, (position, colors)))
-        case ProductNode(children):
-            if not any(isinstance(c, VariableNode) for c in children):
-                # Sort children by bit length to prioritize replacing larger subtrees
-                child_set = set(children)
-                max_children = sorted(child_set, key=lambda x: x.bit_length(), reverse=True)[:2]
-
-                # Abstract the most frequent/largest child
-                nodes1 = tuple(VariableNode(VariableValue(0)) if c == max_children[0] else c for c in children)
-                abstractions.append((ProductNode(nodes1), (max_children[0],)))
-
-                # If there are at least two distinct children and length > 2, abstract the top two
-                if len(max_children) > 1 and len(children) > 2:
-                    nodes2 = tuple(VariableNode(VariableValue(max_children.index(c))) if c in max_children else c
-                                 for c in children)
-                    abstractions.append((ProductNode(nodes2), tuple(max_children)))
-
-        case RepeatNode(nnode, count) if not isinstance(nnode, VariableNode) and not isinstance(count, VariableNode):
-            # Abstract the repeated node
-            abstractions.append((RepeatNode(VariableNode(VariableValue(0)), count), (nnode,)))
-            # Abstract the count (if count is a CountValue, wrap it appropriately)
-            if isinstance(count, BitLengthAware):
-                abstractions.append((RepeatNode(nnode, VariableNode(VariableValue(0))), (count,)))
-
-    return abstractions
-
-def matches(pattern: KNode[T], subtree: KNode[T]) -> [dict[int, KNode[T]] | None:
-    """Match a pattern with variables against a concrete subtree, returning variable bindings."""
-    bindings: dict[int, KNode[T]] = {}
-
-    def unify(p: KNode[T], s: KNode[T]) -> dict[int, KNode[T]] | None:
-        if isinstance(p, VariableNode):
-            idx = p.index.value
-            if idx in bindings:
-                return bindings if bindings[idx] == s else None
-            bindings[idx] = s
-            return bindings
-
-        if type(p) != type(s):
-            return None
-
-        match p:
-            case PrimitiveNode(value=pv):
-                if isinstance(s, PrimitiveNode) and pv == s.value:
-                    return bindings
-                return None
-            case RootNode(position=pp, colors=pc, node=pn):
-                if isinstance(s, RootNode):
-                    return (unify(pp, s.position) and
-                            unify(pc, s.colors) and
-                            unify(pn, s.node))
-            case ProductNode(children=pc) if isinstance(s, ProductNode):
-                if len(pc) != len(s.children):
-                    return None
-                for pc_child, sc_child in zip(pc, s.children):
-                    result = unify(pc_child, sc_child)
-                    if result is None:
-                        return None
-                return bindings
-            case RepeatNode(node=pn, count=pc) if isinstance(s, RepeatNode):
-                if pc != s.count:
-                    return None
-                return unify(pn, s.node)
-            case _:
-                return bindings if p == s else None
-
-    return unify(pattern, subtree)
-
-def replace_variables(template: KNode[T], params: tuple[Any, ...]) -> KNode[T]:
+def substitute_variables(abstraction: KNode[T], params: Parameters) -> KNode[T]:
     """
-    Replaces variable placeholders in the template with the corresponding parameters.
+    Helper function to substitute variables, including those that are not traversed
+    during a simple node traversal
+    """
+    match abstraction:
+        case VariableNode(index) if index.value < len(params):
+            node = params[index.value]
+            if not isinstance(node, KNode):
+                raise TypeError(f"Trying to substitute a non-node parameter to a variable encountered during node traversal: {node}")
+            return node
+        case RepeatNode(node, VariableNode(index)) if index.value < len(params):
+            count = params[index.value]
+            if not isinstance(count, CountValue):
+                raise TypeError(f"Trying to substitute a count variable to a wrong parameter: {count}")
+            return RepeatNode(node, count)
+        case RootNode(node, VariableNode(index1), VariableNode(index2)) if index1.value < len(params) and index2.value < len(params):
+            position = params[index1.value]
+            colors = params[index2.value]
+            if not isinstance(position, CoordValue):
+                raise TypeError(f"Trying to substitute a position variable to a wrong parameter: {position}")
+            if not isinstance(colors, PaletteValue):
+                raise TypeError(f"Trying to substitute a colors variable to a wrong parameter: {colors}")
+            return RootNode(node, position, colors)
+        case RootNode(node, VariableNode(index), colors) if index.value < len(params):
+            position = params[index.value]
+            if not isinstance(position, CoordValue):
+                raise TypeError(f"Trying to substitute a position variable to a wrong parameter: {position}")
+            return RootNode(node, position, colors)
+        case RootNode(node, position, VariableNode(index)) if index.value < len(params):
+            colors = params[index.value]
+            if not isinstance(colors, PaletteValue):
+                raise TypeError(f"Trying to substitute a colors variable to a wrong parameter: {colors}")
+            return RootNode(node, position, colors)
+        case RectNode(VariableNode(index1), VariableNode(index2)) if index1.value < len(params) and index2.value < len(params):
+            height = params[index1.value]
+            width = params[index2.value]
+            if not isinstance(height, CountValue):
+                raise TypeError(f"Trying to substitute a height variable to a wrong parameter: {height}")
+            if not isinstance(width, CountValue):
+                raise TypeError(f"Trying to substitute a width variable to a wrong parameter: {width}")
+            return RectNode(height, width)
+        case RectNode(VariableNode(index), width) if index.value < len(params):
+            height = params[index.value]
+            if not isinstance(height, CountValue):
+                raise TypeError(f"Trying to substitute a height variable to a wrong parameter: {height}")
+            return RectNode(height, width)
+        case RectNode(height, VariableNode(index)) if index.value < len(params):
+            width = params[index.value]
+            if not isinstance(width, CountValue):
+                raise TypeError(f"Trying to substitute a width variable to a wrong parameter: {width}")
+            return RectNode(height, width)
+        case _:
+            return abstraction
+
+def reduce_abstraction(abstraction: KNode[T], params: Parameters) -> KNode[T]:
+    """
+    Substitutes variable placeholders in the template with the corresponding parameters.
 
     This function recursively traverses the template node and replaces VariableNodes
-    with the provided parameters. It also handles composite nodes by replacing variables
+    with the provided parameters. It also handles composite nodes by substituting variables
     in their children or attributes.
 
     Args:
-        template (KNode): The template node to process.
+        abstraction (KNode): The abstract node to process.
         params (tuple[Any, ...]): The parameters to substitute for variables.
 
     Returns:
-        KNode: The template with variables replaced by parameters.
+        KNode: The abstraction with variables replaced by parameters.
     """
-    match template:
-        case VariableNode(index) if index.value < len(params):
-            param = params[index.value]
-            return param if isinstance(param, KNode) else PrimitiveNode(param)
-        case ProductNode(children):
-            new_children = tuple(replace_variables(child, params) for child in children)
-            return ProductNode(new_children)
-        case SumNode(children):
-            new_children = tuple(replace_variables(child, params) for child in children)
-            return SumNode(new_children)
-        case RepeatNode(node, count):
-            new_node = replace_variables(node, params)
-            new_count = replace_variables(count, params) if isinstance(count, KNode) else count
-            if isinstance(new_count, KNode) and not isinstance(new_count, VariableNode): # To make Pyright happy
-                raise TypeError(f"New count must be CountValue or VariableNode, got {type(new_count)}")
-            return RepeatNode(new_node, new_count)
-        case SymbolNode(index, parameters):
-            new_params = tuple(
-                replace_variables(p, params) if isinstance(p, KNode) else p
-                for p in parameters
-            )
-            return SymbolNode(index, new_params)
-        case RootNode(node, position, colors):
-            new_pos = replace_variables(position, params) if isinstance(position, KNode) else position
-            new_colors = replace_variables(colors, params) if isinstance(colors, KNode) else colors
-            new_node = replace_variables(node, params)
-
-            # To make Pyright happy
-            if isinstance(new_pos, KNode) and not isinstance(new_pos, VariableNode):
-                raise TypeError(f"New position must be CoordValue or VariableNode, got {type(new_pos)}")
-            if isinstance(new_colors, KNode) and not isinstance(new_colors, VariableNode):
-                raise TypeError(f"New colors must be PaletteValue or VariableNode, got {type(new_colors)}")
-
-            return RootNode(new_node, new_pos, new_colors)
-        case _:
-            return template
+    return premap(abstraction, lambda node: substitute_variables(node, params))
 
 def resolve_symbols(knode: KNode[T], symbols: list[KNode[T]]) -> KNode[T]:
     """
@@ -1054,35 +1124,67 @@ def resolve_symbols(knode: KNode[T], symbols: list[KNode[T]]) -> KNode[T]:
     Returns:
         KNode: The resolved node with symbols expanded.
     """
-    match knode:
-        case SymbolNode(index, parameters) if 0 <= index.value < len(symbols):
-            return replace_variables(symbols[index.value], parameters)
-        case ProductNode(children):
-            resolved_children = [resolve_symbols(child, symbols) for child in children]
-            return ProductNode(tuple(resolved_children))
-        case SumNode(children):
-            resolved_children = [resolve_symbols(child, symbols) for child in children]
-            return SumNode(tuple(resolved_children))
-        case RepeatNode(node, count):
-            resolved_node = resolve_symbols(node, symbols)
-            resolved_count = resolve_symbols(count, symbols) if isinstance(count, KNode) else count
-            if isinstance(resolved_count, KNode) and not isinstance(resolved_count, VariableNode): # To make Pyright happy
-                raise TypeError(f"Resolved count must be CountValue or VariableNode, got {type(resolved_count)}")
-            return RepeatNode(resolved_node, resolved_count)
-        case RootNode(node, position, colors):
-            resolved_node = resolve_symbols(node, symbols)
-            resolved_position = resolve_symbols(position, symbols) if isinstance(position, KNode) else position
-            resolved_colors = resolve_symbols(colors, symbols) if isinstance(colors, KNode) else colors
+    def resolve_f(node: KNode[T]) -> KNode[T]:
+        if isinstance(node, SymbolNode) and 0 <= node.index.value < len(symbols):
+            return reduce_abstraction(symbols[node.index.value], node.parameters)
+        return node
 
-            # To make Pyright happy
-            if isinstance(resolved_position, KNode) and not isinstance(resolved_position, VariableNode):
-                raise TypeError(f"Resolved position must be CoordValue or VariableNode, got {type(resolved_position)}")
-            if isinstance(resolved_colors, KNode) and not isinstance(resolved_colors, VariableNode):
-                raise TypeError(f"Resolved colors must be PaletteValue or VariableNode, got {type(resolved_colors)}")
+    return premap(knode, resolve_f, factorize=False)
 
-            return RootNode(resolved_node, resolved_position, resolved_colors)
-        case _:
-            return knode
+# Factory functions for common patterns
+def create_move_node(direction: int) -> PrimitiveNode:
+    """Creates a node for a directional move."""
+    return PrimitiveNode(MoveValue(direction))
+
+def create_moves_sequence(directions: str) -> KNode | None:
+    """Creates a sequence of moves from a direction string."""
+    if not directions:
+        return None
+    moves = [create_move_node(int(d)) for d in directions]
+    if len(moves) >= 3:
+        for pattern_len in range(1, len(moves) // 2 + 1):
+            if len(moves) % pattern_len == 0:
+                pattern = moves[:pattern_len]
+                repeat_count = len(moves) // pattern_len
+                if all(moves[i * pattern_len:(i + 1) * pattern_len] == pattern
+                       for i in range(repeat_count)) and repeat_count > 1:
+                    return RepeatNode(ProductNode(tuple(pattern)), CountValue(repeat_count))
+    return ProductNode(tuple(moves))
+
+def create_rect(height: int, width: int) -> KNode | None:
+    """Creates a node for a rectangle shape."""
+    if height < 2 or width < 2:
+        return None
+    first_row = "2" * (width - 1)  # Move right
+    other_rows = ""
+    for i in range(1, height):
+        direction = "0" if i % 2 else "2"  # Alternate left/right
+        other_rows += "3" + direction * (width - 1)  # Down then horizontal
+    return create_moves_sequence(first_row + other_rows)
+
+# Main tree class
+@dataclass
+class KolmogorovTree(Generic[T]):
+    """Represents a complete program with a root node and symbol table."""
+    root: KNode[T]
+    symbols: list[KNode[T]] = field(default_factory=list)
+
+    def bit_length(self) -> int:
+        """Total bit length includes root and symbol definitions."""
+        return self.root.bit_length() + sum(symbol.bit_length() for symbol in self.symbols)
+
+    def resolve_symbols(self) -> KNode[T]:
+        """Expands all symbols into a fully resolved tree."""
+        return resolve_symbols(self.root, self.symbols)
+
+    def __str__(self) -> str:
+        symbols_str = "\n".join(f"s_{i}: {str(s)}" for i, s in enumerate(self.symbols))
+        return f"Symbols:\n{symbols_str}\n\nProgram:\n{str(self.root)}"
+
+    def kolmogorov_complexity(self) -> int:
+        """Approximates Kolmogorov complexity as the total bit length."""
+        return self.bit_length()
+
 
 def find_common_subtrees_exact(trees: list[KolmogorovTree], min_occurrences=2, max_patterns=10) -> list[KNode]:
     """Identifies frequent subtrees across multiple trees for symbolization using breadth_iter."""
@@ -1154,12 +1256,13 @@ def find_common_subtrees(trees: list[KolmogorovTree], min_occurrences: int = 2, 
         avg_len = sum(s.bit_length() for s, _ in pattern_instances[pat]) / count
         param_len = sum(p.bit_length() for _, ps in pattern_instances[pat] for p in ps) / count
         symb_len = BitLength.NODE_TYPE + BitLength.INDEX + int(param_len)
+        # It's not a int... What to do?' Keep it float? Ceil it? Floor it?
         return (count - 1) * (avg_len - symb_len) - pat.bit_length()
 
     common_patterns.sort(key=lambda p: (-bit_gain(p), -p.bit_length()))
     return common_patterns[:max_patterns]
 
-def symbolize(trees: list[KolmogorovTree]) -> Optional[KolmogorovTree]:
+def symbolize(trees: list[KolmogorovTree]) -> KolmogorovTree | None:
     """Symbolize trees by replacing common patterns (concrete or abstracted) with SymbolNodes."""
     common_patterns = find_common_subtrees(trees)
     if not common_patterns or not trees:
@@ -1171,9 +1274,9 @@ def symbolize(trees: list[KolmogorovTree]) -> Optional[KolmogorovTree]:
         for i, pattern in enumerate(common_patterns):
             if pattern == node:
                 return SymbolNode(IndexValue(i), (), pattern.bit_length())
-            bindings = match(pattern, node)
+            bindings = matches(pattern, node)
             if bindings is not None:
-                params = tuple(bindings.get(j, PrimitiveNode(0)) for j in range(max(bindings.keys(), default=-1) + 1))
+                params = tuple(bindings.get(j, PrimitiveNode(MoveValue(0))) for j in range(max(bindings.keys(), default=-1) + 1))
                 return SymbolNode(IndexValue(i), params, pattern.bit_length())
 
         match node:
@@ -1191,36 +1294,24 @@ def symbolize(trees: list[KolmogorovTree]) -> Optional[KolmogorovTree]:
     new_root = replace_node(trees[0].root)
     return KolmogorovTree(new_root, symbols)
 
-# Factory functions for common patterns
-def create_move_node(direction: int) -> PrimitiveNode:
-    """Creates a node for a directional move."""
-    return PrimitiveNode(MoveValue(direction))
 
-def create_moves_sequence(directions: str) -> KNode | None:
-    """Creates a sequence of moves from a direction string."""
-    if not directions:
-        return None
-    moves = [create_move_node(int(d)) for d in directions]
-    if len(moves) >= 3:
-        for pattern_len in range(1, len(moves) // 2 + 1):
-            if len(moves) % pattern_len == 0:
-                pattern = moves[:pattern_len]
-                repeat_count = len(moves) // pattern_len
-                if all(moves[i * pattern_len:(i + 1) * pattern_len] == pattern
-                       for i in range(repeat_count)) and repeat_count > 1:
-                    return RepeatNode(ProductNode(tuple(pattern)), CountValue(repeat_count))
-    return ProductNode(tuple(moves))
+# Optional: Apply factorization across the entire tree
+def factorize_tree(tree: KolmogorovTree[T]) -> KolmogorovTree[T]:
+    """
+    Applies factorization to all ProductNodes and SumNodes in a KolmogorovTree.
 
-def create_rect(height: int, width: int) -> KNode | None:
-    """Creates a node for a rectangle shape."""
-    if height < 2 or width < 2:
-        return None
-    first_row = "2" * (width - 1)  # Move right
-    other_rows = ""
-    for i in range(1, height):
-        direction = "0" if i % 2 else "2"  # Alternate left/right
-        other_rows += "3" + direction * (width - 1)  # Down then horizontal
-    return create_moves_sequence(first_row + other_rows)
+    Args:
+        tree: The KolmogorovTree to factorize.
+
+    Returns:
+        A new KolmogorovTree with compressed patterns.
+    """
+    def factorize_node(n: KNode[T]) -> KNode[T]:
+        return factorize_tuple(n)
+
+    new_root = postmap(tree.root, factorize_node)
+    new_symbols = [postmap(symbol, factorize_node) for symbol in tree.symbols]
+    return KolmogorovTree(new_root, new_symbols)
 
 # Example usage
 def example_usage():
@@ -1670,6 +1761,113 @@ def test_factorize_tree():
 
     print("Test factorize_tree - Passed")
 
+def test_is_abstraction():
+    """Tests the is_abstraction function for detecting VariableNodes in the tree."""
+    # Test Case 1: Node is a VariableNode
+    var_node = VariableNode(VariableValue(0))
+    assert is_abstraction(var_node) == True, "Test Case 1 Failed: VariableNode itself should return True"
+
+    # Test Case 2: Node is a PrimitiveNode (no VariableNode)
+    prim_node = PrimitiveNode(MoveValue(1))
+    assert is_abstraction(prim_node) == False, "Test Case 2 Failed: PrimitiveNode should return False"
+
+    # Test Case 3: ProductNode with one VariableNode child
+    var_child = VariableNode(VariableValue(1))
+    tuple_node = ProductNode((prim_node, var_child))
+    assert is_abstraction(tuple_node) == True, "Test Case 3 Failed: ProductNode with VariableNode child should return True"
+
+    # Test Case 4: ProductNode with no VariableNodes
+    tuple_no_var = ProductNode((prim_node, PrimitiveNode(MoveValue(2))))
+    assert is_abstraction(tuple_no_var) == False, "Test Case 4 Failed: ProductNode without VariableNodes should return False"
+
+    # Test Case 5: RepeatNode with VariableNode in subtree
+    repeat_node = RepeatNode(var_child, CountValue(2))
+    assert is_abstraction(repeat_node) == True, "Test Case 5 Failed: RepeatNode with VariableNode should return True"
+
+    # Test Case 6: SymbolNode with VariableNode as parameter
+    symbol_with_var = SymbolNode(IndexValue(0), (var_child,))
+    assert is_abstraction(symbol_with_var) == True, "Test Case 6 Failed: SymbolNode with VariableNode parameter should return True"
+
+    # Test Case 7: RootNode with VariableNode in program
+    root_with_var = RootNode(var_child, CoordValue((0, 0)), PaletteValue({1}))
+    assert is_abstraction(root_with_var) == True, "Test Case 7 Failed: RootNode with VariableNode in program should return True"
+
+    # Test Case 8: Node with only non-KNode BitLengthAware subvalues
+    # PrimitiveNode has a Primitive subvalue (e.g., MoveValue), which is BitLengthAware but not a VariableNode
+    assert is_abstraction(prim_node) == False, "Test Case 8 Failed: Node with only non-KNode subvalues should return False"
+
+    print("Test is_abstraction - Passed")
+
+def test_resolve_symbols():
+    # Test Case 1: Test that a tree with no symbols remains unchanged.
+    node = PrimitiveNode(MoveValue(1))
+    symbols: list[KNode] = []
+    result = resolve_symbols(node, symbols)
+    assert result == node, "Tree with no symbols should remain unchanged"
+
+    # Test Case 2: Test resolving a single SymbolNode without parameters.
+    symbol_def = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3))))
+    symbols = [symbol_def]
+    node = SymbolNode(IndexValue(0), ())
+    result = resolve_symbols(node, symbols)
+    assert result == symbol_def, "SymbolNode should be replaced by its definition"
+
+    # Test Case 3: Test resolving a single SymbolNode with parameters.
+    symbol_def = ProductNode((VariableNode(VariableValue(0)), PrimitiveNode(MoveValue(1))))
+    symbols = [symbol_def]
+    param = PrimitiveNode(MoveValue(4))
+    node = SymbolNode(IndexValue(0), (param,))
+    expected = ProductNode((param, PrimitiveNode(MoveValue(1))))
+    result = resolve_symbols(node, symbols)
+    assert result == expected, "Parameters should be substituted correctly"
+
+
+    # Test Case 4: Test resolving a composite node containing a SymbolNode.
+    symbol_def = ProductNode((VariableNode(VariableValue(0)), PrimitiveNode(MoveValue(1))))
+    symbols = [symbol_def]
+    param = PrimitiveNode(MoveValue(5))
+    symbol_node = SymbolNode(IndexValue(0), (param,))
+    composite = ProductNode((symbol_node, PrimitiveNode(MoveValue(6))))
+    expected_inner = ProductNode((param, PrimitiveNode(MoveValue(1))))
+    expected = ProductNode((expected_inner, PrimitiveNode(MoveValue(6))))
+    result = resolve_symbols(composite, symbols)
+    assert result == expected, "Composite node should resolve its children correctly"
+
+    # Test Case 5: Test resolving nested symbols
+    symbol0 = PrimitiveNode(MoveValue(7))
+    symbol1 = ProductNode((SymbolNode(IndexValue(0), ()), PrimitiveNode(MoveValue(8))))
+    symbols = [symbol0, symbol1]
+    node = SymbolNode(IndexValue(1), ())
+    expected = ProductNode((symbol0, PrimitiveNode(MoveValue(8))))
+    result = resolve_symbols(node, symbols)
+    assert result == expected, "Nested symbols should be resolved recursively"
+
+    # Test Case 6: Test resolving a symbol with parameters in a RepeatNode.
+    symbol_def = RepeatNode(PrimitiveNode(MoveValue(2)), VariableNode(VariableValue(0)))
+    symbols = [symbol_def]
+    param = CountValue(3)
+    node = SymbolNode(IndexValue(0), (param,))
+    expected = RepeatNode(PrimitiveNode(MoveValue(2)), param)
+    result = resolve_symbols(node, symbols)
+    assert result == expected, "Parameters should substitute into RepeatNode's count"
+
+    # Test Case 7: Test that a SymbolNode with an invalid index remains unchanged.
+    symbols = [PrimitiveNode(MoveValue(1))]
+    node = SymbolNode(IndexValue(1), ())
+    result = resolve_symbols(node, symbols)
+    assert result == node, "SymbolNode with invalid index should remain unchanged"
+
+    # Test Case 8: Test resolving a tree with multiple symbols and parameters.
+    symbol0 = PrimitiveNode(MoveValue(3))
+    symbol1 = ProductNode((SymbolNode(IndexValue(0), ()), VariableNode(VariableValue(0))))
+    symbols = [symbol0, symbol1]
+    param = PrimitiveNode(MoveValue(4))
+    node = SymbolNode(IndexValue(1), (param,))
+    expected = ProductNode((symbol0, param))
+    result = resolve_symbols(node, symbols)
+    assert result == expected, "Multiple symbols and parameters should be handled correctly"
+    print("Test resolve_symbols - Passed")
+
 def run_tests():
     """Runs simple tests to verify KolmogorovTree functionality."""
     # Test 1: Basic node creation and bit length
@@ -1713,7 +1911,8 @@ def run_tests():
     root_with_symbol = RootNode(ProductNode((symbol_node, move_right)), CoordValue((0, 0)), PaletteValue({1}))
     tree = KolmogorovTree[MoveValue](root_with_symbol, symbols)
     resolved = resolve_symbols(tree.root, tree.symbols)
-    expected_resolved = RootNode(ProductNode((symbol_def, move_right)), CoordValue((0, 0)), PaletteValue({1}))
+    expected_resolved = RootNode(ProductNode((move_right, move_down, move_right)), CoordValue((0, 0)), PaletteValue({1}))
+    print(f"resolved: {[resolved]}, expected_resolve: {[expected_resolved]}")
     assert resolved == expected_resolved, "Symbol resolution failed"
     print("Test 4: Symbol resolution - Passed")
 
@@ -1725,6 +1924,8 @@ def run_tests():
     test_find_repeating_pattern()
     test_factorize_tuple()
     test_factorize_tree()
+    test_is_abstraction()
+    test_resolve_symbols()
 
 if __name__ == "__main__":
     tree = example_usage()
