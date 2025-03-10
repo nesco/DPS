@@ -514,7 +514,7 @@ class Root(Node):
 
 """
 
-
+"""
 @dataclass(frozen=True)
 class Rect(KNode):
     height: "int | VariableNode"  # Use VariableNode from kolmogorov_tree.py
@@ -534,10 +534,9 @@ class Rect(KNode):
 
     def __str__(self) -> str:
         return f"Rect({self.height}, {self.width})"
-
+"""
 
 # Strategy diviser pour régner avec marginalisation + reconstruction
-
 
 @dataclass()
 class UnionNode:
@@ -1023,7 +1022,7 @@ def len_param(param) -> int:
         return 1
 """
 
-
+"""
 # Refactored
 def rect_to_moves(height, width) -> list[PrimitiveNode[MoveValue]]:
     moves = "2" * (width - 1) + "".join(
@@ -1100,7 +1099,7 @@ def extract_rects(node):
             return Rect(res[0], res[1])
         else:
             return node
-
+"""
 
 #### AST
 """
@@ -1335,7 +1334,7 @@ def update_node(node, mapping):
 
     return node
 
-
+"""
 def construct_node1(
     coordinates,
     is_valid: Callable[[Coord], bool],
@@ -1420,8 +1419,9 @@ def construct_node1(
 
     node = bfs(coordinates) if traversal == TraversalModes.BFS else dfs(coordinates)
     return ast_map(extract_rects, ast_map(factorize_nodelist, node))
+"""
 
-
+"""
 def freeman_to_ast(freeman_node: FreemanNode) -> Optional[Node]:
     branches = []
     nodelist = []
@@ -1454,8 +1454,9 @@ def freeman_to_ast(freeman_node: FreemanNode) -> Optional[Node]:
 
     astnode = node_from_list(nodelist)
     return astnode
+"""
 
-
+"""
 def freeman_to_ast_Leaf(freeman_node: FreemanNode) -> Optional[Node]:
     branches = []
     nodelist = []
@@ -1480,8 +1481,9 @@ def freeman_to_ast_Leaf(freeman_node: FreemanNode) -> Optional[Node]:
 
     astnode = node_from_list(nodelist)
     return astnode
+"""
 
-
+"""
 def construct_node(freeman_node: FreemanNode) -> Optional[Node]:
     # Recursive part: first we get the nodes from the different branches
     astnode = freeman_to_ast(freeman_node)
@@ -1492,7 +1494,7 @@ def construct_node(freeman_node: FreemanNode) -> Optional[Node]:
     else:
         # return ast_map(factorize_nodelist, astnode)
         return astnode
-
+"""
 
 ### Symbolic System
 
@@ -1535,9 +1537,9 @@ def replace_parameters(node: Node, parameters: tuple):
     return type(node)(**new_attrs)
 """
 
-SymbolTable = list[Node]
+# SymbolTable = list[Node]
 
-
+"""
 def symbolize_next(
     ast_ls: list[Node],
     refs: SymbolTable,
@@ -1559,9 +1561,9 @@ def symbolize_next(
             pattern_metadata[pattern] = (len(pattern), value_param + len_param(param))
 
     def discover_node(node: ASTNode):
-        """
+        ""
         Add a node to the dictionary of node, and its functionalized variants
-        """
+        ""
         if isinstance(node, (Variable, UnionNode)):
             return
 
@@ -1655,13 +1657,14 @@ def symbolize_next(
 
     # Note you can only replace one at a time because a same node can be part of several 1-form
     return new_ast_ls, refs, True
+"""
 
-
+"""
 @handle_elements
 def symbolize(
     ast_ls: list[Node], refs: SymbolTable, lattice_count=1
 ) -> tuple[list[Node], SymbolTable]:
-    """Symbolize ast_ls as much as possible"""
+    ""Symbolize ast_ls as much as possible""
 
     # First symbolize everything that doesn't countains symbols
     ast_ls, refs, changed = symbolize_next(
@@ -1696,7 +1699,7 @@ def symbolize(
         print(ast)
 
     return ast_ls, refs
-
+"""
 
 # TO-DO: try to consolidate the symbol table through sub-node symbolization. It could use ast_distance:
 # Example:
@@ -1741,6 +1744,7 @@ def resolve_symbolic(node: Node, symbol_table: SymbolTable) -> Any:
     return replace_parameters(template, params_resolved)
 """
 
+# TO Refactor
 @handle_elements
 def unsymbolize(ast_ls: list[Node], refs: SymbolTable):
     """
@@ -1790,7 +1794,7 @@ def unsymbolize(ast_ls: list[Node], refs: SymbolTable):
     # Resolved each ASTs using the resolved copy
     return [ast_map(resolve, ast) for ast in ast_ls]
 
-
+# To Refactor
 def factor_by_refs(node: Node, refs: SymbolTable):
     """A non-factorize node of an AST in an lattice could possibly match a symbol learned from another lattice.
     Thus it's necessary to check if each node doen't match a an already exiting symbol
@@ -1822,7 +1826,7 @@ def factor_by_refs(node: Node, refs: SymbolTable):
 
     return ast_map(factor_node, node)
 
-
+# TO Refactor
 def map_refs(
     refs: SymbolTable, refs_common: SymbolTable
 ) -> tuple[list[int], SymbolTable]:

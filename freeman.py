@@ -93,23 +93,8 @@ def inverse(direction: King) -> King:
 
 # Paths:
 Path = list[King]
-Trans = tuple[King, Coord]  # Transition
+Transition = tuple[King, Coord]  # Transition
 FreemanTree = tuple[Coord, "FreemanNode"]
-
-
-def path_to_coords(start: Coord, path: Path) -> tuple[Coords, Coord]:
-    """
-    Integrate over `path` given the initial position `start`
-    """
-    coords = set([start])
-    coord = start
-    for direction in path:
-        coord = (
-            coord[0] + DIRECTIONS_FREEMAN[direction][0],
-            coord[1] + DIRECTIONS_FREEMAN[direction][1],
-        )
-        coords.add(coord)
-    return coords, coord
 
 
 ### Freeman
@@ -141,94 +126,7 @@ class FreemanNode:
             return self.path == other.path and self.children == other.children
         return False
 
-
-class Freeman:
-    """Freeman chain code processor"""
-
-    DIRECTIONS: Final[dict[King, Coord]] = {
-        0: (-1, 0),
-        1: (0, -1),
-        2: (1, 0),
-        3: (0, 1),
-        4: (-1, -1),
-        5: (1, -1),
-        6: (1, 1),
-        7: (-1, 1),
-    }
-
-    def __init__(self, is_valid_coord: Callable):
-        self.is_valid = is_valid_coord
-        self.seen: set[Coord] = set()
-
-    def get_valid_moves(self, coord: Coord) -> list[tuple[King, Coord]]:
-        """Get the list of valid moves from the current coordinates"""
-        moves = []
-        for direction in range(8):
-            dir_cast = cast(King, direction)
-            dx, dy = self.DIRECTIONS[dir_cast]
-            ncoord = (coord[0] + dx, coord[1] + dy)
-            if self.is_valid(ncoord):
-                moves.append((dir_cast, ncoord))
-        return moves
-
-    def build_trie(
-        self, start: Coord, mode: TraversalModes = TraversalModes.DFS
-    ) -> FreemanNode:
-        """Build a Freeman chain code tree from a start coordinate"""
-        self.seen = {start}
-        if mode == TraversalModes.DFS:
-            return self._dfs_trie(start)
-        return self._bfs_trie(start)
-
-    def _dfs_trie(self, coord: Coord) -> FreemanNode:
-        """Build trie using depth-first search"""
-        children = []
-
-        for direction, next_coord in self.get_valid_moves(coord):
-            if next_coord not in self.seen:
-                self.seen.add(next_coord)
-                child_node = self._dfs_trie(next_coord)
-                if child_node.path or child_node.children:
-                    path = cast(Path, [direction] + child_node.path)
-                    if len(child_node.children) == 1:
-                        # Linearize by combining path with single child
-                        child = child_node.children[0]
-                        children.append(FreemanNode(path + child.path, child.children))
-                    else:
-                        children.append(FreemanNode(path, child_node.children))
-
-        return FreemanNode([], children)
-
-    def _bfs_trie(self, start: Coord) -> FreemanNode:
-        """Build a trie using breadth-first search"""
-        queue = deque([(start, [])])
-        children = []
-
-        while queue:
-            coord, path = queue.popleft()
-
-            for direction, next_coord in self.get_valid_moves(coord):
-                if next_coord not in self.seen:
-                    self.seen.add(next_coord)
-                    npath = path + [direction]
-                    queue.append((next_coord, npath))
-                    children.append(FreemanNode(npath, []))
-
-        # Post-process to linearize nodes with single children
-        nchildren = []
-        for child in children:
-            if len(child.children) == 1:
-                grandchild = child.children[0]
-                nchildren.append(
-                    FreemanNode(child.path + grandchild.path, grandchild.children)
-                )
-            else:
-                nchildren.append(child)
-
-        return FreemanNode([], nchildren)
-
-
-def decode_freeman(start: Coord, root: FreemanNode):
+def decode_freeman(start: Coord, root: FreemanNode) -> Coords:
     """Convert Freeman trie back to coordinates"""
     coords = {start}
     queue = [(start, root)]
@@ -238,7 +136,7 @@ def decode_freeman(start: Coord, root: FreemanNode):
         for child in node.children:
             coord = current
             for direction in child.path:
-                dx, dy = Freeman.DIRECTIONS[direction]
+                dx, dy = DIRECTIONS_FREEMAN[direction]
                 coord = (coord[0] + dx, coord[1] + dy)
                 coords.add(coord)
             queue.append((coord, child))
@@ -249,23 +147,15 @@ def decode_freeman(start: Coord, root: FreemanNode):
 def arrowify(root: FreemanNode):
     """Convert Freeman chain code to directional arrows."""
 
-    def convert_char(c: str) -> str:
+    def movement_to_arrow(c: str) -> str:
         return DIRECTIONS_ARROW[cast(King, int(c))] if c.isdigit() else c
 
-    result = "".join(map(convert_char, str(root)))
+    result = "".join(map(movement_to_arrow, str(root)))
     print(result)
-
-
-def arrowify1(freeman: FreemanNode) -> None:
-    result = "".join(
-        DIRECTIONS_ARROW[cast(King, int(c))] if c.isdigit() else c for c in str(freeman)
-    )
-    print(result)
-
 
 def available_transitions_freeman(
     is_valid: Callable[[Coord], bool], coordinates: Coord
-) -> list[Trans]:
+) -> list[Transition]:
     transitions = []
     col, row = coordinates
     transitions = []
@@ -288,7 +178,7 @@ def encode_connected_component(
 ) -> FreemanNode:
     seen = set()
 
-    def coord_to_transitions(coordinates: Coord) -> list[Trans]:
+    def coord_to_transitions(coordinates: Coord) -> list[Transition]:
         return available_transitions_freeman(is_valid, coordinates)
 
     def concatenate(moves: Path, node: FreemanNode) -> FreemanNode:
@@ -335,22 +225,6 @@ def encode_connected_component(
         return bfs_traversal(start)
     else:
         return dfs_traversal(start)
-
-
-def decode_freeman1(tree: FreemanTree) -> Coords:
-    coords = set()
-    queue_tree = [tree]
-
-    # Breadth-first collection of coordinates
-    # First integrate the main path, then process all branches
-    while queue_tree:
-        start, freeman = queue_tree.pop()
-        ncoords, nstart = path_to_coords(start, freeman.path)
-        coords.update(ncoords)
-        for child in freeman.children:
-            queue_tree.append((nstart, child))
-    return coords
-
 
 ### Real Freeman boundary
 

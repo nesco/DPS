@@ -8,7 +8,7 @@ from grid import MaskOperations, GridOperations, CoordsOperations
 
 from helpers import *
 from operators import *
-from syntax_tree import *
+from syntax_tree_copy import *
 from freeman import *
 import traceback
 

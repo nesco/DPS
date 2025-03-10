@@ -1400,7 +1400,7 @@ def freeman_to_ast(freeman_node: FreemanNode) -> Optional[ASTNode]:
     branches = []
     nodelist = []
 
-    for branch in freeman_node.branches:
+    for branch in freeman_node.children:
         node = freeman_to_ast(branch)
         #if isinstance(node, AlternativeNode):
         #    node = AlternativeNode(get_iterator(node.nodes))#encode_run_length(node)
