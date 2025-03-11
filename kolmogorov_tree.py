@@ -16,7 +16,7 @@ Key Features:
 - Computable bit-length metrics for complexity approximation
 - Pattern extraction and memorization via symbol table
 - Support for 8-directional grid movements
-- Lambda abstraction through variable binding
+- "lambda abstraction" through variable binding flattened into functions with arity
 - Nested pattern detection and reuse
 
 The tree can be used to:
@@ -53,6 +53,8 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 from abc import ABC, abstractmethod
 from collections import Counter, deque, defaultdict
+import functools
+
 from localtypes import Coord, Color
 
 import math
@@ -579,7 +581,6 @@ def iterable_to_sum(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
     else:
         return SumNode(get_iterator(nodes))
 
-
 # Traversal
 
 def children(knode: KNode) -> Iterator[KNode]:
@@ -794,13 +795,30 @@ def is_symbolized(node: KNode) -> bool:
 
 def is_abstraction(node: KNode) -> bool:
     """Return True if and only if node contains at least one VariableNode in its subvalues"""
-    subvalues = all_bitlengthaware_breadth(node)
-    return any(isinstance(value, VariableNode) for value in subvalues)
+    # For now, all VariableNodes are direct children of the node
+    # If it cease to be the case one day, replace by
+    # sub_values = all_bitlengthaware_breadth(node)
+    # any(isinstance(value, VariableValue) for value in sub_values) # VariableNode -> VariableValue, so both one or the other works
+    sub_values = subvalues(node)
+    return any(isinstance(value, VariableNode) or isinstance(value, VariableValue) for value in sub_values)
+
+
 
 # Retrievial
 def contained_symbols(knode: KNode) -> tuple[IndexValue, ...]:
     subnodes = breadth_iter(knode)
     return tuple(node.index for node in subnodes if isinstance(node, SymbolNode))
+
+def arity(node: KNode) -> int:
+    """Return the max index of the node variable, which is the arity of an abstraction"""
+    # For now, all VariableNodes are direct children of the node
+    # If it cease to be the case one day, replace by
+    # sub_values = all_bitlengthaware_breadth(node)
+    sub_values = subvalues(node)
+    variable_numbers = [value.value for value in sub_values if isinstance(value, VariableValue)]
+    if variable_numbers:
+        return max(variable_numbers)
+    return 0
 
 # Compression
 def find_repeating_pattern(nodes: Sequence[KNode[T]], offset: int) -> tuple[KNode[T] | None, int, bool]:
@@ -902,9 +920,23 @@ def factorize_tuple(node: KNode[T]) -> KNode[T]:
     while i < len(children):
         pattern, count, is_reversed = find_repeating_pattern(children, i)
         if pattern is not None and abs(count) > 1:
+            # Calculate bit lengths
+            pattern_len = pattern.bit_length()
+            repeat_count = abs(count)
+            original_bits = sum(child.bit_length() for child in children[i:i + repeat_count * (len(pattern.children) if isinstance(pattern, ProductNode) else 1)])
             repeat_node = RepeatNode(pattern, CountValue(count))
-            simplified.append(repeat_node)
-            i += abs(count) * (len(pattern.children) if isinstance(pattern, ProductNode) else 1)
+            compressed_bits = repeat_node.bit_length()
+
+            # Only use RepeatNode if it reduces bit length
+            if compressed_bits < original_bits:
+                simplified.append(repeat_node)
+                i += repeat_count * (len(pattern.children) if isinstance(pattern, ProductNode) else 1)
+            else:
+                # If no bit savings, append the original nodes one by one
+                num_nodes = len(pattern.children) if isinstance(pattern, ProductNode) else 1
+                simplified.extend(children[i:i + num_nodes])
+                i += num_nodes
+
         else:
             simplified.append(children[i])
             i += 1
@@ -1030,7 +1062,6 @@ def expand_repeats(node: SumNode[T] | ProductNode[T] | RepeatNode[T] | Primitive
 # Symbol resolution and pattern finding
 
 Bindings = dict[int, BitLengthAware]
-KTuple = tuple[KNode[T], ...]
 
 def matches(pattern: KNode[T], subtree: KNode[T]) -> Bindings | None:
     """
@@ -1214,6 +1245,7 @@ def reduce_abstraction(abstraction: KNode[T], params: Parameters) -> KNode[T]:
     """
     return premap(abstraction, lambda node: substitute_variables(node, params))
 
+@functools.cache
 def resolve_symbols(knode: KNode[T], symbols: tuple[KNode[T], ...]) -> KNode[T]:
     """
     Resolves symbolic references recursively using the symbol table.
@@ -1267,7 +1299,7 @@ def create_rect(height: int, width: int) -> KNode | None:
         other_rows += "3" + direction * (width - 1)  # Down then horizontal
     return create_moves_sequence(first_row + other_rows)
 
-def find_symbol_candidates(trees: KTuple, min_occurrences: int = 2, max_patterns: int = 10) -> list[KNode]:
+def find_symbol_candidates(trees: tuple[KNode[T], ...], min_occurrences: int = 2, max_patterns: int = 10) -> list[KNode]:
     """
     Identifies frequent concrete and abstracted subtrees across multiple KolmogorovTrees.
     Returns the top patterns ranked by bit-length savings.
@@ -1321,13 +1353,13 @@ def find_symbol_candidates(trees: KTuple, min_occurrences: int = 2, max_patterns
     common_patterns.sort(key=lambda p: (-bit_gain(p), -p.bit_length()))
     return common_patterns[:max_patterns]
 
-def symbolize_pattern(trees: KTuple, symbols: KTuple, new_symbol: KNode[T]) -> tuple[KTuple, KTuple]:
+def symbolize_pattern(trees: tuple[KNode[T], ...], symbols: tuple[KNode[T], ...], new_symbol: KNode[T]) -> tuple[tuple[KNode[T], ...], tuple[KNode[T], ...]]:
     index = IndexValue(len(symbols))
     trees = tuple(abstract_node(index, new_symbol, tree) for tree in trees)
     symbols = tuple(abstract_node(index, new_symbol, tree) for tree in symbols) + (new_symbol,)
     return trees, symbols
 
-def greedy_symbolization(trees: KTuple, symbols: KTuple) -> tuple[KTuple, KTuple]:
+def greedy_symbolization(trees: tuple[KNode[T], ...], symbols: tuple[KNode[T], ...]) -> tuple[tuple[KNode[T], ...], tuple[KNode[T], ...]]:
     """
     Symbolize trees by replacing the common pattern with SymbolNodes.
     It only do the most common pattern, because symbolizing one pattern potentially changes the bit length saving of the rest
@@ -1343,7 +1375,7 @@ def greedy_symbolization(trees: KTuple, symbols: KTuple) -> tuple[KTuple, KTuple
 
     return (trees, symbols)
 
-def symbolize(trees: KTuple, symbols: KTuple) -> tuple[KTuple, KTuple]:
+def symbolize(trees: tuple[KNode[T], ...], symbols: tuple[KNode[T], ...]) -> tuple[tuple[KNode[T], ...], tuple[KNode[T], ...]]:
     # Phase 1: Non-symbolic patterns
     while True:
         candidates = [c for c in find_symbol_candidates(trees + symbols) if not is_symbolized(c) and not isinstance(c, RootNode)]
@@ -1375,6 +1407,223 @@ def symbolize(trees: KTuple, symbols: KTuple) -> tuple[KTuple, KTuple]:
 
     return trees, symbols
 
+## Re-factorization:
+
+def factor_by_existing_symbols(tree: KNode[T], symbols: tuple[KNode[T], ...]) -> KNode[T]:
+    """
+    Factors a tree against an existing symbol table, replacing matches with SymbolNodes.
+
+    Args:
+        tree: The tree to factor.
+        symbols: The symbol table to check against.
+
+    Returns:
+        Factored tree with applicable SymbolNode replacements.
+    """
+    def factor_node(node: KNode[T]) -> KNode[T]:
+        for i, symbol in enumerate(symbols):
+            abstracted = abstract_node(IndexValue(i), symbol, node)
+            if abstracted != node:  # If abstraction occurred
+                return abstracted
+        return node
+
+    return postmap(tree, factor_node, factorize=True)
+
+def remap_symbol_indices(tree: KNode[T], mapping: list[int], tree_idx: int) -> KNode[T]:
+    """
+    Updates SymbolNode indices in a tree based on the provided mapping.
+    Used to remap the tree elements.
+
+    Args:
+        tree: The tree to update.
+        mapping: List mapping old indices to new ones.
+        tree_idx: Index of the tree for debugging purposes.
+
+    Returns:
+        Updated tree with remapped SymbolNode indices.
+    """
+
+    def update_node(node: KNode[T]) -> KNode[T]:
+        if isinstance(node, SymbolNode) and node.index.value < len(mapping):
+            new_index = IndexValue(mapping[node.index.value])
+            return SymbolNode(new_index, node.parameters, node.reference_length)
+        return node
+
+    return postmap(tree, update_node, factorize=False)
+
+def remap_sub_symbols(symbol: KNode[T], mapping: list[int], original_table: tuple[KNode[T], ...]) -> KNode[T]:
+    """
+    Remaps SymbolNode indices within a symbol based on the provided mapping.
+    Used to remap the symbol tables elements.
+
+    Args:
+        symbol: The symbol to update.
+        mapping: List mapping old indices to new ones.
+        original_table: The original symbol table for resolution if needed.
+
+    Returns:
+        Updated symbol with remapped SymbolNode indices.
+    """
+    def update_index(node: KNode[T]) -> KNode[T]:
+        if isinstance(node, SymbolNode) and node.index.value < len(mapping):
+            new_index = IndexValue(mapping[node.index.value])
+            return SymbolNode(new_index, node.parameters, node.reference_length)
+        return node
+    return postmap(symbol, update_index, factorize=False)
+
+def merge_symbol_tables(symbol_tables: Sequence[tuple[KNode[T], ...]]) -> tuple[tuple[KNode[T], ...], list[list[int]]]:
+    """
+    Merges multiple symbol tables into a unified table, returning the table and mappings.
+    It choose symbols so to minimize the total bit length.
+    Note: Clean resymbolisation is often preferable.
+
+    Args:
+        symbol_tables: List of symbol tables to merge.
+
+    Returns:
+        Tuple of the unified symbol table and a list of mappings (old index -> new index) for each input table.
+    """
+    unified_symbols: list[KNode] = []
+    mappings: list[list[int]] = [[] for _ in range(len(symbol_tables))]
+
+    equivalence_classes: defaultdict[KNode, list[tuple[KNode, int]]] = defaultdict(list) # Store symbol classes, in an union-find like structure. Each classes contains the symbols and their tables
+    dependency_graph: defaultdict[tuple[KNode, int], set[int]] = defaultdict(set) # Store for each symbol the symbols it depends on
+
+
+    # Step 1: Collect all resolved symbolsa and build the dependency graph
+    for i, table in enumerate(symbol_tables):
+        for symbol in table:
+            resolved_symbol = resolve_symbols(symbol, table)
+            equivalence_classes[resolved_symbol].append((symbol, i))
+            # Track dependencies: which symbols this symbol references in its table
+            subsymbols = set(index.value for index in contained_symbols(symbol))
+            dependency_graph[(symbol, i)] |= subsymbols
+
+    # Step 2: Select optimal symbols per equivalence class
+    selected_symbols = {}
+    for resolved, symbols_in_class in equivalence_classes.items():
+        # Prefer abstracted symbols (those with variables)
+        abstracted = [s for s, _ in symbols_in_class if is_abstraction(s)]
+        if abstracted:
+            # Select the one with the most variables, then smallest bit_length
+            selected = max(abstracted, key=lambda s: (arity(s), -s.bit_length()))
+        else:
+            # Select the one with the smallest bit_length
+            selected = min((s for s, _ in symbols_in_class), key=lambda s: s.bit_length())
+        selected_symbols[resolved] = selected
+
+    # Step 3: Update dependency graph with selected symbols
+    new_dependency_graph = defaultdict(set)
+    symbol_to_selected = {}
+    for resolved, selected in selected_symbols.items():
+        for symbol, table_idx in equivalence_classes[resolved]:
+            symbol_to_selected[(symbol, table_idx)] = selected
+            table = symbol_tables[table_idx]
+            for dep_idx in dependency_graph[(symbol, table_idx)]:
+                if dep_idx < len(table):
+                    dep_symbol = table[dep_idx]
+                    dep_resolved = resolve_symbols(dep_symbol, table)
+                    dep_selected = selected_symbols[dep_resolved]
+                    new_dependency_graph[selected].add(dep_selected)
+
+    # Step 4: Topological sort to order symbols in the unified table
+    in_degree = {s: len(deps) for s, deps in new_dependency_graph.items()}
+    for s in selected_symbols.values():
+        if s not in in_degree:
+            in_degree[s] = 0
+    queue = deque([s for s, deg in in_degree.items() if deg == 0])
+    unified_symbols = []
+
+    while queue:
+        symbol = queue.popleft()
+        unified_symbols.append(symbol)
+        for dependent in new_dependency_graph:
+            if symbol in new_dependency_graph[dependent]:
+                in_degree[dependent] -= 1
+                if in_degree[dependent] == 0:
+                    queue.append(dependent)
+
+    symbol_to_index = {s: i for i, s in enumerate(unified_symbols)}
+    mappings = [[] for _ in symbol_tables]
+
+    for table_idx, table in enumerate(symbol_tables):
+        for symbol in table:
+            resolved = resolve_symbols(symbol, table)
+            selected = selected_symbols[resolved]
+            mappings[table_idx].append(symbol_to_index[selected])
+    # TODO
+
+
+    return tuple(unified_symbols), mappings
+
+def merge_symbol_tables1(symbol_tables: list[tuple[KNode[T], ...]]) -> tuple[tuple[KNode[T], ...], list[list[int]]]:
+    """
+    Merges multiple symbol tables into a unified table, returning the table and mappings.
+
+    Args:
+        symbol_tables: List of symbol tables to merge.
+
+    Returns:
+        Tuple of the unified symbol table and a list of mappings (old index -> new index) for each input table.
+    """
+    unified_symbols: list[KNode] = []
+    mappings: list[list[int]] = [[] for _ in range(len(symbol_tables))]
+    resolved_to_index: dict[KNode, int] = {} # resolved symbol to index
+
+    # First collect all the symbols
+    for i, table in enumerate(symbol_tables):
+        for j, symbol in enumerate(table):
+            # Resolve any nested symbols within this symbol using its own table
+            resolved_symbol = resolve_symbols(symbol, table)
+            print(f"Table {i}, symbol: {symbol}, resolved: {resolved_symbol}")
+            # If the node was not previously added to the unified symbol table
+            if not resolved_symbol in resolved_to_index:
+                # New index is added
+                new_index = len(unified_symbols)
+                resolved_to_index[resolved_symbol] = new_index
+
+                # Remap symbol in case it contains previously seen sub-symbol
+                remapped_symbol = remap_sub_symbols(symbol, mappings[i], table)
+                unified_symbols.append(remapped_symbol)
+
+            # Add the new index to the mapping table
+            new_index = resolved_to_index[resolved_symbol]
+            mappings[i].append(new_index)
+
+    return tuple(unified_symbols), mappings
+
+def symbolize_together(trees: tuple[KNode[T], ...], symbol_tables: Sequence[tuple[KNode[T], ...]]) -> tuple[tuple[KNode[T], ...], tuple[KNode[T], ...]]:
+    """
+    Merges independently symbolized trees into a unified symbol table and re-symbolizes them together.
+
+    Args:
+        trees: Tuple of KNode[MoveValue] trees, each potentially containing SymbolNodes.
+        symbol_tables: List of symbol tables corresponding to each tree (or empty if unsymbolized).
+
+    Returns:
+        Tuple of updated trees and the unified symbol table.
+    """
+    if symbol_tables:
+        if len(symbol_tables) != len(trees):
+            raise ValueError(f"There are only {len(symbol_tables)} symbol tables for {len(trees)} trees")
+        # Step 1: Merge symbol tables into a unified table with index remapping
+        unified_symbols, mappings = merge_symbol_tables(symbol_tables)
+
+        # Step 2: Update trees with the new symbol indices
+        updated_trees = tuple(remap_symbol_indices(tree, mapping, i) for i, (tree, mapping) in enumerate(zip(trees, mappings)))
+
+        # Step 3: Factor existing patterns against the unified symbol table
+        factored_trees = tuple(factor_by_existing_symbols(tree, unified_symbols) for tree in updated_trees)
+    else:
+        factored_trees = trees
+        unified_symbols = tuple()
+
+    # Step 4: Find and symbolize new common patterns across all trees
+    final_trees, final_symbols = symbolize(factored_trees, unified_symbols)
+
+    return final_trees, final_symbols
+
+# Tests
 def test_encode_run_length():
     # Test Case 1: Empty Input
     result = encode_run_length([])
@@ -2021,6 +2270,226 @@ def test_matching():
 
     print("Test matching - Passed")
 
+def test_factor_by_existing_symbols():
+    """Tests the factor_by_existing_symbols function for replacing matching patterns with SymbolNodes."""
+    # Test Case 1: Basic Pattern Replacement
+    pattern = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3))))
+    tree = RootNode(pattern, CoordValue((0, 0)), PaletteValue(frozenset({1})))
+    symbols = (pattern,)
+    result = factor_by_existing_symbols(tree, symbols)
+    expected = RootNode(SymbolNode(IndexValue(0), (), pattern.bit_length()),
+                       CoordValue((0, 0)), PaletteValue(frozenset({1})))
+    assert result == expected, "Test Case 1 Failed: Should replace pattern with SymbolNode"
+    print("Test Case 1: Basic Pattern Replacement - Passed")
+
+    # Test Case 2: No Matching Pattern
+    tree = RootNode(PrimitiveNode(MoveValue(1)), CoordValue((0, 0)), PaletteValue(frozenset({1})))
+    symbols = (pattern,)
+    result = factor_by_existing_symbols(tree, symbols)
+    assert result == tree, "Test Case 2 Failed: Should return unchanged tree when no match"
+    print("Test Case 2: No Matching Pattern - Passed")
+
+    # Test Case 3: Nested Pattern
+    nested_tree = ProductNode((pattern, PrimitiveNode(MoveValue(4))))
+    result = factor_by_existing_symbols(nested_tree, symbols)
+    expected = ProductNode((SymbolNode(IndexValue(0), (), pattern.bit_length()), PrimitiveNode(MoveValue(4))))
+    assert result == expected, "Test Case 3 Failed: Should replace nested pattern"
+    print("Test Case 3: Nested Pattern - Passed")
+
+    # Test Case 4: Multiple Matches
+    multi_tree = ProductNode((pattern, pattern))
+    result = factor_by_existing_symbols(multi_tree, symbols)
+    symbol_node = SymbolNode(IndexValue(0), (), pattern.bit_length())
+    expected = ProductNode((RepeatNode(symbol_node, CountValue(2)), ))
+    assert result == expected, "Test Case 4 Failed: Should replace multiple occurrences"
+    print("Test Case 4: Multiple Matches - Passed")
+
+    # Test Case 5: Empty Symbol Table
+    result = factor_by_existing_symbols(tree, ())
+    assert result == tree, "Test Case 5 Failed: Should return unchanged tree with empty symbols"
+    print("Test Case 5: Empty Symbol Table - Passed")
+
+    print("Test factor_by_existing_symbols - Passed")
+
+def test_remap_symbol_indices():
+    """Tests the remap_symbol_indices function for updating SymbolNode indices."""
+    # Test Case 1: Single Symbol Remap
+    tree = SymbolNode(IndexValue(0), ())
+    mapping = [1]
+    result = remap_symbol_indices(tree, mapping, 0)
+    expected = SymbolNode(IndexValue(1), ())
+    assert result == expected, "Test Case 1 Failed: Should remap index 0 to 1"
+    print("Test Case 1: Single Symbol Remap - Passed")
+
+    # Test Case 2: No Symbols
+    tree = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3))))
+    mapping = [1, 2]
+    result = remap_symbol_indices(tree, mapping, 0)
+    assert result == tree, "Test Case 2 Failed: Should return unchanged tree with no symbols"
+    print("Test Case 2: No Symbols - Passed")
+
+    # Test Case 3: Nested Symbols
+    tree = ProductNode((SymbolNode(IndexValue(0), ()), SymbolNode(IndexValue(1), ())))
+    mapping = [2, 0]
+    result = remap_symbol_indices(tree, mapping, 0)
+    expected = ProductNode((SymbolNode(IndexValue(2), ()), SymbolNode(IndexValue(0), ())))
+    assert result == expected, "Test Case 3 Failed: Should remap nested symbols correctly"
+    print("Test Case 3: Nested Symbols - Passed")
+
+    # Test Case 4: Out of Bounds Index
+    tree = SymbolNode(IndexValue(2), ())
+    mapping = [0, 1]  # Mapping shorter than index
+    result = remap_symbol_indices(tree, mapping, 0)
+    assert result == tree, "Test Case 4 Failed: Should keep unchanged when index out of bounds"
+    print("Test Case 4: Out of Bounds Index - Passed")
+
+    # Test Case 5: Empty Mapping
+    tree = SymbolNode(IndexValue(0), ())
+    mapping = []
+    result = remap_symbol_indices(tree, mapping, 0)
+    assert result == tree, "Test Case 5 Failed: Should keep unchanged with empty mapping"
+    print("Test Case 5: Empty Mapping - Passed")
+
+    print("Test remap_symbol_indices - Passed")
+
+def test_remap_sub_symbols():
+    """Tests the remap_sub_symbols function for updating SymbolNodes within a symbol."""
+    # Test Case 1: Simple Symbol with Sub-Symbol
+    symbol = SymbolNode(IndexValue(0), (SymbolNode(IndexValue(1), ()),))
+    mapping = [2, 0]
+    original_table = (PrimitiveNode(MoveValue(1)), PrimitiveNode(MoveValue(2)))
+    result = remap_sub_symbols(symbol, mapping, original_table)
+    expected = SymbolNode(IndexValue(2), (SymbolNode(IndexValue(0), ()),))
+    assert result == expected, "Test Case 1 Failed: Should remap sub-symbol index"
+    print("Test Case 1: Simple Symbol with Sub-Symbol - Passed")
+
+    # Test Case 2: No Sub-Symbols
+    symbol = SymbolNode(IndexValue(0), (PrimitiveNode(MoveValue(1)),))
+    mapping = [1]
+    original_table = (PrimitiveNode(MoveValue(2)),)
+    result = remap_sub_symbols(symbol, mapping, original_table)
+    expected = SymbolNode(IndexValue(1), (PrimitiveNode(MoveValue(1)),), symbol.reference_length)
+    assert result == expected, "Test Case 2 Failed: Should remap outer symbol index"
+    print("Test Case 2: No Sub-Symbols - Passed")
+
+    # Test Case 3: Multiple Sub-Symbols
+    symbol = SymbolNode(IndexValue(0), (SymbolNode(IndexValue(0), ()), SymbolNode(IndexValue(1), ())))
+    mapping = [1, 0]
+    original_table = (PrimitiveNode(MoveValue(1)), PrimitiveNode(MoveValue(2)))
+    result = remap_sub_symbols(symbol, mapping, original_table)
+    expected = SymbolNode(IndexValue(1), (SymbolNode(IndexValue(1), ()), SymbolNode(IndexValue(0), ())))
+    assert result == expected, "Test Case 3 Failed: Should remap multiple sub-symbols"
+    print("Test Case 3: Multiple Sub-Symbols - Passed")
+
+    # Test Case 4: Empty Mapping
+    symbol = SymbolNode(IndexValue(0), (SymbolNode(IndexValue(0), ()),))
+    mapping = []
+    original_table = (PrimitiveNode(MoveValue(1)),)
+    result = remap_sub_symbols(symbol, mapping, original_table)
+    assert result == symbol, "Test Case 4 Failed: Should return unchanged with empty mapping"
+    print("Test Case 4: Empty Mapping - Passed")
+
+    print("Test remap_sub_symbols - Passed")
+
+def test_merge_symbol_tables():
+    """Tests the merge_symbol_tables function for combining symbol tables."""
+    # Test Case 1: Merging Identical Tables
+    symbol = ProductNode((PrimitiveNode(MoveValue(1)), PrimitiveNode(MoveValue(2))))
+    table1 = (symbol,)
+    table2 = (symbol,)
+    unified, mappings = merge_symbol_tables([table1, table2])
+    assert unified == (symbol,), "Test Case 1 Failed: Unified table incorrect"
+    assert mappings == [[0], [0]], "Test Case 1 Failed: Mappings should point to same index"
+    print("Test Case 1: Merging Identical Tables - Passed")
+
+    # Test Case 2: Merging Distinct Tables
+    symbol1 = PrimitiveNode(MoveValue(1))
+    symbol2 = PrimitiveNode(MoveValue(2))
+    table1 = (symbol1,)
+    table2 = (symbol2,)
+    unified, mappings = merge_symbol_tables([table1, table2])
+    assert unified == (symbol1, symbol2), "Test Case 2 Failed: Unified table should contain both symbols"
+    assert mappings == [[0], [1]], "Test Case 2 Failed: Mappings incorrect"
+    print("Test Case 2: Merging Distinct Tables - Passed")
+
+    # Test Case 3: Merging with Nested Symbols
+    nested_symbol = RepeatNode(SymbolNode(IndexValue(0), ()), CountValue(3))
+    symbol_def = PrimitiveNode(MoveValue(1))
+    table1 = (symbol_def, nested_symbol)
+    table2 = (symbol_def,)
+    unified, mappings = merge_symbol_tables([table1, table2])
+    assert unified == table1, "Test Case 3 Failed: Unified table incorrect"
+    assert mappings == [[0, 1], [0]], "Test Case 3 Failed: Mappings incorrect"
+    print("Test Case 3: Merging with Nested Symbols - Passed")
+
+    # Test Case 4: Merging with Nested Symbols and Variables
+    resolved = RepeatNode(ProductNode((PrimitiveNode(MoveValue(4)), PrimitiveNode(MoveValue(5)))), CountValue(3))
+    symbol1 = RepeatNode(ProductNode((PrimitiveNode(MoveValue(4)), PrimitiveNode(MoveValue(5)))),VariableNode(VariableValue(0)))
+    symbol2 = SymbolNode(IndexValue(0), (CountValue(3), ))
+    table1 = (resolved,)
+    table2 = (symbol1, symbol2)
+    unified, mappings = merge_symbol_tables([table1, table2])
+    assert unified == table2, "Test Case 3 Failed: Unified table incorrect"
+    assert mappings == [[1], [0, 1]], "Test Case 3 Failed: Mappings incorrect"
+    print("Test Case 3: Merging with Nested Symbols - Passed")
+
+    # Test Case 4: Empty Tables
+    unified, mappings = merge_symbol_tables([(), ()])
+    assert unified == (), "Test Case 4 Failed: Should return empty unified table"
+    assert mappings == [[], []], "Test Case 4 Failed: Should return empty mappings"
+    print("Test Case 4: Empty Tables - Passed")
+
+    print("Test merge_symbol_tables - Passed")
+
+def test_symbolize_together():
+    """Tests the symbolize_together function for unifying and re-symbolizing trees."""
+    # Test Case 1: Identical Trees with Empty Symbol Tables
+    pattern = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)), PrimitiveNode(MoveValue(4)), PrimitiveNode(MoveValue(4))))
+    tree1 = RootNode(pattern, CoordValue((0, 0)), PaletteValue(frozenset({1})))
+    tree2 = RootNode(pattern, CoordValue((1, 1)), PaletteValue(frozenset({2})))
+    trees = (tree1, tree2)
+    symbol_tables = [(), ()]
+    final_trees, final_symbols = symbolize_together(trees, symbol_tables)
+    expected_symbol = RootNode(node=ProductNode(children=(PrimitiveNode(value=MoveValue(value=2)), PrimitiveNode(value=MoveValue(value=3)), PrimitiveNode(value=MoveValue(value=4)), PrimitiveNode(value=MoveValue(value=4)))), position=VariableNode(index=VariableValue(value=0)), colors=VariableNode(index=VariableValue(value=1)))
+    symbol_node = SymbolNode(IndexValue(0), (CoordValue((0, 0)), PaletteValue(frozenset({1}))), pattern.bit_length())
+    expected_trees = (
+        SymbolNode(index=IndexValue(value=0), parameters=(CoordValue(value=(0, 0)), PaletteValue(value=frozenset({1}))), reference_length=expected_symbol.bit_length()),
+        SymbolNode(index=IndexValue(value=0), parameters=(CoordValue(value=(1, 1)), PaletteValue(value=frozenset({2}))), reference_length=expected_symbol.bit_length())
+    )
+    expected_symbols = (expected_symbol,)
+    assert final_trees == expected_trees, "Test Case 1 Failed: Trees incorrect"
+    assert final_symbols == expected_symbols, "Test Case 1 Failed: Symbols incorrect"
+    print("Test Case 1: Identical Trees with Empty Symbol Tables - Passed")
+
+    # Test Case 2: Trees with Pre-existing Symbols
+    symbol_def = PrimitiveNode(MoveValue(1))
+    tree1 = SymbolNode(IndexValue(0), ())
+    tree2 = SymbolNode(IndexValue(0), ())
+    symbol_tables = [(symbol_def,), (symbol_def,)]
+    final_trees, final_symbols = symbolize_together((tree1, tree2), symbol_tables)
+    assert final_trees == (tree1, tree2), "Test Case 2 Failed: Trees should remain unchanged"
+    assert final_symbols == (symbol_def,), "Test Case 2 Failed: Symbols should be unified"
+    print("Test Case 2: Trees with Pre-existing Symbols - Passed")
+
+    # Test Case 3: Empty Input
+    final_trees, final_symbols = symbolize_together((), [])
+    assert final_trees == (), "Test Case 3 Failed: Empty trees should return empty"
+    assert final_symbols == (), "Test Case 3 Failed: Empty symbols should return empty"
+    print("Test Case 3: Empty Input - Passed")
+
+    # Test Case 4: Integration Test with Resolution
+    pattern = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)), PrimitiveNode(MoveValue(4)), PrimitiveNode(MoveValue(4))))
+    tree1 = RootNode(pattern, CoordValue((0, 0)), PaletteValue(frozenset({1})))
+    tree2 = RootNode(pattern, CoordValue((1, 1)), PaletteValue(frozenset({2})))
+    trees = (tree1, tree2)
+    symbol_tables = [(), ()]  # Empty symbol tables to start fresh
+    final_trees, final_symbols = symbolize_together(trees, symbol_tables)
+    resolved_trees = tuple(resolve_symbols(tree, final_symbols) for tree in final_trees)
+    expected_resolved = (tree1, tree2)  # Expect the original trees after resolution
+    assert resolved_trees == expected_resolved, "Test Case 4 Failed: Resolved trees should match originals"
+    print("Test Case 4: Integration Test with Resolution - Passed")
+
+    print("Test symbolize_together - Passed")
 
 def run_tests():
     """Runs simple tests to verify KolmogorovTree functionality."""
@@ -2078,6 +2547,11 @@ def run_tests():
     test_resolve_symbols()
     test_find_symbol_candidates()
     test_matching()
+    test_factor_by_existing_symbols()
+    test_remap_symbol_indices()
+    test_remap_sub_symbols()
+    test_merge_symbol_tables()
+    test_symbolize_together()
 
 if __name__ == "__main__":
     run_tests()
