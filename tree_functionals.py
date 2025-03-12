@@ -12,9 +12,15 @@ T = TypeVar("T")
 class RoseNode(Generic[T]):
     def __init__(self, value):
         self.value: T = value
-        self.children: Sequence[T] = []
+        self.children: Sequence[RoseNode[T]] = []
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, self.__class__):
+            return False
+        return self.__dict__ == other.__dict__
 
 
+# Traversals
 def breadth_first_preorder(
     after: Callable[[T], Iterator[T]], root: T | None
 ) -> Iterator[T]:
@@ -135,6 +141,66 @@ def depth_first_postorder(
                 stack.append((value, False))
 
 
+# Mappings
+
+
+def postorder_map(
+    node: T,
+    f: Callable[[T], T],
+    after: Callable[[T], Iterator[T]],
+    reconstuct: Callable[[T, Sequence[T]], T],
+) -> T:
+    """
+    Applies a function to each node in a tree in post-order, reconstructing the tree.
+
+    Args:
+        node: The root node of the tree.
+        f: Function to transform each node after processing children.
+        after: Returns an iterator of a node's children.
+        reconstruct: Reconstructs a node with its original data and new children.
+
+    Returns:
+        The transformed tree.
+    """
+
+    new_children = tuple(
+        postorder_map(child, f, after, reconstuct) for child in after(node)
+    )
+    new_node = reconstuct(node, new_children)
+    return f(new_node)
+
+
+def preorder_map(
+    node: T,
+    f: Callable[[T], T],
+    after: Callable[[T], Iterator[T]],
+    reconstructor: Callable[[T, list[T]], T],
+) -> T:
+    """
+    Applies a function to each node in a tree in pre-order, reconstructing the tree.
+
+    Args:
+        node: The root node of the tree.
+        f: Function to transform each node before processing children.
+        after: Returns an iterator of a node's children.
+        reconstructor: Reconstructs a node with its transformed data and new children.
+
+    Returns:
+        The transformed tree.
+    """
+
+    transformed_node = f(node)
+    new_children = [
+        preorder_map(child, f, after, reconstructor)
+        for child in after(transformed_node)
+    ]
+    new_node = reconstructor(transformed_node, new_children)
+    return new_node
+
+
+# Tests
+
+
 def test_traversals():
     def after(node):
         return node.children
@@ -227,6 +293,93 @@ def test_traversals():
     ] == expected_df_post, "DF Postorder failed with sample tree"
 
 
+# Test function for preorder_map and postorder_map
+def test_mappings():
+    # Construct the sample tree:
+    #       A
+    #      / \
+    #     B   C
+    #    / \   \
+    #   D   E   F
+    A = RoseNode("A")
+    B = RoseNode("B")
+    C = RoseNode("C")
+    D = RoseNode("D")
+    E = RoseNode("E")
+    F = RoseNode("F")
+    A.children = [B, C]
+    B.children = [D, E]
+    C.children = [F]
+
+    # Define helper functions
+    def after(node: RoseNode[T]) -> Iterator[RoseNode[T]]:
+        """Returns an iterator over the node's children."""
+        return iter(node.children)
+
+    def reconstruct(
+        node: "RoseNode[T]", new_children: Sequence["RoseNode[T]"]
+    ) -> "RoseNode[T]":
+        """
+        Reconstructs a node with its value and new children.
+
+        Args:
+            node: Original node providing the value.
+            new_children: New list of child nodes.
+
+        Returns:
+            RoseNode: New node with node's value and new_children.
+        """
+        new_node = RoseNode(node.value)
+        new_node.children = list(new_children)  # Convert to list for mutability
+        return new_node
+
+    # Test Case 1: Transformation appending "_transformed"
+    def f_transform(node: RoseNode[str]) -> RoseNode[str]:
+        """Transforms node by appending '_transformed' to its value."""
+        new_node = RoseNode(node.value + "_transformed")
+        new_node.children = node.children  # Preserve original children
+        return new_node
+
+    # Expected tree after transformation
+    expected_transform = RoseNode("A_transformed")
+    B_trans = RoseNode("B_transformed")
+    C_trans = RoseNode("C_transformed")
+    D_trans = RoseNode("D_transformed")
+    E_trans = RoseNode("E_transformed")
+    F_trans = RoseNode("F_transformed")
+    expected_transform.children = [B_trans, C_trans]
+    B_trans.children = [D_trans, E_trans]
+    C_trans.children = [F_trans]
+
+    # Apply preorder_map
+    preorder_result_transform = preorder_map(A, f_transform, after, reconstruct)
+    assert preorder_result_transform == expected_transform, (
+        "preorder_map with transformation failed"
+    )
+
+    # Apply postorder_map
+    postorder_result_transform = postorder_map(
+        A, f_transform, after, reconstruct
+    )
+    assert postorder_result_transform == expected_transform, (
+        "postorder_map with transformation failed"
+    )
+
+    # Test Case 2: Identity transformation
+    def f_identity(node: RoseNode[T]) -> RoseNode[T]:
+        """Returns the node unchanged."""
+        return node
+
+    # Apply preorder_map with identity
+    preorder_result_identity = preorder_map(A, f_identity, after, reconstruct)
+    assert preorder_result_identity == A, "preorder_map with identity failed"
+
+    # Apply postorder_map with identity
+    postorder_result_identity = postorder_map(A, f_identity, after, reconstruct)
+    assert postorder_result_identity == A, "postorder_map with identity failed"
+
+
 if __name__ == "__main__":
     test_traversals()
+    test_mappings()
     print("All tests passed successfully!")

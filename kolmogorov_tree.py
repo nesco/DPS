@@ -53,6 +53,7 @@ from abc import ABC, abstractmethod
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import IntEnum
+from re import A
 from typing import (
     Any,
     Callable,
@@ -76,10 +77,10 @@ from edit import (
 )
 from localtypes import BitLengthAware, Color, Coord
 from tree_functionals import (
-    breadth_first_postorder,
     breadth_first_preorder,
-    depth_first_postorder,
     depth_first_preorder,
+    preorder_map,
+    postorder_map,
 )
 
 # Type variable for generic programming
@@ -722,6 +723,29 @@ def iterable_to_sum(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
         return SumNode(get_iterator(nodes))
 
 
+def reconstruct_knode(
+    knode: KNode[T], new_children: Sequence[KNode[T]], factorize: bool = False
+) -> KNode[T]:
+    """Reconstructs a KNode with its original data and new children."""
+    match knode:
+        case TupleNode(_):
+            new_node = type(knode)(tuple(new_children))
+            if factorize:
+                new_node = factorize_tuple(new_node)
+            return new_node
+        case RepeatNode(_, count):
+            return RepeatNode(new_children[0], count)
+        case RootNode(_, position, colors):
+            return RootNode(new_children[0], position, colors)
+        case SymbolNode(index, parameters):
+            new_parameters = list(parameters)
+            for i, p in enumerate(new_children):
+                new_parameters[i] = p
+            return SymbolNode(index, tuple(new_parameters))
+        case _:
+            return knode  # Leaf nodes remain unchanged
+
+
 # Traversal
 
 
@@ -730,44 +754,24 @@ def children(knode: KNode) -> Iterator[KNode]:
     match knode:
         case TupleNode(children):
             return iter(children)
-        case MetaNode(node):
-            return iter((node,))
+        case RepeatNode(node, count):
+            children = [node]
+            if isinstance(count, VariableNode):
+                children.append(count)
+            return iter(children)
+        case RootNode(node, position, colors):
+            children = [node]
+            if isinstance(position, VariableNode):
+                children.append(position)
+            if isinstance(colors, VariableNode):
+                children.append(colors)
+            return iter(children)
         case SymbolNode(_, parameters):
-            if isinstance(parameters, VariableNode):
-                return iter((parameters,))
             return iter(
                 (param for param in parameters if isinstance(param, KNode))
             )
         case _:
             return iter(())
-
-
-# Deprecated, used `get_subvalues`
-def subvalues(knode: KNode[T]) -> Iterator[BitLengthAware]:
-    """
-    Yields all member variables of the given KNode that are instances of BitLengthAware.
-    For fields that are tuples or lists, yields each element that is BitLengthAware.
-
-    Args:
-        knode (KNode[T]): The KNode instance to extract subvalues from.
-
-    Yields:
-        BitLengthAware: Each member variable or element within a collection that is BitLengthAware.
-
-    Raises:
-        ValueError: If a tuple or list field contains an element that is not BitLengthAware.
-    """
-    for field_name in knode.__dataclass_fields__.keys():
-        value = getattr(knode, field_name)
-        if isinstance(value, BitLengthAware):
-            yield value
-        elif isinstance(value, (tuple, list)):
-            for elem in value:
-                if not isinstance(elem, BitLengthAware):
-                    raise ValueError(
-                        f"Field {field_name} contains non-BitLengthAware element: {elem}"
-                    )
-                yield elem
 
 
 def get_subvalues(obj: BitLengthAware) -> Iterator[BitLengthAware]:
@@ -963,7 +967,7 @@ def is_abstraction(node: KNode) -> bool:
     # If it cease to be the case one day, replace by
     # sub_values = breadth_first_preorder_knode(node)
     # any(isinstance(value, VariableValue) for value in sub_values) # VariableNode -> VariableValue, so both one or the other works
-    sub_values = subvalues(node)
+    sub_values = get_subvalues(node)
     return any(
         isinstance(value, VariableNode) or isinstance(value, VariableValue)
         for value in sub_values
@@ -983,9 +987,9 @@ def arity(node: KNode) -> int:
     # For now, all VariableNodes are direct children of the node
     # If it cease to be the case one day, replace by
     # sub_values = breadth_first_preorder_knode(node)
-    sub_values = subvalues(node)
+    subvalues = get_subvalues(node)
     variable_numbers = [
-        value.value for value in sub_values if isinstance(value, VariableValue)
+        value.value for value in subvalues if isinstance(value, VariableValue)
     ]
     if variable_numbers:
         return max(variable_numbers)
@@ -1163,9 +1167,11 @@ def factorize_tuple(node: KNode[T]) -> KNode[T]:
 
 
 # High-order functions
+
+
 def postmap(
-    knode: KNode, f: Callable[[KNode], KNode], factorize: bool = True
-) -> KNode:
+    knode: KNode[T], f: Callable[[KNode[T]], KNode[T]], factorize: bool = True
+) -> KNode[T]:
     """
     Map a function alongside a KNode. It updates first childrens, then updates the base node
 
@@ -1177,31 +1183,16 @@ def postmap(
     Returns:
         KNode: A new KNode tree with the function f applied to each node
     """
-    match knode:
-        case TupleNode(children):
-            mapped_children = tuple(postmap(child, f) for child in children)
-            node = type(knode)(mapped_children)
-            if factorize:
-                node = factorize_tuple(node)
-            return f(node)
-        case RepeatNode(node, count):
-            nnode = postmap(node, f)
-            return f(RepeatNode(nnode, count))
-        case RootNode(node, position, color):
-            nnode = postmap(node, f)
-            return f(RootNode(nnode, position, color))
-        case SymbolNode(index, parameters):
-            nparameters = tuple(
-                (postmap(p, f) if isinstance(p, KNode) else p)
-                for p in parameters
-            )
-            return f(SymbolNode(index, nparameters))
-        case _:
-            return f(knode)
+    return postorder_map(
+        knode,
+        f,
+        children,
+        lambda node, kids: reconstruct_knode(node, kids, factorize),
+    )
 
 
 def premap(
-    knode: KNode, f: Callable[[KNode], KNode], factorize: bool = True
+    knode: KNode[T], f: Callable[[KNode[T]], KNode[T]], factorize: bool = True
 ) -> KNode:
     """
     Map a function alongside a KNode. It updates the base node first, then updates the children
@@ -1214,28 +1205,12 @@ def premap(
     Returns:
         KNode: A new KNode tree with the function f applied to each node
     """
-    knode = f(knode)
-    match knode:
-        case TupleNode(children):
-            mapped_children = tuple(premap(child, f) for child in children)
-            node = type(knode)(mapped_children)
-            if factorize:
-                node = factorize_tuple(node)
-            return f(node)
-        case RepeatNode(node, count):
-            nnode = premap(node, f)
-            return RepeatNode(nnode, count)
-        case RootNode(node, position, color):
-            nnode = premap(node, f)
-            return RootNode(nnode, position, color)
-        case SymbolNode(index, parameters):
-            nparameters = tuple(
-                (premap(p, f) if isinstance(p, KNode) else p)
-                for p in parameters
-            )
-            return SymbolNode(index, nparameters)
-        case _:
-            return knode
+    return preorder_map(
+        knode,
+        f,
+        children,
+        lambda node, kids: reconstruct_knode(node, kids, factorize),
+    )
 
 
 def postmap_unsafe(
@@ -3475,11 +3450,11 @@ def run_tests():
     print("Test 3: Operator overloads - Passed")
 
     # Test 4: Symbol resolution
-    symbol_def = ProductNode((move_right, move_down))
+    symbol_def = ProductNode((move_right, move_down, move_right))
     symbols: tuple[KNode[MoveValue], ...] = (symbol_def,)
     symbol_node = SymbolNode(IndexValue(0), ())
     root_with_symbol = RootNode(
-        ProductNode((symbol_node, move_right)),
+        symbol_node,
         CoordValue((0, 0)),
         PaletteValue(frozenset({1})),
     )
