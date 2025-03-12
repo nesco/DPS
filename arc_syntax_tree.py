@@ -15,11 +15,12 @@ The kolmogorov nodes are in a way the transitions of an automata over grid coord
 
 """
 from freeman import FreemanNode, King, encode_connected_component, DIRECTIONS_FREEMAN
-from kolmogorov_tree import ProductNode, SumNode, PrimitiveNode, RootNode, MoveValue, KNode, RectNode, CountValue, CoordValue, PaletteValue, SymbolNode, RepeatNode, VariableNode, postmap, factorize_tuple, iterable_to_product, iterable_to_sum, shift, reverse_node
+from kolmogorov_tree import ProductNode, SumNode, PrimitiveNode, RootNode, MoveValue, KNode, RectNode, CountValue, CoordValue, PaletteValue, SymbolNode, RepeatNode, VariableNode, postmap, factorize_tuple, iterable_to_product, iterable_to_sum, shift, reverse_node, T
 from localtypes import Points, Coord, Coords
 from grid import coords_to_points, points_to_grid_colored
-from typing import cast
+from typing import cast, Generic
 from lattice import input_to_lattice
+from dataclasses import dataclass
 
 def moves_to_rect(moves: str) -> tuple[int, int] | None:
     """Detect if a move sequence forms a rectangle, returning (height, width) or None."""
@@ -201,6 +202,22 @@ def decode_root(root: RootNode[MoveValue]) -> Points:
             raise TypeError("Root's node should be a concrete KNode")
 
     return coords_to_points(coords, color)
+
+@dataclass
+class UnionNode(Generic[T]):
+    """
+    Represent a connected component by reconstructing it with the best set of single color programs.
+    After marginalisation comes reconstruction, divide and conquer.
+    """
+
+    nodes: set[KNode[T]]
+    shadowed: set[int] | None = None
+    normalizing_node: KNode[T] | None = None
+
+    def bit_length(self) -> int:
+        # Maybe remove the cost of the shadowed nodes
+        len_nodes = sum(node.bit_length() for node in self.nodes)
+        return len_nodes + (0 if self.normalizing_node is None else self.normalizing_node.bit_length())
 
 ### tests
 
