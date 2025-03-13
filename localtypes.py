@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ParamSpec, TypeVar
+from typing import Iterable, ParamSpec, TypeVar, cast
 
 # Basic type variables for generic operations
 T = TypeVar("T")
@@ -68,6 +68,12 @@ class BitLengthAware(ABC):
         pass
 
 
+def ensure_all_instances(seq: Iterable[object], cls: type[T]) -> Iterable[T]:
+    if not all(isinstance(item, cls) for item in seq):
+        raise TypeError(f"Not all items are instances of {cls}")
+    return cast(Iterable[T], seq)
+
+
 __all__ = [
     # Type variables
     "T",
@@ -100,4 +106,8 @@ __all__ = [
     "Row",
     "Col",
     "Direction",
+    # BitLength
+    "BitLengthAware",
+    # Type guard
+    "ensure_all_instances",
 ]

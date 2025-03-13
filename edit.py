@@ -3,29 +3,41 @@ This module is dedicated to compute edit distance and transformations.
 Four valid operations will be used: Identity, Add, Delete, Substitute.
 Distances are computed with given distance and "length" functions.
 If there is some kind of neutral element in the "set" of objects to compare, the "length" function will usually be the distance to it.
+
+For tree type structures, Identity only mean the current non-tree values of the compared node are similar, as operations on their children will be linearized and thus counted
 """
 
 from dataclasses import dataclass
 from typing import Callable, Generic, Sequence, TypeVar
 
+from localtypes import BitLengthAware
+
 T = TypeVar("T")
 
 
 @dataclass(frozen=True)
-class Identity(Generic[T]):
+class Identity(Generic[T], BitLengthAware):
     """Represents an element that remains unchanged."""
 
     value: T
+
+    def bit_length(self) -> int:
+        return 0
 
     def __str__(self):
         return f"Identity: {self.value}"
 
 
 @dataclass(frozen=True)
-class Add(Generic[T]):
+class Add(Generic[T], BitLengthAware):
     """Represents an element that is added."""
 
     value: T
+
+    def bit_length(self) -> int:
+        if isinstance(self.value, BitLengthAware):
+            return self.value.bit_length()
+        return 1
 
     def __str__(self):
         return f"Add: {self.value}"
@@ -37,6 +49,11 @@ class Delete(Generic[T]):
 
     value: T
 
+    def bit_length(self) -> int:
+        if isinstance(self.value, BitLengthAware):
+            return self.value.bit_length()
+        return 1
+
     def __str__(self):
         return f"Delete: {self.value}"
 
@@ -47,6 +64,16 @@ class Substitute(Generic[T]):
 
     previous_value: T
     next_value: T
+
+    def bit_length(self) -> int:
+        if isinstance(self.previous_value, BitLengthAware) and isinstance(
+            self.next_value, BitLengthAware
+        ):
+            return (
+                self.previous_value.bit_length() + self.next_value.bit_length()
+            )
+
+        return 2
 
     def __str__(self):
         return f"Substitute: {self.previous_value} -> {self.next_value}"
@@ -63,7 +90,6 @@ def sequence_edit_distance(
     list2: Sequence[T],
     distance_func: Callable[[T, T], int],
     len_func: Callable[[T], int],
-    track_changes: bool = False,
 ) -> tuple[int, Sequence[Operation[T]]]:
     """
     Computes the edit distance between two sequences using dynamic programming.
@@ -73,7 +99,6 @@ def sequence_edit_distance(
         list2: Second sequence.
         distance_func: Function to compute distance between two elements.
         len_func: Function to compute the "length" or cost of an element.
-        track_changes: If True, returns the list of transformations.
 
     Returns:
         Tuple of (edit distance, list of transformations).
@@ -99,30 +124,27 @@ def sequence_edit_distance(
 
     # Backtrack to find transformations if requested
     transformations = []
-    if track_changes:
-        i, j = m, n
-        while i > 0 or j > 0:
-            if (
-                i > 0
-                and j > 0
-                and dp[i][j]
-                == dp[i - 1][j - 1] + distance_func(list1[i - 1], list2[j - 1])
-            ):
-                if distance_func(list1[i - 1], list2[j - 1]) == 0:
-                    transformations.append(Identity(list1[i - 1]))
-                else:
-                    transformations.append(
-                        Substitute(list1[i - 1], list2[j - 1])
-                    )
-                i -= 1
-                j -= 1
-            elif i > 0 and dp[i][j] == dp[i - 1][j] + len_func(list1[i - 1]):
-                transformations.append(Delete(list1[i - 1]))
-                i -= 1
+    i, j = m, n
+    while i > 0 or j > 0:
+        if (
+            i > 0
+            and j > 0
+            and dp[i][j]
+            == dp[i - 1][j - 1] + distance_func(list1[i - 1], list2[j - 1])
+        ):
+            if distance_func(list1[i - 1], list2[j - 1]) == 0:
+                transformations.append(Identity(list1[i - 1]))
             else:
-                transformations.append(Add(list2[j - 1]))
-                j -= 1
-        transformations.reverse()  # Reverse to get transformations in forward order
+                transformations.append(Substitute(list1[i - 1], list2[j - 1]))
+            i -= 1
+            j -= 1
+        elif i > 0 and dp[i][j] == dp[i - 1][j] + len_func(list1[i - 1]):
+            transformations.append(Delete(list1[i - 1]))
+            i -= 1
+        else:
+            transformations.append(Add(list2[j - 1]))
+            j -= 1
+    transformations.reverse()  # Reverse to get transformations in forward order
 
     return dp[m][n], tuple(transformations)
 
@@ -132,7 +154,6 @@ def set_edit_distance(
     set2: set[T],
     distance_func: Callable[[T, T], int],
     len_func: Callable[[T], int],
-    track_changes: bool = False,
 ) -> tuple[int, Sequence[Operation[T]]]:
     """
     Computes the edit distance between two sets using a greedy approach.
@@ -142,7 +163,6 @@ def set_edit_distance(
         set2: Second set.
         distance_func: Function to compute distance between two elements.
         len_func: Function to compute the "length" or cost of an element.
-        track_changes: If True, returns the list of transformations.
 
     Returns:
         Tuple of (edit distance, list of transformations).
@@ -152,13 +172,11 @@ def set_edit_distance(
         return 0, []
     if not set1:
         dist = sum(len_func(elem) for elem in set2)
-        transformations = [Add(elem) for elem in set2] if track_changes else []
+        transformations = [Add(elem) for elem in set2]
         return dist, transformations
     if not set2:
         dist = sum(len_func(elem) for elem in set1)
-        transformations = (
-            [Delete(elem) for elem in set1] if track_changes else []
-        )
+        transformations = [Delete(elem) for elem in set1]
         return dist, transformations
 
     # Convert sets to lists for processing
@@ -176,28 +194,24 @@ def set_edit_distance(
             )
             if min_dist < len_func(elem1) + len_func(list2[min_j]):
                 total_dist += min_dist
-                if track_changes:
-                    if min_dist == 0:
-                        transformations.append(Identity(elem1))
-                    else:
-                        transformations.append(Substitute(elem1, list2[min_j]))
+                if min_dist == 0:
+                    transformations.append(Identity(elem1))
+                else:
+                    transformations.append(Substitute(elem1, list2[min_j]))
                 available.remove(min_j)
             else:
                 total_dist += len_func(elem1)
-                if track_changes:
-                    transformations.append(Delete(elem1))
+                transformations.append(Delete(elem1))
         else:
             total_dist += len_func(elem1)
-            if track_changes:
-                transformations.append(Delete(elem1))
+            transformations.append(Delete(elem1))
 
     # Handle remaining elements in set2
     for j in available:
         total_dist += len_func(list2[j])
-        if track_changes:
-            transformations.append(Add(list2[j]))
+        transformations.append(Add(list2[j]))
 
-    return total_dist, tuple(transformations) if track_changes else []
+    return total_dist, tuple(transformations)
 
 
 def edit_distance(
@@ -217,9 +231,8 @@ def edit_distance(
     distance, transformations = sequence_edit_distance(
         a,
         b,
-        distance_func=lambda x, y: 0 if x == y else 1,
+        distance_func=lambda x, y: 0 if x == y else 2,
         len_func=lambda x: 1,
-        track_changes=True,
     )
     if not reverse:
         tuple(reversed(transformations))
@@ -234,6 +247,9 @@ def test_edit_distance():
     a = "kitten"
     b = "sitting"
     distance, transformations = edit_distance(a, b)
+    assert distance == sum(op.bit_length() for op in transformations), (
+        "The sum of the operations bit length should math the distance"
+    )
     print(f"Distance between {a} and {b}: {distance}")
     print(f"Steps: {len(transformations)}")
     for transformation in transformations:
@@ -247,9 +263,11 @@ def test_set_edit_distance():
     distance, transformations = set_edit_distance(
         set1,
         set2,
-        distance_func=lambda x, y: 0 if x == y else 1,
+        distance_func=lambda x, y: 0 if x == y else 2,
         len_func=lambda x: 1,
-        track_changes=True,
+    )
+    assert distance == sum(op.bit_length() for op in transformations), (
+        "The sum of the operations bit length should math the distance"
     )
     print(f"Distance between {set1} and {set2}: {distance}")
     print("Transformations:")

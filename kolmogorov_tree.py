@@ -40,6 +40,11 @@ program = SumNode([repeated, create_rect(3, 3)])
 # Create full tree with starting position and colors
 tree = KolmogorovTree(RootNode((0,0), {1}, program))
 ```
+
+Non-trial combinations:
+- SumNode({RepeatNode()}) <- single element, which is a repeat, that get transformed into an iterator, otherwise for single elements SumNodes might need to get flattened
+- RepeatNode(SumNode, count) <- should be nested alternatives
+- RootNode should either be top level, or in a SumNode containing only RootNodes
 """
 
 # TO-DO:
@@ -51,9 +56,9 @@ import functools
 import math
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict, deque
+from collections.abc import Collection
 from dataclasses import dataclass, field, fields, is_dataclass
 from enum import IntEnum
-from re import A
 from typing import (
     Any,
     Callable,
@@ -69,18 +74,14 @@ from typing import (
 from edit import (
     Add,
     Delete,
-    Identity,
     Operation,
-    Substitute,
-    sequence_edit_distance,
-    set_edit_distance,
 )
-from localtypes import BitLengthAware, Color, Coord
+from localtypes import BitLengthAware, Color, Coord, ensure_all_instances
 from tree_functionals import (
     breadth_first_preorder,
     depth_first_preorder,
-    preorder_map,
     postorder_map,
+    preorder_map,
 )
 
 # Type variable for generic programming
@@ -231,7 +232,7 @@ class KNode(Generic[T], BitLengthAware, ABC):
             children.extend(other.children)
         else:
             children.append(other)
-        return SumNode(tuple(children))
+        return SumNode(frozenset(children))
 
     def __and__(self, other: "KNode[T]") -> "ProductNode[T]":
         """Overloads & for sequences, unpacking ProductNodes."""
@@ -301,25 +302,27 @@ class VariableNode(KNode[T]):
 
 
 @dataclass(frozen=True)
-class TupleNode(KNode[T], ABC):
+class CollectionNode(KNode[T], ABC):
     """Abstract base class for nodes with multiple children."""
 
-    children: tuple[KNode[T], ...] = field(default_factory=tuple)
+    children: Collection[KNode[T]]
 
     def bit_length(self):
-        return super().bit_length() + sum(
-            child.bit_length() for child in self.children
+        count_bits = (
+            math.ceil(math.log2(len(self.children) + 1)) if self.children else 0
         )
-
-    def __post_init__(self):
-        """Converts children to tuple if provided as a list."""
-        if isinstance(self.children, list):
-            object.__setattr__(self, "children", tuple(self.children))
+        return (
+            super().bit_length()
+            + sum(child.bit_length() for child in self.children)
+            + count_bits
+        )
 
 
 @dataclass(frozen=True)
-class ProductNode(TupleNode[T]):
+class ProductNode(CollectionNode[T]):
     """Represents a sequence of actions (AND operation)."""
+
+    children: tuple[KNode[T], ...] = field(default_factory=tuple)
 
     def bit_length(self) -> int:
         return super().bit_length()
@@ -329,20 +332,23 @@ class ProductNode(TupleNode[T]):
 
 
 @dataclass(frozen=True)
-class SumNode(TupleNode[T]):
+class SumNode(CollectionNode[T]):
     """Represents a choice among alternatives (OR operation)."""
 
+    children: frozenset[KNode[T]] = field(default_factory=frozenset)
+
     def bit_length(self) -> int:
-        select_bits = (
-            math.ceil(math.log2(len(self.children) + 1)) if self.children else 0
-        )
-        return super().bit_length() + select_bits
+        return super().bit_length()
 
     def __str__(self) -> str:
         # Horrible hack for the already horrible iterator hack
-        if len(self.children) == 1 and isinstance(self.children[0], RepeatNode):
-            return "[+" + str(self.children[0]) + "]"
-        return "[" + "|".join(str(child) for child in self.children) + "]"
+        if len(self.children) == 1 and isinstance(
+            next(iter(self.children)), RepeatNode
+        ):
+            return "[+" + str(next(iter(self.children))) + "]"
+        # Sort children by string representation for consistent output
+        sorted_children = sorted(self.children, key=str)
+        return "[" + "|".join(str(child) for child in sorted_children) + "]"
 
 
 @dataclass(frozen=True)
@@ -473,7 +479,7 @@ def generate_abstractions(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
         return abstractions
 
     match knode:
-        case TupleNode(children) if len(children) > 2:
+        case CollectionNode(children) if len(children) > 2:
             # Abstract up to two distinct elements for now
             child_counter = Counter(children)  # Count occurrences of each child
             child_set = list(child_counter.keys())
@@ -594,8 +600,36 @@ def generate_abstractions(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
     return abstractions
 
 
+def get_iterator(knodes: Collection[KNode[T]]) -> frozenset[KNode[T]]:
+    """
+    This function identifies if the input nodes form an arithmetic sequence and encodes it as a single RepeatNode.
+    It leverages a hacky double meaning: while a standard RepeatNode(X, N) means "X for _ in range(N)",
+    when used as the sole child of a SumNode, e.g., SumNode((Repeat(X, N),)), it represents
+    "SumNode(tuple(shift(X, k) for k in range(N)))" if N > 0, or shifts with negative increments if N < 0.
+    This compresses arithmetic enumerations cost-free, enhancing expressiveness.
+    """
+    nodes = frozenset(knodes)
+    if len(nodes) < 2:
+        return frozenset(nodes)
+    if all(
+        isinstance(n, PrimitiveNode) and isinstance(n.value, MoveValue)
+        for n in nodes
+    ):
+        for start_node in nodes:
+            for step in [1, -1]:
+                expected = {
+                    shift(start_node, step * k) for k in range(len(nodes))
+                }
+                if expected == nodes:
+                    repeat_node = RepeatNode(
+                        start_node, CountValue(step * len(nodes))
+                    )
+                    return frozenset([repeat_node])
+    return nodes
+
+
 # Only useful for ARC? What if the alphabet is too large?
-def get_iterator(nodes: Iterable[KNode[T]]) -> tuple[KNode[T], ...]:
+def get_iterator2(nodes: Iterable[KNode[T]]) -> tuple[KNode[T], ...]:
     """
     This function identifies if the input nodes form an arithmetic sequence and encodes it as a single RepeatNode.
     It leverages a hacky double meaning: while a standard RepeatNode(X, N) means "X for _ in range(N)",
@@ -714,11 +748,11 @@ def iterable_to_product(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
 
 
 def iterable_to_sum(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
-    nodes: list[KNode[T]] = list(iterable)
+    nodes: frozenset[KNode[T]] = frozenset(iterable)
     if not nodes:
         return None
     elif len(nodes) == 1:
-        return nodes[0]
+        return next(iter(nodes))
     else:
         return SumNode(get_iterator(nodes))
 
@@ -728,7 +762,7 @@ def reconstruct_knode(
 ) -> KNode[T]:
     """Reconstructs a KNode with its original data and new children."""
     match knode:
-        case TupleNode(_):
+        case CollectionNode(_):
             new_node = type(knode)(tuple(new_children))
             if factorize:
                 new_node = factorize_tuple(new_node)
@@ -752,7 +786,7 @@ def reconstruct_knode(
 def children(knode: KNode) -> Iterator[KNode]:
     """Unified API to access children of standard KNodes nodes"""
     match knode:
-        case TupleNode(children):
+        case CollectionNode(children):
             return iter(children)
         case RepeatNode(node, count):
             children = [node]
@@ -787,8 +821,8 @@ def get_subvalues(obj: BitLengthAware) -> Iterator[BitLengthAware]:
     """
     if not is_dataclass(obj):
         return  # Yield nothing if not a dataclass
-    for field in fields(obj):
-        value = getattr(obj, field.name)
+    for f in fields(obj):
+        value = getattr(obj, f.name)
         if isinstance(value, BitLengthAware):
             yield value
         elif isinstance(value, (tuple, list, set)):
@@ -842,11 +876,16 @@ def reverse_node(knode: KNode[T]) -> KNode[T]:
         KNode: The reversed node.
     """
     match knode:
-        case TupleNode(children):
-            reversed_children = [
+        case ProductNode(children):
+            reversed_children = tuple(
                 reverse_node(child) for child in reversed(children)
-            ]
-            return type(knode)(tuple(reversed_children))
+            )
+            return type(knode)(reversed_children)
+        case SumNode(children):
+            reversed_children = frozenset(
+                reverse_node(child) for child in children
+            )
+            return type(knode)(reversed_children)
         case RepeatNode(node, count):
             return RepeatNode(reverse_node(node), count)
         case SymbolNode(index, parameters):
@@ -1090,6 +1129,28 @@ def find_repeating_pattern(
     )
 
 
+def flatten_sum(node: SumNode[T]) -> KNode[T]:
+    # If there is a single node, which is not a RepeatNode, flatten the tuple
+    if len(node.children) > 1:
+        return node
+
+    child = next(iter(node.children))
+    if isinstance(child, RepeatNode):
+        return node
+
+    return child
+
+
+def flatten_product(node: ProductNode[T]) -> KNode[T]:
+    if len(node.children) == 0:
+        raise ValueError(f"A product node contains no children: {node}")
+
+    if len(node.children) > 1:
+        return node
+
+    return node.children[0]
+
+
 def factorize_tuple(node: KNode[T]) -> KNode[T]:
     """
     Compresses a ProductNode or SumNode by detecting and encoding repeating patterns with RepeatNodes.
@@ -1103,9 +1164,9 @@ def factorize_tuple(node: KNode[T]) -> KNode[T]:
     if isinstance(node, SumNode):
         # For SumNode, delegate to get_iterator for arithmetic sequence compression
         children = get_iterator(node.children)
-        # return SumNode(children) if len(children) > 1 else children[0] if children else node
+        # If there is a no repeat single node, flatten the tuple
         # For the iterator hack, no unpacking
-        return SumNode(children)
+        return flatten_sum(SumNode(children))
 
     if not isinstance(node, ProductNode):
         return node
@@ -1121,7 +1182,6 @@ def factorize_tuple(node: KNode[T]) -> KNode[T]:
         pattern, count, is_reversed = find_repeating_pattern(children, i)
         if pattern is not None and abs(count) > 1:
             # Calculate bit lengths
-            pattern_len = pattern.bit_length()
             repeat_count = abs(count)
             original_bits = sum(
                 child.bit_length()
@@ -1227,7 +1287,7 @@ def postmap_unsafe(
         KNode: A new KNode tree with the function f applied to each node
     """
     match knode:
-        case TupleNode(children):
+        case CollectionNode(children):
             mapped_children = tuple(
                 node
                 for child in children
@@ -1330,8 +1390,8 @@ def unify(
     match pattern:
         case Primitive(value):
             return isinstance(subtree, Primitive) and value == subtree.value
-        case TupleNode(children):
-            subtree = cast(TupleNode, subtree)
+        case CollectionNode(children):
+            subtree = cast(CollectionNode, subtree)
             s_children = subtree.children
             if len(children) != len(s_children):
                 return False
@@ -1974,6 +2034,10 @@ def bla_distance(
         case None, _:
             distance = target.bit_length()
             transformations.append(Add(target))
+        case Primitive(base_value), Primitive(target_value):
+            pass
+        case _, _:
+            pass
 
     return distance, tuple(transformations)
 
@@ -2144,7 +2208,7 @@ def test_construct_product_node():
     # Test 4: Preserving SumNodes
     # Confirms that SumNodes are kept intact and not merged
     sum_node = SumNode(
-        tuple([PrimitiveNode(MoveValue(3)), PrimitiveNode(MoveValue(4))])
+        frozenset([PrimitiveNode(MoveValue(3)), PrimitiveNode(MoveValue(4))])
     )
     nodes = [PrimitiveNode(MoveValue(1)), sum_node, PrimitiveNode(MoveValue(2))]
     result = construct_product_node(nodes)
@@ -2178,20 +2242,18 @@ def test_shift():
     assert shifted_zero.data == 2, "Value should remain 2 when k=0"
 
     # Test 3: Shifting SumNode
-    sum_node = SumNode((create_move_node(0), create_move_node(4)))
+    sum_node = SumNode(frozenset([create_move_node(0), create_move_node(4)]))
     shifted_sum = shift(sum_node, 2)
     assert isinstance(shifted_sum, SumNode), (
         "Shifted result should be a SumNode"
     )
     assert len(shifted_sum.children) == 2, "SumNode should retain 2 children"
-    assert isinstance(shifted_sum.children[0], PrimitiveNode), (
-        "First child should be PrimitiveNode"
+    primitive_children = ensure_all_instances(
+        shifted_sum.children, PrimitiveNode
     )
-    assert shifted_sum.children[0].data == 2, "First child should shift to 2"
-    assert isinstance(shifted_sum.children[1], PrimitiveNode), (
-        "Second child should be PrimitiveNode"
-    )
-    assert shifted_sum.children[1].data == 6, "Second child should shift to 6"
+
+    data_values = {child.data for child in primitive_children}
+    assert data_values == {2, 6}, "Children should have data values 2 and 6"
 
     # Test 4: Shifting RepeatNode
     sequence = ProductNode((create_move_node(2), create_move_node(3)))
@@ -2288,36 +2350,62 @@ def test_shift():
     # Test 9: Shifting nested composite nodes
     inner_product = ProductNode((create_move_node(5), create_move_node(6)))
     repeat_inner = RepeatNode(inner_product, CountValue(2))
-    outer_sum = SumNode((repeat_inner, create_move_node(7)))
+    primitive_outer = create_move_node(7)
+    outer_sum = SumNode(frozenset([repeat_inner, primitive_outer]))
     shifted_outer = shift(outer_sum, 1)
+
+    # Verify the shifted outer node is a SumNode
     assert isinstance(shifted_outer, SumNode), (
         "Shifted outer node should be a SumNode"
     )
-    assert isinstance(shifted_outer.children[0], RepeatNode), (
-        "First child should be a RepeatNode"
+
+    # Extract children from frozenset based on type
+    children_list = list(shifted_outer.children)
+    repeat_nodes = [
+        child for child in children_list if isinstance(child, RepeatNode)
+    ]
+    primitive_nodes = [
+        child for child in children_list if isinstance(child, PrimitiveNode)
+    ]
+
+    # Ensure the correct number of each type
+    assert len(repeat_nodes) == 1, (
+        "There should be one RepeatNode in the SumNode"
     )
-    assert isinstance(shifted_outer.children[0].node, ProductNode), (
-        "Repeated node should be ProductNode"
-    )
-    assert isinstance(
-        shifted_outer.children[0].node.children[0], PrimitiveNode
-    ), "Nested child should be PrimitiveNode"
-    assert shifted_outer.children[0].node.children[0].data == 6, (
-        "First nested MoveValue should shift to 6"
-    )
-    assert isinstance(
-        shifted_outer.children[0].node.children[1], PrimitiveNode
-    ), "Nested child should be PrimitiveNode"
-    assert shifted_outer.children[0].node.children[1].data == 7, (
-        "Second nested MoveValue should shift to 7"
-    )
-    assert isinstance(shifted_outer.children[1], PrimitiveNode), (
-        "Outer child should be PrimitiveNode"
-    )
-    assert shifted_outer.children[1].data == 0, (
-        "Outer MoveValue should shift from 7 to 0"
+    assert len(primitive_nodes) == 1, (
+        "There should be one PrimitiveNode in the SumNode"
     )
 
+    # Get the single RepeatNode and PrimitiveNode
+    shifted_repeat = repeat_nodes[0]
+    shifted_primitive = primitive_nodes[0]
+
+    # Verify RepeatNode properties
+    assert isinstance(shifted_repeat, RepeatNode), (
+        "Child should be a RepeatNode"
+    )
+    assert isinstance(shifted_repeat.node, ProductNode), (
+        "Repeated node should be ProductNode"
+    )
+    assert len(shifted_repeat.node.children) == 2, (
+        "ProductNode should have two children"
+    )
+
+    # Add assertion to narrow child types to PrimitiveNode
+
+    primitive_children = ensure_all_instances(
+        shifted_repeat.node.children, PrimitiveNode
+    )
+    data_values = [child.data for child in primitive_children]
+    assert data_values == [6, 7], "Nested MoveValues should shift to 6 and 7"
+
+    # Verify PrimitiveNode properties
+    assert isinstance(shifted_primitive, PrimitiveNode), (
+        "Child should be a PrimitiveNode"
+    )
+    assert shifted_primitive.data == 0, (
+        "Outer MoveValue should shift from 7 to 0"
+    )
     # Test 10: Original node remains unchanged
     original_node = create_move_node(2)
     shifted_node = shift(original_node, 1)
@@ -2337,77 +2425,84 @@ def test_get_iterator():
     """Tests the get_iterator function for detecting and compressing arithmetic sequences."""
     # Test Case 1: Empty Input
     result = get_iterator([])
-    assert result == (), (
-        "Test Case 1 Failed: Empty input should return empty tuple"
+    assert result == frozenset(), (
+        "Test Case 1 Failed: Empty input should return an empty frozenset"
     )
 
     # Test Case 2: Single Node
     node = PrimitiveNode(MoveValue(1))
     result = get_iterator([node])
-    assert result == (node,), (
-        "Test Case 2 Failed: Single node should return tuple with that node"
+    assert result == frozenset([node]), (
+        "Test Case 2 Failed: Single node should return a frozenset with that node"
     )
 
     # Test Case 3: Sequence with Increment +1
     nodes_pos = [PrimitiveNode(MoveValue(i)) for i in [0, 1, 2]]
     result_pos = get_iterator(nodes_pos)
-    expected_pos = (RepeatNode(nodes_pos[0], CountValue(3)),)
-    assert result_pos == expected_pos, (
-        "Test Case 3 Failed: Sequence [0,1,2] should be compressed to RepeatNode(0, 3)"
+    expected_pos_forward = frozenset((RepeatNode(nodes_pos[0], CountValue(3)),))
+    expected_pos_backward = frozenset(
+        (RepeatNode(nodes_pos[2], CountValue(-3)),)
+    )
+    assert result_pos in [expected_pos_forward, expected_pos_backward], (
+        "Test Case 3 Failed: Sequence [0,1,2] should be compressed to RepeatNode(0, 3) or RepeatNode(2, -3)"
     )
 
     # Test Case 4: Sequence with Increment -1
     nodes_neg = [PrimitiveNode(MoveValue(i)) for i in [2, 1, 0]]
     result_neg = get_iterator(nodes_neg)
-    expected_neg = (RepeatNode(nodes_neg[0], CountValue(-3)),)
+    expected_neg = frozenset((RepeatNode(nodes_neg[0], CountValue(-3)),))
     assert result_neg == expected_neg, (
         "Test Case 4 Failed: Sequence [2,1,0] should be compressed to RepeatNode(2, -3)"
     )
 
     # Test Case 5: Non-Sequence
-    nodes_non = [PrimitiveNode(MoveValue(i)) for i in [0, 2, 1]]
+    nodes_non = [PrimitiveNode(MoveValue(i)) for i in [0, 5, 1]]
     result_non = get_iterator(nodes_non)
-    assert result_non == tuple(nodes_non), (
+    assert result_non == frozenset(nodes_non), (
         "Test Case 5 Failed: Non-sequence should return original nodes"
     )
 
     # Test Case 6: Boundary Conditions (Wrap-around with Increment +1)
     nodes_wrap = [PrimitiveNode(MoveValue(i)) for i in [7, 0, 1]]
     result_wrap = get_iterator(nodes_wrap)
-    expected_wrap = (RepeatNode(nodes_wrap[0], CountValue(3)),)
-    assert result_wrap == expected_wrap, (
-        "Test Case 7 Failed: Wrap-around sequence [7,0,1] should be compressed"
+    expected_wrap_forward = frozenset(
+        (RepeatNode(nodes_wrap[0], CountValue(3)),)
+    )
+    expected_wrap_backward = frozenset(
+        (RepeatNode(nodes_wrap[2], CountValue(-3)),)
+    )
+    assert result_wrap in [expected_wrap_forward, expected_wrap_backward], (
+        "Test Case 6 Failed: Wrap-around sequence [7,0,1] should be compressed"
     )
 
-    # Test Case 7: Long Sequence with Wrap-around
+    # Test Case 7: Long Sequence with Wrap-around, should be equal to the size of the alphabet
     nodes_long = [
         PrimitiveNode(MoveValue(i % 8)) for i in range(10)
     ]  # [0,1,2,3,4,5,6,7,0,1]
     result_long = get_iterator(nodes_long)
-    expected_long = (RepeatNode(nodes_long[0], CountValue(10)),)
-    assert result_long == expected_long, (
-        "Test Case 8 Failed: Long sequence [0,1,2,3,4,5,6,7,0,1] should be compressed"
+
+    # Add assertion to narrow the type to RepeatNode
+    assert len(result_long) == 1 and isinstance(
+        next(iter(result_long)), RepeatNode
+    ), "Expected a single children"
+
+    node = next(iter(result_long))
+    assert isinstance(node, RepeatNode) and node.count == CountValue(8), (
+        "Test Case 7 Failed: Count should be 8"
     )
 
     # Test Case 8: Partial Sequence
     nodes_partial = [PrimitiveNode(MoveValue(i)) for i in [0, 1, 2, 4]]
     result_partial = get_iterator(nodes_partial)
-    assert result_partial == tuple(nodes_partial), (
-        "Test Case 9 Failed: Partial sequence [0,1,2,4] should not be compressed"
+    assert result_partial == frozenset(nodes_partial), (
+        "Test Case 8 Failed: Partial sequence [0,1,2,4] should not be compressed"
     )
 
     # Test Case 9: Different Increment
     nodes_diff_inc = [PrimitiveNode(MoveValue(i)) for i in [0, 2, 4, 6]]
     result_diff_inc = get_iterator(nodes_diff_inc)
-    assert result_diff_inc == tuple(nodes_diff_inc), (
-        "Test Case 10 Failed: Sequence with increment +2 should not be compressed"
-    )
-
-    # Test Case 10: Changing Increment
-    nodes_change_inc = [PrimitiveNode(MoveValue(i)) for i in [0, 1, 2, 1, 0]]
-    result_change_inc = get_iterator(nodes_change_inc)
-    assert result_change_inc == tuple(nodes_change_inc), (
-        "Test Case 11 Failed: Sequence with changing increment should not be compressed"
+    assert result_diff_inc == frozenset(nodes_diff_inc), (
+        "Test Case 9 Failed: Sequence with increment +2 should not be compressed"
     )
 
     print("Test get_iterator - Passed")
@@ -2455,12 +2550,12 @@ def test_find_repeating_pattern():
 
     # Test Case 5: Multi-Node Pattern
     pattern_nodes = [PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3))]
-    nodes = pattern_nodes * 2  # 2,3,2,3
+    nodes = pattern_nodes * 3  # 2,3,2,3
     pattern, count, is_reversed = find_repeating_pattern(nodes, 0)
     assert isinstance(pattern, ProductNode) and pattern.children == tuple(
         pattern_nodes
     ), "Test Case 5 Failed: Incorrect pattern"
-    assert count == 2, "Test Case 5 Failed: Count should be 2"
+    assert count == 3, "Test Case 5 Failed: Count should be 3"
     assert not is_reversed, "Test Case 5 Failed: Should not be reversed"
 
     # Test Case 6: No Repeat
@@ -2550,17 +2645,24 @@ def test_factorize_tuple():
     )
 
     # Test Case 6: SumNode Arithmetic Sequence
-    sum_node = SumNode(tuple([PrimitiveNode(MoveValue(i)) for i in [0, 1, 2]]))
-    result = factorize_tuple(sum_node)
-    expected = SumNode(
-        (RepeatNode(PrimitiveNode(MoveValue(0)), CountValue(3)),)
+    sum_node = SumNode(
+        frozenset([PrimitiveNode(MoveValue(i)) for i in [0, 1, 2]])
     )
-    assert result == expected, (
+    result = factorize_tuple(sum_node)
+    expected_forward = SumNode(
+        frozenset((RepeatNode(PrimitiveNode(MoveValue(0)), CountValue(3)),))
+    )
+    expected_backward = SumNode(
+        frozenset((RepeatNode(PrimitiveNode(MoveValue(2)), CountValue(-3)),))
+    )
+    assert result in [expected_forward, expected_backward], (
         "Test Case 6 Failed: SumNode arithmetic sequence should be compressed"
     )
 
     # Test Case 7: SumNode Non-Sequence
-    sum_node = SumNode(tuple([PrimitiveNode(MoveValue(i)) for i in [0, 2, 1]]))
+    sum_node = SumNode(
+        frozenset([PrimitiveNode(MoveValue(i)) for i in [0, 5, 1]])
+    )
     result = factorize_tuple(sum_node)
     assert result == sum_node, (
         "Test Case 7 Failed: Non-sequence SumNode should remain unchanged"
@@ -2580,38 +2682,38 @@ def test_is_abstraction():
     """Tests the is_abstraction function for detecting VariableNodes in the tree."""
     # Test Case 1: Node is a VariableNode
     var_node = VariableNode(VariableValue(0))
-    assert is_abstraction(var_node) == True, (
+    assert is_abstraction(var_node), (
         "Test Case 1 Failed: VariableNode itself should return True"
     )
 
     # Test Case 2: Node is a PrimitiveNode (no VariableNode)
     prim_node = PrimitiveNode(MoveValue(1))
-    assert is_abstraction(prim_node) == False, (
+    assert not is_abstraction(prim_node), (
         "Test Case 2 Failed: PrimitiveNode should return False"
     )
 
     # Test Case 3: ProductNode with one VariableNode child
     var_child = VariableNode(VariableValue(1))
     tuple_node = ProductNode((prim_node, var_child))
-    assert is_abstraction(tuple_node) == True, (
+    assert is_abstraction(tuple_node), (
         "Test Case 3 Failed: ProductNode with VariableNode child should return True"
     )
 
     # Test Case 4: ProductNode with no VariableNodes
     tuple_no_var = ProductNode((prim_node, PrimitiveNode(MoveValue(2))))
-    assert is_abstraction(tuple_no_var) == False, (
+    assert not is_abstraction(tuple_no_var), (
         "Test Case 4 Failed: ProductNode without VariableNodes should return False"
     )
 
     # Test Case 5: RepeatNode with VariableNode in subtree
     repeat_node = RepeatNode(var_child, CountValue(2))
-    assert is_abstraction(repeat_node) == True, (
+    assert is_abstraction(repeat_node), (
         "Test Case 5 Failed: RepeatNode with VariableNode should return True"
     )
 
     # Test Case 6: SymbolNode with VariableNode as parameter
     symbol_with_var = SymbolNode(IndexValue(0), (var_child,))
-    assert is_abstraction(symbol_with_var) == True, (
+    assert is_abstraction(symbol_with_var), (
         "Test Case 6 Failed: SymbolNode with VariableNode parameter should return True"
     )
 
@@ -2619,13 +2721,13 @@ def test_is_abstraction():
     root_with_var = RootNode(
         var_child, CoordValue((0, 0)), PaletteValue(frozenset({1}))
     )
-    assert is_abstraction(root_with_var) == True, (
+    assert is_abstraction(root_with_var), (
         "Test Case 7 Failed: RootNode with VariableNode in program should return True"
     )
 
     # Test Case 8: Node with only non-KNode BitLengthAware subvalues
     # PrimitiveNode has a Primitive subvalue (e.g., MoveValue), which is BitLengthAware but not a VariableNode
-    assert is_abstraction(prim_node) == False, (
+    assert not is_abstraction(prim_node), (
         "Test Case 8 Failed: Node with only non-KNode subvalues should return False"
     )
 
@@ -3305,11 +3407,6 @@ def test_symbolize_together():
         position=VariableNode(index=VariableValue(value=0)),
         colors=VariableNode(index=VariableValue(value=1)),
     )
-    symbol_node = SymbolNode(
-        IndexValue(0),
-        (CoordValue((0, 0)), PaletteValue(frozenset({1}))),
-        pattern.bit_length(),
-    )
     expected_trees = (
         SymbolNode(
             index=IndexValue(value=0),
@@ -3398,11 +3495,11 @@ def run_tests():
         "PrimitiveNode bit length should be 6 (3 + 3)"
     )
     product = ProductNode((move_right, move_right))
-    assert product.bit_length() == 15, (
-        "ProductNode bit length should be 15 (3 + 6 + 6)"
+    assert product.bit_length() == 17, (
+        "ProductNode bit length should be 17 (3 + 6 + 6 + 2)"
     )
     move_down = PrimitiveNode(MoveValue(3))
-    sum_node = SumNode((move_right, move_down))
+    sum_node = SumNode(frozenset((move_right, move_down)))
     assert sum_node.bit_length() == 17, (
         "SumNode bit length should be 17 (3 + 2 + 6 + 6)"
     )
@@ -3415,8 +3512,8 @@ def run_tests():
         "SymbolNode bit length should be 10 (3 + 7)"
     )
     root = RootNode(product, CoordValue((0, 0)), PaletteValue(frozenset({1})))
-    assert root.bit_length() == 32, (
-        "RootNode bit length should be 32 (3 + 15 + 10 + 4)"
+    assert root.bit_length() == 34, (
+        "RootNode bit length should be 34 (3 + 17 + 10 + 4)"
     )
     print("Test 1: Basic node creation and bit length - Passed")
 
@@ -3432,9 +3529,9 @@ def run_tests():
     print("Test 2: String representations - Passed")
 
     # Test 3: Operator overloads
-    assert (move_right | move_down) == SumNode((move_right, move_down)), (
-        "Operator | failed"
-    )
+    assert (move_right | move_down) == SumNode(
+        frozenset((move_right, move_down))
+    ), "Operator | failed"
     assert (move_right & move_down) == ProductNode((move_right, move_down)), (
         "Operator & failed"
     )

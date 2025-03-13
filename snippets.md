@@ -2,6 +2,31 @@
 
 ## Ideas
 
+- SumNode -> Switch from tuple to set, which is the natural container of SumNode which is an unordered alternative
+- "Merging branches": Compress SumNode when they are in ProductNode, to interpret rightfully what there is after as a common thing of all branches:
+22\[3,4\]22 == 22\[322,422÷] which checks well with the facts that 22\[322,422\] == \[22322, 22422\].
+- Previously, for each shape I choose the greedy representation.
+A shape S can be represented by (starting_points x traversal_modes) branching chains along their starting points. Those branching chains are usually called "Rose Trees", and with the traversal modes are usually depth-first or breadth-first.
+Let's call this set Rose(S). Those chains can be further compressed into what I call "programs", which each as representation of the chains with K-Tree,
+which is a pseudo programming language. For every chain C, the set of porgram representing it is KTrees(C), from the literal representation of the RoseTree using ProductNodes and SumNodes
+, to more "compressed" versions using RepeatNodes, RectNodes (evil primitive designed specifically for ARC forgive me Father), SymbolNodes along a symbol table.
+
+Note: In fact, for a DF traversal, the order in which the transitions are evaluated matters, thus there are as many "DF traversal" possible as orders of there is transitions
+In fact there are more, you could choose to try a possible order at each step, using an based estimator (RL/MCTS or something like model-base optimal control https://latent-planning.github.io) to choose at each point the best possible move
+
+
+An "minimal" representation of a RoseTree R is the program with the smallest bit length: MKTree: \[RoseTree -> KTree\] S |-> MKTree(S).
+All rose trees of a single shape S, are the same length: \exist L \all R \in Rose(S) length(R) == L, with L being the number of pixels in the shape minus - 1: L = #pixels(S) - 1.
+However, not all their minimal representations are of the same bit-length: the more "random" in the sense of algorithmic information theory, the longer it will be.
+Thus selecting programs with small bit-length select representation that "compress the maximum the information of the shape", thus that reduces it to its fundamentals, exploits it's symetries, etc
+There is a greedy approach: try to select the minimal solo-symbolized program (KTree including symbol table), or do some kind of """"cross-entropy""" on the distribution itself: symbolize together all the representations, take the smallest once symbolized *together*
+
+An "objective" representation is obtained by setting a fixed score function over program to
+
+- Repeat(SumNode, count) -> ther SumNode is nested count time. Note that order doesn't matter for a set
+- To explore: union as normalized sumnode?
+- try several DFs
+
 Bias vs Variance
 
 ### How to extract information from a set of things?
