@@ -1,5 +1,6 @@
 """
-Kolmogorov Tree: A representation language for non-deterministic programs and patterns.
+Kolmogorov Tree: An abstract-syntax tree structure forming to represent non-deterministic bit-length-aware programs.
+TL;DR: An bitlengthaware AST for bitlengthaware rosetrees
 
 This module implements a tree structure for representing non-deterministic programs,
 for example to describe shapes using a non-deterministic program representing 2D grid movements (see syntax_tree.py). The representation
@@ -79,6 +80,7 @@ from edit import (
 from localtypes import BitLengthAware, Color, Coord, ensure_all_instances
 from tree_functionals import (
     breadth_first_preorder,
+    dataclass_subvalues,
     depth_first_preorder,
     postorder_map,
     preorder_map,
@@ -819,16 +821,7 @@ def get_subvalues(obj: BitLengthAware) -> Iterator[BitLengthAware]:
     Yields:
         BitLengthAware: Subvalues that are instances of BitLengthAware.
     """
-    if not is_dataclass(obj):
-        return  # Yield nothing if not a dataclass
-    for f in fields(obj):
-        value = getattr(obj, f.name)
-        if isinstance(value, BitLengthAware):
-            yield value
-        elif isinstance(value, (tuple, list, set)):
-            for elem in value:
-                if isinstance(elem, BitLengthAware):
-                    yield elem
+    return dataclass_subvalues(obj)
 
 
 # Traversal functions

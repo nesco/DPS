@@ -2,9 +2,8 @@
 
 ## Ideas
 
-- SumNode -> Switch from tuple to set, which is the natural container of SumNode which is an unordered alternative
 - "Merging branches": Compress SumNode when they are in ProductNode, to interpret rightfully what there is after as a common thing of all branches:
-22\[3,4\]22 == 22\[322,422÷] which checks well with the facts that 22\[322,422\] == \[22322, 22422\].
+22\[3,4\]22 == 22\[322,422\] which checks well with the facts that 22\[322,422\] == \[22322, 22422\].
 - Previously, for each shape I choose the greedy representation.
 A shape S can be represented by (starting_points x traversal_modes) branching chains along their starting points. Those branching chains are usually called "Rose Trees", and with the traversal modes are usually depth-first or breadth-first.
 Let's call this set Rose(S). Those chains can be further compressed into what I call "programs", which each as representation of the chains with K-Tree,

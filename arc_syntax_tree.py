@@ -14,13 +14,42 @@ of the morphology.
 The kolmogorov nodes are in a way the transitions of an automata over grid coordinates
 
 """
-from freeman import FreemanNode, King, encode_connected_component, DIRECTIONS_FREEMAN
-from kolmogorov_tree import ProductNode, SumNode, PrimitiveNode, RootNode, MoveValue, KNode, RectNode, CountValue, CoordValue, PaletteValue, SymbolNode, RepeatNode, VariableNode, postmap, factorize_tuple, iterable_to_product, iterable_to_sum, shift, reverse_node, T
-from localtypes import Points, Coord, Coords
-from grid import coords_to_points, points_to_grid_colored
-from typing import cast, Generic
-from lattice import input_to_lattice
+
 from dataclasses import dataclass
+from typing import Generic, cast
+
+from freeman import (
+    DIRECTIONS_FREEMAN,
+    FreemanNode,
+    King,
+    encode_connected_component,
+)
+from grid import coords_to_points, points_to_grid_colored
+from kolmogorov_tree import (
+    CoordValue,
+    CountValue,
+    KNode,
+    MoveValue,
+    PaletteValue,
+    PrimitiveNode,
+    ProductNode,
+    RectNode,
+    RepeatNode,
+    RootNode,
+    SumNode,
+    SymbolNode,
+    T,
+    VariableNode,
+    factorize_tuple,
+    iterable_to_product,
+    iterable_to_sum,
+    postmap,
+    reverse_node,
+    shift,
+)
+from lattice import input_to_lattice
+from localtypes import Coord, Coords, Points
+
 
 def moves_to_rect(moves: str) -> tuple[int, int] | None:
     """Detect if a move sequence forms a rectangle, returning (height, width) or None."""
@@ -31,19 +60,27 @@ def moves_to_rect(moves: str) -> tuple[int, int] | None:
     expected = "2" * (width - 1) + "".join(
         "3" + ("0" if i % 2 else "2") * (width - 1) for i in range(1, height)
     )
-    return (height, width) if moves == expected and height >= 2 and width >= 2 else None
+    return (
+        (height, width)
+        if moves == expected and height >= 2 and width >= 2
+        else None
+    )
+
 
 def extract_moves_from_product(node: KNode) -> str | None:
     """Extract move string from a ProductNode of PrimitiveNodes with MoveValues."""
     if isinstance(node, ProductNode):
         moves = []
         for child in node.children:
-            if isinstance(child, PrimitiveNode) and isinstance(child.value, MoveValue):
+            if isinstance(child, PrimitiveNode) and isinstance(
+                child.value, MoveValue
+            ):
                 moves.append(str(child.data))
             else:
                 return None
         return "".join(moves)
     return None
+
 
 def detect_rect_node(node: KNode) -> KNode:
     """Replace a ProductNode with a RectNode if it forms a rectangle."""
@@ -54,6 +91,7 @@ def detect_rect_node(node: KNode) -> KNode:
             height, width = rect
             return RectNode(CountValue(height), CountValue(width))
     return node
+
 
 def freeman_to_knode(freeman: FreemanNode) -> KNode[MoveValue]:
     """
@@ -68,7 +106,9 @@ def freeman_to_knode(freeman: FreemanNode) -> KNode[MoveValue]:
         product.extend(moves)
 
     # Step 2: Recursively encode children
-    children = iterable_to_sum(tuple(freeman_to_knode(child) for child in freeman.children))
+    children = iterable_to_sum(
+        tuple(freeman_to_knode(child) for child in freeman.children)
+    )
     if children:
         product.append(children)
 
@@ -78,6 +118,7 @@ def freeman_to_knode(freeman: FreemanNode) -> KNode[MoveValue]:
         raise ValueError("Freeman node had both empty path and children fields")
 
     return product
+
 
 def encode_freeman_to_knode(freeman: FreemanNode) -> KNode[MoveValue]:
     """Encode a Freeman tree with compression (factorization and rectangle detection)."""
@@ -89,13 +130,26 @@ def encode_freeman_to_knode(freeman: FreemanNode) -> KNode[MoveValue]:
     factored_node = postmap(factored_node, factorize_tuple)
     return factored_node
 
-def component_to_knode(freeman_node: FreemanNode, start_position: tuple[int, int], colors: set[int]) -> RootNode:
+
+def component_to_knode(
+    freeman_node: FreemanNode, start_position: tuple[int, int], colors: set[int]
+) -> RootNode:
     """Encode a Freeman tree for a connected component into a RootNode."""
     program = encode_freeman_to_knode(freeman_node)
-    return RootNode(program, CoordValue(start_position), PaletteValue(frozenset(colors)))
+    return RootNode(
+        program, CoordValue(start_position), PaletteValue(frozenset(colors))
+    )
+
 
 # Decoding
-def decode_knode(knode: ProductNode[MoveValue] | SumNode[MoveValue] | PrimitiveNode[MoveValue] | RepeatNode[MoveValue] | RectNode, start: Coord) -> Coords:
+def decode_knode(
+    knode: ProductNode[MoveValue]
+    | SumNode[MoveValue]
+    | PrimitiveNode[MoveValue]
+    | RepeatNode[MoveValue]
+    | RectNode,
+    start: Coord,
+) -> Coords:
     """Unfold a concrete KNode in the set of coords traversed by the pathes it represents."""
     coords = {start}
     current_positions = {start}
@@ -120,10 +174,14 @@ def decode_knode(knode: ProductNode[MoveValue] | SumNode[MoveValue] | PrimitiveN
                 return current
             case SumNode((RepeatNode(node, count),)):
                 if isinstance(count, VariableNode):
-                    raise TypeError("Trying to uncompress an abstract Repeat node")
+                    raise TypeError(
+                        "Trying to uncompress an abstract Repeat node"
+                    )
                 N = count.value
                 if N == 0:
-                    raise ValueError("Repeat count should not be zero in iterator case")
+                    raise ValueError(
+                        "Repeat count should not be zero in iterator case"
+                    )
                 if N > 0:
                     shifts = range(N)
                 else:
@@ -142,7 +200,9 @@ def decode_knode(knode: ProductNode[MoveValue] | SumNode[MoveValue] | PrimitiveN
                 return new_positions
             case RepeatNode(node, count):
                 if isinstance(count, VariableNode):
-                    raise TypeError("Trying to uncompress an abstract Repeat node")
+                    raise TypeError(
+                        "Trying to uncompress an abstract Repeat node"
+                    )
                 count_value = count.value
                 current = {pos}
                 if count_value < 0:
@@ -150,7 +210,9 @@ def decode_knode(knode: ProductNode[MoveValue] | SumNode[MoveValue] | PrimitiveN
                     k = -count_value  # Number of iterations
                     for i in range(k):
                         # Even i: use original node; Odd i: use reversed node
-                        node_to_execute = node if i % 2 == 0 else reverse_node(node)
+                        node_to_execute = (
+                            node if i % 2 == 0 else reverse_node(node)
+                        )
                         new_positions = set()
                         for p in current:
                             new_p = execute(node_to_execute, p)
@@ -166,13 +228,18 @@ def decode_knode(knode: ProductNode[MoveValue] | SumNode[MoveValue] | PrimitiveN
                         current = new_positions
                 return current
             case RectNode(height, width):
-                if isinstance(height, VariableNode) or isinstance(width, VariableNode):
-                    raise TypeError("Trying to uncompress an abstract Repeat node")
+                if isinstance(height, VariableNode) or isinstance(
+                    width, VariableNode
+                ):
+                    raise TypeError(
+                        "Trying to uncompress an abstract Repeat node"
+                    )
                 height = height.value
                 width = width.value
                 rect_points = [
                     (pos[0] + j, pos[1] + i)
-                    for i in range(height) for j in range(width)
+                    for i in range(height)
+                    for j in range(width)
                 ]
                 coords.update(rect_points)
                 return {pos}  # Final position remains the starting point
@@ -181,6 +248,7 @@ def decode_knode(knode: ProductNode[MoveValue] | SumNode[MoveValue] | PrimitiveN
 
     final_positions = execute(knode, start)
     return coords
+
 
 def decode_root(root: RootNode[MoveValue]) -> Points:
     node, position, colors = root.node, root.position, root.colors
@@ -196,12 +264,19 @@ def decode_root(root: RootNode[MoveValue]) -> Points:
 
     # Retrieve the coords
     match node:
-        case ProductNode() | SumNode() | PrimitiveNode() | RepeatNode() | RectNode():
+        case (
+            ProductNode()
+            | SumNode()
+            | PrimitiveNode()
+            | RepeatNode()
+            | RectNode()
+        ):
             coords = decode_knode(node, position.value)
         case _:
             raise TypeError("Root's node should be a concrete KNode")
 
     return coords_to_points(coords, color)
+
 
 @dataclass
 class UnionNode(Generic[T]):
@@ -217,9 +292,15 @@ class UnionNode(Generic[T]):
     def bit_length(self) -> int:
         # Maybe remove the cost of the shadowed nodes
         len_nodes = sum(node.bit_length() for node in self.nodes)
-        return len_nodes + (0 if self.normalizing_node is None else self.normalizing_node.bit_length())
+        return len_nodes + (
+            0
+            if self.normalizing_node is None
+            else self.normalizing_node.bit_length()
+        )
+
 
 ### tests
+
 
 # Helper to convert grid to Freeman node (simplified)
 def grid_to_freeman(grid, start, color) -> FreemanNode:
@@ -235,8 +316,11 @@ def grid_to_freeman(grid, start, color) -> FreemanNode:
         FreemanNode: A node representing the grid's chain code
     """
     if len(colors) != 1:
-        raise ValueError("This implementation assumes a unicolored connected component")
+        raise ValueError(
+            "This implementation assumes a unicolored connected component"
+        )
     color = next(iter(colors))  # Extract the single color from the set
+
     def is_valid(coord):
         col, row = coord
         # Check if the coordinate is within grid bounds
@@ -244,8 +328,10 @@ def grid_to_freeman(grid, start, color) -> FreemanNode:
             # Check if the grid value matches the color
             return grid[row][col] == color
         return False
+
     node = encode_connected_component(start, is_valid)
     return node
+
 
 # Test function
 def test_encode_decode(grid, start, colors, name):
@@ -274,31 +360,16 @@ def test_encode_decode(grid, start, colors, name):
     assert grid == decoded_grid, f"{name} round-trip failed"
     print(f"{name} passed round-trip test")
 
+
 if __name__ == "__main__":
     from lattice import input_to_lattice
+
     # Test grids defined as lists of lists (ColorGrid format)
     grids = {
-        "Simple Square": [
-            [1, 1, 1],
-            [1, 1, 1],
-            [1, 1, 1]
-        ],
-        "Two Squares": [
-            [1, 1, 0, 0],
-            [1, 1, 0, 0],
-            [0, 0, 1, 1],
-            [0, 0, 1, 1]
-        ],
-        "Cross": [
-            [0, 1, 0],
-            [1, 1, 1],
-            [0, 1, 0]
-        ],
-        "Rectangle": [
-            [1, 1],
-            [1, 1],
-            [1, 1]
-        ]
+        "Simple Square": [[1, 1, 1], [1, 1, 1], [1, 1, 1]],
+        "Two Squares": [[1, 1, 0, 0], [1, 1, 0, 0], [0, 0, 1, 1], [0, 0, 1, 1]],
+        "Cross": [[0, 1, 0], [1, 1, 1], [0, 1, 0]],
+        "Rectangle": [[1, 1], [1, 1], [1, 1]],
     }
 
     # Run tests
@@ -306,7 +377,7 @@ if __name__ == "__main__":
         start = (0, 0)  # Top-left corner
         if name == "Cross":
             start = (0, 1)
-        colors = {1}    # Single color
+        colors = {1}  # Single color
         test_encode_decode(grid, start, colors, name)
 
     # Test ARC task
