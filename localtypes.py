@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Iterable, ParamSpec, TypeVar, cast
+from typing import Any, Iterable, ParamSpec, TypeVar, cast
 
 # Basic type variables for generic operations
 T = TypeVar("T")
@@ -66,6 +66,16 @@ class BitLengthAware(ABC):
     def __str__(self) -> str:
         """Returns the string representation of this value."""
         pass
+
+
+@dataclass(frozen=True)
+class Primitive(BitLengthAware):
+    """Base class for all primitives: bit length aware wrapping base values"""
+
+    value: Any
+
+    def __str__(self) -> str:
+        return str(self.value)
 
 
 def ensure_all_instances(seq: Iterable[object], cls: type[T]) -> Iterable[T]:

@@ -77,7 +77,13 @@ from edit import (
     Delete,
     Operation,
 )
-from localtypes import BitLengthAware, Color, Coord, ensure_all_instances
+from localtypes import (
+    BitLengthAware,
+    Color,
+    Coord,
+    Primitive,
+    ensure_all_instances,
+)
 from tree_functionals import (
     breadth_first_preorder,
     dataclass_subvalues,
@@ -105,17 +111,6 @@ class ARCBitLength(IntEnum):
     COORD = 10  # 10 bits for coordinates (5 bits per x/y, for 0-31)
     COLORS = 4  # 4 bits for primitives (0-9)
     DIRECTIONS = 3  # 3 bits for primitives (directions 0-7)
-
-
-# Primitive value types
-@dataclass(frozen=True)
-class Primitive(BitLengthAware):
-    """Base class for all primitives: bit length aware wrapping base values"""
-
-    value: Any
-
-    def __str__(self) -> str:
-        return str(self.value)
 
 
 @dataclass(frozen=True)

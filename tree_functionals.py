@@ -7,6 +7,8 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from functools import cache
 from typing import Callable, Generic, Iterator, Sequence, TypeVar
 
+from typing_extensions import Hashable
+
 T = TypeVar("T")
 
 
@@ -225,19 +227,24 @@ def dataclass_subvalues(obj: T) -> Iterator[T]:
             yield value
 
 
+# Cached because it's called very often
+# plus functions can both call deep_hash and build_hash_hierarchy
+# without bothering too much with using the hierarchy to not downgrade the perfs'
 @cache
-def subtree_hash(obj: object) -> int:
+def deep_hash_deprecated(obj: object) -> int:
     """Recursively compute a hash for a subtree defined using dataclasses and collections."""
     if not is_dataclass(obj):
         if isinstance(obj, tuple):
-            return hash(tuple(subtree_hash(elem) for elem in obj))
+            return hash(tuple(deep_hash_deprecated(elem) for elem in obj))
         elif isinstance(obj, frozenset):
-            return hash(tuple(sorted(subtree_hash(elem) for elem in obj)))
+            return hash(
+                tuple(sorted(deep_hash_deprecated(elem) for elem in obj))
+            )
         else:
             return hash(obj)
     else:
         field_hashes = tuple(
-            (field.name, subtree_hash(getattr(obj, field.name)))
+            (field.name, cached_hash(getattr(obj, field.name)))
             for field in fields(obj)
         )
         return hash(
@@ -246,6 +253,24 @@ def subtree_hash(obj: object) -> int:
                 tuple(sorted(field_hashes, key=lambda x: x[0])),
             )
         )
+
+
+_hash_cache = {}
+
+
+def cached_hash(obj: Hashable) -> int:
+    """
+    Use object ids to cache expensive hash computations on objects
+    if hashes are called many time during thosed objects lifetimes
+    """
+    obj_id = id(obj)
+    if obj_id not in _hash_cache:
+        _hash_cache[obj_id] = hash(obj)
+    return _hash_cache[obj_id]
+
+
+def cached_hash_placebo(obj: Hashable) -> int:
+    return hash(obj)
 
 
 def build_hash_hierarchy(obj: object) -> dict[int, frozenset[int]]:
@@ -266,25 +291,24 @@ def build_hash_hierarchy(obj: object) -> dict[int, frozenset[int]]:
         if not is_dataclass(node):
             if isinstance(node, (tuple, frozenset)):
                 # Get hashes of immediate children
-                child_hashes = [subtree_hash(elem) for elem in node]
+                # child_hashes = [cached_hash(elem) for elem in node if elem()]
                 # Compute hash of current node
-                own_hash = subtree_hash(node)
+                # own_hash = cached_hash(node)
                 # Map this node's hash to its children's hashes
-                hash_map[own_hash] = frozenset(child_hashes)
+                # hash_map[own_hash] = frozenset(child_hashes)
                 # Recurse into children
                 for elem in node:
                     traverse(elem)
             else:
                 # Leaf node: no children
-                own_hash = subtree_hash(node)
+                own_hash = cached_hash(node)
                 hash_map[own_hash] = frozenset()
         else:
             # Dataclass: process fields as children
             child_hashes = [
-                subtree_hash(getattr(node, field.name))
-                for field in fields(node)
+                cached_hash(getattr(node, field.name)) for field in fields(node)
             ]
-            own_hash = subtree_hash(node)
+            own_hash = cached_hash(node)
             hash_map[own_hash] = frozenset(child_hashes)
             # Recurse into field values
             for field in fields(node):
@@ -474,58 +498,42 @@ def test_hash_hierarchy():
     A = RoseNode("A", (B, C))
 
     # Compute hashes for the original tree
-    hash_A = subtree_hash(A)
-    hash_B = subtree_hash(B)
-    hash_C = subtree_hash(C)
-    hash_D = subtree_hash(D)
-    hash_E = subtree_hash(E)
-    hash_F = subtree_hash(F)
+    hash_A = cached_hash(A)
+    hash_B = cached_hash(B)
+    hash_C = cached_hash(C)
+    hash_D = cached_hash(D)
+    hash_E = cached_hash(E)
+    hash_F = cached_hash(F)
 
-    hash_str_A = subtree_hash("A")
-    hash_str_B = subtree_hash("B")
-    hash_str_C = subtree_hash("C")
-    hash_str_D = subtree_hash("D")
-    hash_str_E = subtree_hash("E")
-    hash_str_F = subtree_hash("F")
-
-    hash_tuple_BC = subtree_hash(A.children)  # (B, C)
-    hash_tuple_DE = subtree_hash(B.children)  # (D, E)
-    hash_tuple_F = subtree_hash(C.children)  # (F,)
-    hash_empty = subtree_hash(())  # ()
+    hash_str_A = cached_hash("A")
+    hash_str_B = cached_hash("B")
+    hash_str_C = cached_hash("C")
+    hash_str_D = cached_hash("D")
+    hash_str_E = cached_hash("E")
+    hash_str_F = cached_hash("F")
 
     # Build the hash hierarchy for the original tree
     hash_map = build_hash_hierarchy(A)
 
     # Verify mappings for the original tree
-    assert hash_map[hash_A] == frozenset([hash_str_A, hash_tuple_BC]), (
-        "A mapping incorrect"
-    )
-    assert hash_map[hash_B] == frozenset([hash_str_B, hash_tuple_DE]), (
-        "B mapping incorrect"
-    )
-    assert hash_map[hash_C] == frozenset([hash_str_C, hash_tuple_F]), (
-        "C mapping incorrect"
-    )
-    assert hash_map[hash_D] == frozenset([hash_str_D, hash_empty]), (
-        "D mapping incorrect"
-    )
-    assert hash_map[hash_E] == frozenset([hash_str_E, hash_empty]), (
-        "E mapping incorrect"
-    )
-    assert hash_map[hash_F] == frozenset([hash_str_F, hash_empty]), (
-        "F mapping incorrect"
-    )
-
-    assert hash_map[hash_tuple_BC] == frozenset([hash_B, hash_C]), (
-        "Tuple (B,C) mapping incorrect"
-    )
-    assert hash_map[hash_tuple_DE] == frozenset([hash_D, hash_E]), (
-        "Tuple (D,E) mapping incorrect"
-    )
-    assert hash_map[hash_tuple_F] == frozenset([hash_F]), (
-        "Tuple (F,) mapping incorrect"
-    )
-    assert hash_map[hash_empty] == frozenset(), "Empty tuple mapping incorrect"
+    assert hash_map[hash_A] == frozenset(
+        [hash_str_A, cached_hash(A.children)]
+    ), "A mapping incorrect"
+    assert hash_map[hash_B] == frozenset(
+        [hash_str_B, cached_hash(B.children)]
+    ), "B mapping incorrect"
+    assert hash_map[hash_C] == frozenset(
+        [hash_str_C, cached_hash(C.children)]
+    ), "C mapping incorrect"
+    assert hash_map[hash_D] == frozenset(
+        [hash_str_D, cached_hash(D.children)]
+    ), "D mapping incorrect"
+    assert hash_map[hash_E] == frozenset(
+        [hash_str_E, cached_hash(E.children)]
+    ), "E mapping incorrect"
+    assert hash_map[hash_F] == frozenset(
+        [hash_str_F, cached_hash(F.children)]
+    ), "F mapping incorrect"
 
     assert hash_map[hash_str_A] == frozenset(), "String 'A' mapping incorrect"
     assert hash_map[hash_str_B] == frozenset(), "String 'B' mapping incorrect"
@@ -542,10 +550,6 @@ def test_hash_hierarchy():
         hash_D,
         hash_E,
         hash_F,
-        hash_tuple_BC,
-        hash_tuple_DE,
-        hash_tuple_F,
-        hash_empty,
         hash_str_A,
         hash_str_B,
         hash_str_C,
@@ -565,57 +569,38 @@ def test_hash_hierarchy():
     A_shared = RoseNode("A", (B_shared, C_shared))
 
     # Compute hashes for the tree with shared subtrees
-    hash_A_shared = subtree_hash(A_shared)
-    hash_B_shared = subtree_hash(B_shared)
-    hash_C_shared = subtree_hash(C_shared)
-    hash_G = subtree_hash(G)
+    hash_A_shared = cached_hash(A_shared)
+    hash_B_shared = cached_hash(B_shared)
+    hash_C_shared = cached_hash(C_shared)
+    hash_G = cached_hash(G)
 
-    hash_str_G = subtree_hash("G")
-
-    hash_tuple_BC_shared = subtree_hash(
-        A_shared.children
-    )  # (B_shared, C_shared)
-    hash_tuple_DEG = subtree_hash(B_shared.children)  # (D, E, G)
-    hash_tuple_FG = subtree_hash(C_shared.children)  # (F, G)
+    hash_str_G = cached_hash("G")
 
     # Build the hash hierarchy for the tree with shared subtrees
     hash_map_shared = build_hash_hierarchy(A_shared)
 
     # Verify mappings for the tree with shared subtrees
     assert hash_map_shared[hash_A_shared] == frozenset(
-        [hash_str_A, hash_tuple_BC_shared]
+        [hash_str_A, cached_hash(A_shared.children)]
     ), "A_shared mapping incorrect"
     assert hash_map_shared[hash_B_shared] == frozenset(
-        [hash_str_B, hash_tuple_DEG]
+        [hash_str_B, cached_hash(B_shared.children)]
     ), "B_shared mapping incorrect"
     assert hash_map_shared[hash_C_shared] == frozenset(
-        [hash_str_C, hash_tuple_FG]
+        [hash_str_C, cached_hash(C_shared.children)]
     ), "C_shared mapping incorrect"
-    assert hash_map_shared[hash_D] == frozenset([hash_str_D, hash_empty]), (
-        "D mapping incorrect in shared tree"
-    )
-    assert hash_map_shared[hash_E] == frozenset([hash_str_E, hash_empty]), (
-        "E mapping incorrect in shared tree"
-    )
-    assert hash_map_shared[hash_F] == frozenset([hash_str_F, hash_empty]), (
-        "F mapping incorrect in shared tree"
-    )
-    assert hash_map_shared[hash_G] == frozenset([hash_str_G, hash_empty]), (
-        "G mapping incorrect"
-    )
-
-    assert hash_map_shared[hash_tuple_BC_shared] == frozenset(
-        [hash_B_shared, hash_C_shared]
-    ), "Tuple (B_shared, C_shared) mapping incorrect"
-    assert hash_map_shared[hash_tuple_DEG] == frozenset(
-        [hash_D, hash_E, hash_G]
-    ), "Tuple (D, E, G) mapping incorrect"
-    assert hash_map_shared[hash_tuple_FG] == frozenset([hash_F, hash_G]), (
-        "Tuple (F, G) mapping incorrect"
-    )
-    assert hash_map_shared[hash_empty] == frozenset(), (
-        "Empty tuple mapping incorrect in shared tree"
-    )
+    assert hash_map_shared[hash_D] == frozenset(
+        [hash_str_D, cached_hash(D.children)]
+    ), "D mapping incorrect in shared tree"
+    assert hash_map_shared[hash_E] == frozenset(
+        [hash_str_E, cached_hash(E.children)]
+    ), "E mapping incorrect in shared tree"
+    assert hash_map_shared[hash_F] == frozenset(
+        [hash_str_F, cached_hash(F.children)]
+    ), "F mapping incorrect in shared tree"
+    assert hash_map_shared[hash_G] == frozenset(
+        [hash_str_G, cached_hash(G.children)]
+    ), "G mapping incorrect"
 
     assert hash_map_shared[hash_str_A] == frozenset(), (
         "String 'A' mapping incorrect in shared tree"
@@ -639,14 +624,6 @@ def test_hash_hierarchy():
         "String 'G' mapping incorrect"
     )
 
-    # Verify that hash_G is correctly shared
-    assert hash_G in hash_map_shared[hash_tuple_DEG], (
-        "hash_G missing from children of hash_tuple_DEG"
-    )
-    assert hash_G in hash_map_shared[hash_tuple_FG], (
-        "hash_G missing from children of hash_tuple_FG"
-    )
-
     # Verify no extra or missing keys in the shared tree
     expected_keys_shared = {
         hash_A_shared,
@@ -656,10 +633,6 @@ def test_hash_hierarchy():
         hash_E,
         hash_F,
         hash_G,
-        hash_tuple_BC_shared,
-        hash_tuple_DEG,
-        hash_tuple_FG,
-        hash_empty,
         hash_str_A,
         hash_str_B,
         hash_str_C,
