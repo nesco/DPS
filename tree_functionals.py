@@ -9,6 +9,8 @@ from typing import Callable, Generic, Iterator, Sequence, TypeVar
 
 from typing_extensions import Hashable
 
+from localtypes import BitLengthAware
+
 T = TypeVar("T")
 
 
@@ -220,11 +222,18 @@ def dataclass_subvalues(obj: T) -> Iterator[T]:
         return  # Yield nothing if not a dataclass
     for f in fields(obj):
         value = getattr(obj, f.name)
-        if isinstance(value, (tuple, list, set)):
+        if isinstance(value, (tuple, list, set, frozenset)):
             for elem in value:
                 yield elem
         else:
             yield value
+
+
+# bitlength aware
+def breadth_first_preorder_bitlengthaware(
+    root: BitLengthAware,
+) -> Iterator[BitLengthAware]:
+    return breadth_first_preorder(dataclass_subvalues, root)
 
 
 # Cached because it's called very often

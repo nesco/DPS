@@ -5,101 +5,164 @@ Distances are computed with given distance and "length" functions.
 If there is some kind of neutral element in the "set" of objects to compare, the "length" function will usually be the distance to it.
 
 For tree type structures, Identity only mean the current non-tree values of the compared node are similar, as operations on their children will be linearized and thus counted
+
+Operations:
+    - Identity -> Do nothing
+    - Substitute -> Substitute a bitlengthaware element by another
+    - Add ->
+        * if source is None, then Add a bitlengthaware element, like a Substitue(None, Elem)
+        * If source is tuple, Add a new element at the end, so the key is not needed
+        * If source is set, add a new element to it
+        * If source is a dataclass bitlengthaware element, add to the corresponding field, or maybe overwrite it if it exists
+            Q: What if it exists, but the elems are not the same?
+    - Delete ->
+        * If source is a Bitlength aware element, returns None, like Substitute(Elem, None), should raise an exception maybe
+        * If source is a tuple, remove the element similar to it from the tuple?
+        * If source is a set, remove the element form the set
+        * If source is a dataclass bitlengthaware element, remove the corresponding field if it exists?
+            Q: What if it exists, but the elems are not the same?
+    - Pruning -> For a dataclass bitlength aware element, only keep the elements similar to it if it exist (by key or by equality)?
+        * Field name?
+        * Numbering
+    - Graft -> Add it to the key
 """
 
-from collections import defaultdict, deque
-from dataclasses import dataclass, field, fields, is_dataclass
+from collections import defaultdict
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from functools import cache
-from typing import Any, Callable, Generic, Sequence, TypeVar
+from typing import Any, Callable, Sequence, TypeVar
 
-from dag_functionals import topological_sort
-from localtypes import BitLengthAware, Primitive, ensure_all_instances
-from tree_functionals import RoseNode, build_hash_hierarchy, cached_hash
+from localtypes import (
+    BitLengthAware,
+    KeyValue,
+    Primitive,
+    ensure_all_instances,
+)
+from tree_functionals import (
+    RoseNode,
+    breadth_first_preorder_bitlengthaware,
+    cached_hash,
+)
 
 T = TypeVar("T")
 
+type Operation = Add | Delete | Identity | Substitute | Inner
+
+type ExtendedOperation = (
+    Identity | Add | Delete | Substitute | Prune | Graft | Inner
+)
+
 
 @dataclass(frozen=True)
-class Identity(Generic[T], BitLengthAware):
+class Inner(BitLengthAware):
+    key: KeyValue
+    children: "frozenset[ExtendedOperation]"
+
+    def bit_length(self) -> int:
+        return sum(op.bit_length() for op in self.children)
+
+    def __str__(self) -> str:
+        return f"Inner({self.children})"
+
+
+@dataclass(frozen=True)
+class Identity(BitLengthAware):
     """Represents an element that remains unchanged."""
 
-    value: T
+    key: KeyValue
+    # value: BitLengthAware
 
     def bit_length(self) -> int:
         return 0
 
     def __str__(self):
-        return f"Identity: {self.value}"
+        return "Identity"  # . Original element: {self.value}"
 
 
 @dataclass(frozen=True)
-class Add(Generic[T], BitLengthAware):
-    """Represents an element that is added."""
+class Add(BitLengthAware):
+    """Represents an element that is added to a collection."""
 
-    value: T
+    key: KeyValue
+    value: BitLengthAware
 
     def bit_length(self) -> int:
-        if isinstance(self.value, BitLengthAware):
-            return self.value.bit_length()
-        return 1
+        # if isinstance(self.value, BitLengthAware):
+        #     return self.value.bit_length()
+        # return 1
+        return self.value.bit_length()
 
     def __str__(self):
-        return f"Add: {self.value}"
+        return f"Add: {self.value} to a collection"
 
 
 @dataclass(frozen=True)
-class Delete(Generic[T]):
-    """Represents an element that is deleted."""
+class Delete(BitLengthAware):
+    """Represents an element that is deleted in a collection."""
 
-    value: T
+    key: KeyValue
+    value: BitLengthAware  # Necessary for frozensets
 
     def bit_length(self) -> int:
-        if isinstance(self.value, BitLengthAware):
-            return self.value.bit_length()
-        return 1
+        # if isinstance(self.value, BitLengthAware):
+        #    return self.value.bit_length()
+        # return 1
+        return self.value.bit_length()
 
     def __str__(self):
-        return f"Delete: {self.value}"
+        return f"Delete {self.value} from a collection"
 
 
 @dataclass(frozen=True)
-class Substitute(Generic[T]):
+class Substitute(BitLengthAware):
     """Represents an element substituted with another."""
 
-    previous_value: T
-    next_value: T
+    key: KeyValue
+    # before: BitLengthAware
+    after: BitLengthAware
 
     def bit_length(self) -> int:
-        if isinstance(self.previous_value, BitLengthAware) and isinstance(
-            self.next_value, BitLengthAware
-        ):
-            return (
-                self.previous_value.bit_length() + self.next_value.bit_length()
-            )
+        # if isinstance(self.before, BitLengthAware) and isinstance(
+        #     self.after, BitLengthAware
+        # ):
+        #     return self.before.bit_length() + self.after.bit_length()
+        return self.after.bit_length()
 
         return 2
 
     def __str__(self):
-        return f"Substitute: {self.previous_value} -> {self.next_value}"
+        # return f"Substitute: {self.before} |-> {self.after} on key: {self.key}"
+        return f"Substitute: object |-> {self.after}"
 
-
-type Operation[T] = Identity[T] | Add[T] | Delete[T] | Substitute[T]
-
-
-# Is it used?
-OrderedTransformation = tuple[Operation, int, T | None, T | None]
-UnorderedTransformation = tuple[Operation, T | None, T | None]
 
 # Helpers
+def identity_or_inner(
+    source: BitLengthAware,
+    target: BitLengthAware,
+    sub_dist: int,
+    sub_ops: ExtendedOperation,
+    key: KeyValue,
+) -> ExtendedOperation:
+    """
+    The aim of tree transformations is to use as much of inner transformations on subnodes instead of a general substitution as possible.
+    """
+    if sub_dist == 0:
+        return Identity(key)
+
+    return Inner(key, frozenset({sub_ops}))
 
 
 @cache
 def sequence_edit_distance(
-    source_sequence: Sequence[T],
-    target_sequence: Sequence[T],
-    distance_func: Callable[[T, T], tuple[int, Sequence[Operation[T]]]],
-    len_func: Callable[[T], int],
-) -> tuple[int, Sequence[Operation[T]]]:
+    source_sequence: Sequence[BitLengthAware],
+    target_sequence: Sequence[BitLengthAware],
+    distance_func: Callable[
+        [BitLengthAware, BitLengthAware],
+        tuple[int, Operation],
+    ],
+    len_func: Callable[[BitLengthAware], int],
+    key: str | None = None,
+) -> tuple[int, Sequence[Operation]]:
     """
     Computes the edit distance between two sequences using dynamic programming.
 
@@ -108,6 +171,7 @@ def sequence_edit_distance(
         target_sequence: Second sequence.
         distance_func: Returns (distance, transformations) between two elements.
         len_func: Function to compute the "length" or cost of an element.
+        key: Name of the field containing the collection, if applicable
 
     Returns:
         Tuple of (edit distance, list of transformations).
@@ -141,24 +205,31 @@ def sequence_edit_distance(
                 source_sequence[i - 1], target_sequence[j - 1]
             )
             if dp[i][j] == dp[i - 1][j - 1] + sub_dist:
-                if sub_dist == 0:
-                    transformations.append(Identity(source_sequence[i - 1]))
-                else:
-                    transformations.append(
-                        Substitute(
-                            source_sequence[i - 1], target_sequence[j - 1]
-                        )
-                    )
+                operation = identity_or_inner(
+                    source_sequence[i - 1],
+                    target_sequence[j - 1],
+                    sub_dist,
+                    sub_ops,
+                    KeyValue((key, i - 1)),
+                )
+                transformations.append(operation)
                 i -= 1
                 j -= 1
                 continue
         if i > 0 and dp[i][j] == dp[i - 1][j] + len_func(
             source_sequence[i - 1]
         ):
-            transformations.append(Delete(source_sequence[i - 1]))
+            transformations.append(
+                # Delete(KeyValue(i - 1), source_sequence[i - 1])
+                Delete(KeyValue((key, i - 1)), source_sequence[i - 1])
+            )
             i -= 1
         else:
-            transformations.append(Add(target_sequence[j - 1]))
+            # transformations.append(Add(KeyValue(j - 1), target_sequence[j - 1]))
+            # transformations.append(Add(KeyValue(None), target_sequence[j - 1]))
+            transformations.append(
+                Add(KeyValue((key, j - 1)), target_sequence[j - 1])
+            )
             j -= 1
     transformations.reverse()  # Reverse to get transformations in forward order
 
@@ -166,11 +237,15 @@ def sequence_edit_distance(
 
 
 def set_edit_distance(
-    source_set: set[T] | frozenset[T],
-    target_set: set[T] | frozenset[T],
-    distance_func: Callable[[T, T], tuple[int, Sequence[Operation[T]]]],
-    len_func: Callable[[T], int],
-) -> tuple[int, Sequence[Operation[T]]]:
+    source_set: set[BitLengthAware] | frozenset[BitLengthAware],
+    target_set: set[BitLengthAware] | frozenset[BitLengthAware],
+    distance_func: Callable[
+        [BitLengthAware, BitLengthAware],
+        tuple[int, Operation],
+    ],
+    len_func: Callable[[BitLengthAware], int],
+    key: str | None = None,
+) -> tuple[int, Sequence[Operation]]:
     """
     Computes the edit distance between two sets using a greedy approach.
 
@@ -179,6 +254,8 @@ def set_edit_distance(
         target_set: Second set.
         distance_func: Returns (distance, transformations) between two elements.
         len_func: Function to compute the "length" or cost of an element.
+        path: path of the source set
+        key: Name of the field containing the collection, if applicable
 
     Returns:
         Tuple of (edit distance, list of transformations).
@@ -188,10 +265,10 @@ def set_edit_distance(
         return 0, []
     if not source_set:
         dist = sum(len_func(elem) for elem in target_set)
-        return dist, [Add(elem) for elem in target_set]
+        return dist, [Add(KeyValue(key), elem) for elem in target_set]
     if not target_set:
         dist = sum(len_func(elem) for elem in source_set)
-        return dist, [Delete(elem) for elem in source_set]
+        return dist, [Delete(KeyValue(key), elem) for elem in source_set]
 
     # Convert sets to lists for processing
     source_sequence = list(source_set)
@@ -199,72 +276,96 @@ def set_edit_distance(
     available = set(range(len(target_sequence)))
     total_dist = 0
     transformations = []
+    key_val = KeyValue(key)
 
     # Greedy matching
-    for elem1 in source_sequence:
+    for source_elem in source_sequence:
+        # Don't really matther for sets and stochastic so to remove
         if available:
             min_dist, min_j = min(
-                (distance_func(elem1, target_sequence[j])[0], j)
+                (
+                    distance_func(source_elem, target_sequence[j])[0],
+                    j,
+                )
                 for j in available
             )
-            if min_dist < len_func(elem1) + len_func(target_sequence[min_j]):
+            if min_dist < len_func(source_elem) + len_func(
+                target_sequence[min_j]
+            ):
                 total_dist += min_dist
-                _, ops = distance_func(elem1, target_sequence[min_j])
-                if min_dist == 0:
-                    transformations.append(Identity(elem1))
-                else:
-                    transformations.extend(ops)
+                sub_dist, sub_ops = distance_func(
+                    source_elem, target_sequence[min_j]
+                )
+                operation = identity_or_inner(
+                    source_elem,
+                    target_sequence[min_j],
+                    sub_dist,
+                    sub_ops,
+                    key_val,
+                )
+                transformations.append(operation)
                 available.remove(min_j)
             else:
-                total_dist += len_func(elem1)
-                transformations.append(Delete(elem1))
+                total_dist += len_func(source_elem)
+                transformations.append(Delete(key_val, source_elem))
         else:
-            total_dist += len_func(elem1)
-            transformations.append(Delete(elem1))
+            total_dist += len_func(source_elem)
+            transformations.append(Delete(key_val, source_elem))
 
     # Handle remaining elements in target_set
     for j in available:
         total_dist += len_func(target_sequence[j])
-        transformations.append(Add(target_sequence[j]))
+        transformations.append(Add(key_val, target_sequence[j]))
 
     return total_dist, tuple(transformations)
 
 
-U = TypeVar("U", bound=BitLengthAware)
+@dataclass(frozen=True)
+class Prune(BitLengthAware):
+    """When only the children element at key value is kept."""
+
+    key: KeyValue
+    then: ExtendedOperation
+    # parent: BitLengthAware
+    # child: BitLengthAware
+
+    def bit_length(self) -> int:
+        # return self.parent.bit_length() - self.child.bit_length()
+        return self.key.bit_length() + self.then.bit_length()
+
+    def __str__(self):
+        if isinstance(self.key.value, tuple):
+            field, index = self.key.value
+            return f"Keeping element at key {field}[{index}]"
+        return f"Keeping element at key {self.key}"
 
 
 @dataclass(frozen=True)
-class Trim(Generic[U]):
-    """When only a children element is kept."""
+class Graft(BitLengthAware):
+    """When a children is added to a parent, it overwrites a parent *existing field*."""
 
-    parent: U
-    children: U
-
-    def bit_length(self) -> int:
-        return self.parent.bit_length() - self.children.bit_length()
-
-
-@dataclass(frozen=True)
-class Attach(Generic[U]):
-    """When a children is added to a parent."""
-
-    parent: U
-    children: U
+    key: KeyValue
+    parent: BitLengthAware
+    first: ExtendedOperation
+    # child: BitLengthAware
 
     def bit_length(self) -> int:
-        return self.parent.bit_length() - self.children.bit_length()
+        # return self.parent.bit_length() - self.child.bit_length()
+        return (
+            self.key.bit_length()
+            + self.parent.bit_length()
+            + self.first.bit_length()
+        )
 
-
-type ExtendedOperation[U] = (
-    Identity[U] | Add[U] | Delete[U] | Substitute[U] | Trim[U] | Attach[U]
-)
+    def __str__(self):
+        return f"Attaching element at: {self.parent}[{self.key if self.key else 'None'}]"
 
 
 def collect_links(
     bla: BitLengthAware,
     hash_to_object: dict[int, BitLengthAware],
     parent_to_children: defaultdict[int, set[int]],
-    parent_field: dict[int, str],
+    parent_field: dict[int, KeyValue],
 ):
     # Preorder collection of the relevant hashes
     bla_hash = cached_hash(bla)
@@ -277,15 +378,16 @@ def collect_links(
             if isinstance(attr, BitLengthAware):
                 field_hash = cached_hash(attr)
                 parent_to_children[bla_hash].add(field_hash)
-                parent_field[field_hash] = field.name
+                parent_field[field_hash] = KeyValue(field.name)
                 collect_links(
                     attr, hash_to_object, parent_to_children, parent_field
                 )
             if isinstance(attr, tuple):
                 attr = ensure_all_instances(attr, BitLengthAware)
-                for elem in attr:
-                    field_hash = cached_hash(attr)
-                    parent_field[field_hash] = field.name
+                for i, elem in enumerate(attr):
+                    field_hash = cached_hash(elem)
+                    parent_to_children[bla_hash].add(field_hash)
+                    parent_field[field_hash] = KeyValue((field.name, i))
                     collect_links(
                         elem,
                         hash_to_object,
@@ -295,8 +397,9 @@ def collect_links(
             if isinstance(attr, frozenset):
                 attr = ensure_all_instances(attr, BitLengthAware)
                 for elem in attr:
-                    field_hash = cached_hash(attr)
-                    parent_field[field_hash] = field.name
+                    field_hash = cached_hash(elem)
+                    parent_to_children[bla_hash].add(field_hash)
+                    parent_field[field_hash] = KeyValue(field.name)
                     collect_links(
                         elem,
                         hash_to_object,
@@ -305,108 +408,53 @@ def collect_links(
                     )
 
 
-def naive_edit_distance_bla_deprecated(
-    source: BitLengthAware | None, target: BitLengthAware | None
-) -> tuple[int, tuple[Operation[BitLengthAware]]]:
+def compute_bit_length(obj: Any) -> int:
+    if isinstance(obj, BitLengthAware):
+        return obj.bit_length()
+    elif isinstance(obj, (set, frozenset, tuple, list)):
+        return sum(compute_bit_length(elem) for elem in obj)
+    else:
+        # Default for non-BitLengthAware primitives; adjust as needed
+        return 1
+
+
+def extended_edit_distance(
+    source: BitLengthAware | None,
+    target: BitLengthAware | None,
+) -> tuple[int, ExtendedOperation | None]:
+    """
+    Computes the extended edit distance between two BitLengthAware tree-like objects.
+
+    This function extends traditional edit distance by including Prune and Graft operations,
+    making it suitable for determining if the target tree is a subtree of the source tree.
+    It calculates the minimum cost to transform the source into the target using operations:
+    Identity (no change), Add (insert), Delete (remove), Substitute (replace), Prune (keep only
+    one child, removing others and parent value), and Graft (attach the current node to a root with other childs).
+
+    Args:
+        source: The source tree, a BitLengthAware object or None.
+        target: The target tree, a BitLengthAware object or None.
+
+    Returns:
+        A tuple of (distance, operations), where distance is the minimal edit cost (in bits),
+        and operations is a tuple of ExtendedOperation instances detailing the transformation.
+
+    """
     if source is None and target is None:
-        return 0, tuple()  # Maybe Identity(tuple())?
+        return 0, None  # Maybe Identity(tuple())?
 
     if source is None:
-        return (target.bit_length(), (Add(target),))
+        assert target is not None  # Pyright
+        return (target.bit_length(), Add(KeyValue(None), target))
 
     if target is None:
-        return (source.bit_length(), (Delete(source),))
-
-    hash_source = cached_hash(source)
-    hash_target = cached_hash(target)
-
-    identity = 0, (Identity(source),)
-    substitution = (
-        source.bit_length() + target.bit_length(),
-        (Substitute(source, target),),
-    )
-
-    # Object equality
-    if hash_source == hash_target:
-        return identity
-
-    # One of them is not a dataclass: -> full substitution
-    if not (
-        is_dataclass(source)
-        and is_dataclass(target)
-        or isinstance(source, Primitive)
-        or isinstance(target, Primitive)
-    ):
-        return substitution
-
-    # Both of them are dataclass: now it's field-by-field
-    #
-    total_distance = 0
-    transformations = []
-
-    # Sort the fields by name to guarantee the order of operations
-    for field in sorted(
-        set(fields(source)) | set(fields(target)), key=lambda x: x.name
-    ):
-        # Hypothesis: a field with the same name will have be either tuple, frozenset or bitlengthaware objects simultaneously
-        source_field = getattr(source, field.name)
-        target_field = getattr(target, field.name)
-
-        if isinstance(source_field, tuple):
-            if not isinstance(target_field, tuple):
-                raise TypeError(
-                    f"{source_field} is a tuple, but not {target_field}"
-                )
-            dist, ops = sequence_edit_distance(
-                source_field,
-                target_field,
-                distance_func=recursive_edit_distance,
-                len_func=lambda x: x.bit_length(),
-            )
-        elif isinstance(source_field, frozenset):
-            if not isinstance(target_field, frozenset):
-                raise TypeError(
-                    f"{source_field} is a frozenset, but not {target_field}"
-                )
-            dist, ops = set_edit_distance(
-                source_field,
-                target_field,
-                distance_func=recursive_edit_distance,
-                len_func=lambda x: x.bit_length(),
-            )
-        elif isinstance(source_field, BitLengthAware) or source is None:
-            if not isinstance(target_field, BitLengthAware) or target is None:
-                raise TypeError(
-                    f"{target_field} is a BitLengthAware, but not {target_field}"
-                )
-            dist, ops = recursive_edit_distance(source_field, target_field)
-        else:
-            raise TypeError(f"Unknown type: {source_field} and {target_field}")
-
-        total_distance += dist
-        transformations.extend(ops)
-    result = (total_distance, tuple(transformations))
-
-    return result
-
-
-def edit_distance_bla(
-    source: BitLengthAware | None, target: BitLengthAware | None
-):
-    if source is None and target is None:
-        return 0, tuple()  # Maybe Identity(tuple())?
-
-    if source is None:
-        return (target.bit_length(), (Add(target),))
-
-    if target is None:
-        return (source.bit_length(), (Delete(source),))
+        return (source.bit_length(), Delete(KeyValue(None), source))
 
     # First collect the object topological structure and build the hash -> object map
     hash_to_object: dict[int, BitLengthAware] = {}
     parent_to_children_source: defaultdict[int, set[int]] = defaultdict(set)
     parent_to_children_target: defaultdict[int, set[int]] = defaultdict(set)
-    parent_field: dict[int, str] = {}
+    parent_field: dict[int, KeyValue] = {}
 
     collect_links(
         source, hash_to_object, parent_to_children_source, parent_field
@@ -417,273 +465,104 @@ def edit_distance_bla(
 
     def helper(
         source_node: int, target_node: int
-    ) -> tuple[int, tuple[ExtendedOperation[BitLengthAware], ...]]:
+    ) -> tuple[int, ExtendedOperation]:
         source_obj = hash_to_object[source_node]
         target_obj = hash_to_object[target_node]
 
-        min_distance, min_transformations = recursive_edit_distance(
+        min_distance, min_operation = recursive_edit_distance(
             source_obj, target_obj
         )
+
+        # Optimization idea:
+        # compute the depth and only evaluate the smallest against the childs of the other?
 
         # Comparing the target to a child of the source node
         for child in parent_to_children_source[source_node]:
             # The source_obj is Trimmed
-            operation = Trim(source_obj, hash_to_object[child])
+            # operation = Prune(
+            #    KeyValue(parent_field[child]), source_obj, hash_to_object[child]
+            # )
             # Computing the distance to the child
-            child_distance, child_transformations = helper(child, target_node)
+            child_distance, child_operation = helper(child, target_node)
+            operation = Prune(parent_field[child], child_operation)
             # Trimming then transforming
-            transformations = (operation,) + child_transformations
-            distance = operation.bit_length() + child_distance
+            distance = (
+                source_obj.bit_length()
+                - hash_to_object[child].bit_length()
+                + child_distance
+            )
+
             if distance < min_distance:
-                min_distance, min_transformations = (
+                min_distance, min_operation = (
                     distance,
-                    transformations,
+                    operation,
                 )
         for child in parent_to_children_target[target_node]:
             # The child is Attached to the parent
-            operation = Attach(target_obj, hash_to_object[child])
+            # operation = Graft(
+            #     KeyValue(parent_field[child]), target_obj, hash_to_object[child]
+            # )
             # Computing the distance to the child
-            child_distance, child_transformations = helper(
-                source_node, target_node
+            child_distance, child_operation = helper(source_node, child)
+            operation = Graft(
+                parent_field[child], target_obj, child_operation
+            )  # transformaing then attaching
+            distance = (
+                target_obj.bit_length()
+                - hash_to_object[child].bit_length()
+                + child_distance
             )
-            # Transforming then attaching
-            transformations = child_transformations + (operation,)
-            distance = operation.bit_length() + child_distance
 
             if distance < min_distance:
-                min_distance, min_transformations = (
+                min_distance, min_operation = (
                     distance,
-                    transformations,
+                    operation,
                 )
 
-        return min_distance, min_transformations
+        return min_distance, min_operation
 
-
-def bitlengthaware_edit_distance_deprecated(
-    a: U, b: U
-) -> tuple[int, Sequence[Operation[U]]]:
-    """
-    Computes the edit distance and transformations between two BitLengthAware objects.
-
-    Args:
-        a: First object (assumed to implement bit_length()).
-        b: Second object (assumed to implement bit_length()).
-
-    Returns:
-        Tuple of (distance: int, transformations: Sequence[Operation[T]]).
-    """
-    # Check if subtrees are identical
-    if cached_hash(a) == cached_hash(b):
-        return 0, [Identity(a)]
-
-    # Handle non-dataclass or primitive types
-    if not is_dataclass(a) or not is_dataclass(b):
-        if a == b:
-            return 0, [Identity(a)]
-        return a.bit_length() + b.bit_length(), [Substitute(a, b)]
-
-    # Different types require substitution
-    if not isinstance(a, type(b)):
-        return a.bit_length() + b.bit_length(), [Substitute(a, b)]
-
-    # Compare fields of matching dataclass types
-    total_distance = 0
-    transformations = []
-
-    for field in fields(a):
-        a_field = getattr(a, field.name)
-        b_field = getattr(b, field.name)
-        if isinstance(a_field, tuple):
-            dist, ops = sequence_edit_distance(
-                a_field,
-                b_field,
-                distance_func=bitlengthaware_edit_distance_deprecated,
-                len_func=lambda x: x.bit_length(),
-            )
-            total_distance += dist
-            transformations.extend(ops)
-        elif isinstance(a_field, frozenset):
-            dist, ops = set_edit_distance(
-                a_field,
-                b_field,
-                distance_func=bitlengthaware_edit_distance_deprecated,
-                len_func=lambda x: x.bit_length(),
-            )
-            total_distance += dist
-            transformations.extend(ops)
-        else:
-            dist, ops = bitlengthaware_edit_distance_deprecated(
-                a_field, b_field
-            )
-            total_distance += dist
-            transformations.extend(ops)
-
-    # If no changes, return Identity
-    if total_distance == 0:
-        return 0, [Identity(a)]
-    # Otherwise, return transformations as-is
-    else:
-        return total_distance, transformations
-
-
-def bit_length_edit_distance(
-    a: BitLengthAware, b: BitLengthAware
-) -> tuple[int, Sequence[Operation[BitLengthAware]]]:
-    """
-    Compute the edit distance between two trees using bottom-up DP in topological order.
-
-    Args:
-        a: First tree (root object implementing bit_length()).
-        b: Second tree (root object implementing bit_length()).
-
-    Returns:
-        Tuple of (distance: int, transformations: Sequence[Operation]).
-    """
-    # Build hash hierarchies
-    hierarchy_a = build_hash_hierarchy(a)
-    hierarchy_b = build_hash_hierarchy(b)
-
-    # Collect all unique subtrees
-    hash_to_obj: dict[int, BitLengthAware] = {}
-
-    def collect(obj: BitLengthAware, hierarchy):
-        stack = [obj]
-        seen = set()
-        while stack:
-            current = stack.pop()
-            h = cached_hash(current)
-            if h not in hash_to_obj:
-                hash_to_obj[h] = current
-            if id(current) not in seen and h in hierarchy:
-                seen.add(id(current))
-                if is_dataclass(current):
-                    for f in fields(current):
-                        value = getattr(current, f.name)
-                        if isinstance(value, (tuple, frozenset)):
-                            stack.extend(value)
-                        else:
-                            stack.append(value)
-                elif isinstance(current, (tuple, frozenset)):
-                    stack.extend(current)
-
-    collect(a, hierarchy_a)
-    collect(b, hierarchy_b)
-
-    # All unique hashes
-    all_hashes = set(hierarchy_a.keys()) | set(hierarchy_b.keys())
-
-    # Child-to-parent mapping for topological order
-    child_to_parents: defaultdict[int, set[int]] = defaultdict(set)
-    for h, children in {**hierarchy_a, **hierarchy_b}.items():
-        for child_h in children:
-            child_to_parents[child_h].add(h)
-
-    # DP table
-    dp: dict[
-        tuple[int, int], tuple[int, Sequence[Operation[BitLengthAware]]]
-    ] = {}
-
-    # Queue for bottom-up processing (leaves first)
-    queue = deque([h for h in all_hashes if h not in child_to_parents])
-    processed = set(queue)
-
-    while queue:
-        ha = queue.popleft()
-        for hb in all_hashes:
-            if (ha, hb) in dp:
-                continue
-
-            obj_a = hash_to_obj[ha]
-            obj_b = hash_to_obj[hb]
-
-            if ha == hb:
-                dp[(ha, hb)] = (0, [Identity(obj_a)])
-                continue
-
-            # Handle non-dataclasses
-            if not (is_dataclass(obj_a) and is_dataclass(obj_b)):
-                cost = obj_a.bit_length() + obj_b.bit_length()
-                dp[(ha, hb)] = (cost, [Substitute(obj_a, obj_b)])
-                continue
-
-            # Dataclasses: align fields
-            fields_a = {f.name: getattr(obj_a, f.name) for f in fields(obj_a)}
-            fields_b = {f.name: getattr(obj_b, f.name) for f in fields(obj_b)}
-            all_fields = set(fields_a.keys()) | set(fields_b.keys())
-
-            total_distance = 0
-            transformations = []
-
-            for fname in all_fields:
-                if fname not in fields_a:
-                    value_b = fields_b[fname]
-                    cost = compute_bit_length(value_b)
-                    total_distance += cost
-                    transformations.append(Add(value_b))
-                elif fname not in fields_b:
-                    value_a = fields_a[fname]
-                    cost = compute_bit_length(value_a)
-                    total_distance += cost
-                    transformations.append(Delete(value_a))
-                else:
-                    ha_field = cached_hash(fields_a[fname])
-                    hb_field = cached_hash(fields_b[fname])
-                    if (ha_field, hb_field) not in dp:
-                        continue  # Children not processed yet
-                    dist, ops = dp[(ha_field, hb_field)]
-                    total_distance += dist
-                    transformations.extend(ops)
-
-            dp[(ha, hb)] = (total_distance, transformations)
-            print(
-                f"distance between {hash_to_obj[ha]} and {hash_to_obj[hb]} := {dp[(ha, hb)]}"
-            )
-
-        # Add parents whose children are all processed
-        if ha in child_to_parents:
-            for parent_h in child_to_parents[ha]:
-                children = hierarchy_a.get(parent_h, set()) | hierarchy_b.get(
-                    parent_h, set()
-                )
-                if (
-                    all(child_h in processed for child_h in children)
-                    and parent_h not in processed
-                ):
-                    queue.append(parent_h)
-                    processed.add(parent_h)
-
-    # Return distance between roots
-    ha_root = cached_hash(a)
-    hb_root = cached_hash(b)
-    return dp.get((ha_root, hb_root), (0, []))
+    return helper(cached_hash(source), cached_hash(target))
 
 
 @cache
 def recursive_edit_distance(
-    a: BitLengthAware, b: BitLengthAware
-) -> tuple[int, tuple[Operation[BitLengthAware], ...]]:
+    source: BitLengthAware, target: BitLengthAware, filter_identities=True
+) -> tuple[int, Operation]:
+    """
+    Args
+        source: The source tree, a BitLengthAware object or None.
+        target: The target tree, a BitLengthAware object or None.
+        filter_identites: Wether to simplify the operations structure by filtering away identities
+
+    Returns:
+        A tuple of (distance, operations), where distance is the minimal edit cost (in bits),
+        and operations is a tuple of ExtendedOperation instances detailing the transformation.
+    """
+
     dp = {}
 
     def helper(
-        a: BitLengthAware, b: BitLengthAware
-    ) -> tuple[int, Sequence[Operation[BitLengthAware]]]:
+        a: BitLengthAware, b: BitLengthAware, key: KeyValue = KeyValue(None)
+    ) -> tuple[int, Operation]:
         ha = cached_hash(a)
         hb = cached_hash(b)
         if (ha, hb) in dp:
             return dp[(ha, hb)]
 
         if ha == hb:
-            result = (0, [Identity(a)])
+            # result = (0, [Identity(key, a)])
+            result = (0, Identity(key))
         elif (
             not (is_dataclass(a) and is_dataclass(b))
             or isinstance(a, Primitive)
             or isinstance(b, Primitive)
         ):
             cost = compute_bit_length(a) + compute_bit_length(b)
-            result = (cost, [Substitute(a, b)])
+            result = (cost, Substitute(key, b))
         else:
             total_distance = 0
-            transformations = []
+            operations = set()
+
             for field in sorted(
                 set(fields(a)) | set(fields(b)), key=lambda x: x.name
             ):
@@ -695,10 +574,7 @@ def recursive_edit_distance(
                             f"{a_field} is a tuple, but not {b_field}"
                         )
                     dist, ops = sequence_edit_distance(
-                        a_field,
-                        b_field,
-                        distance_func=helper,
-                        len_func=compute_bit_length,
+                        a_field, b_field, helper, compute_bit_length, field.name
                     )
                 elif isinstance(a_field, frozenset):
                     if not isinstance(b_field, frozenset):
@@ -706,33 +582,41 @@ def recursive_edit_distance(
                             f"{a_field} is a frozenset, but not {b_field}"
                         )
                     dist, ops = set_edit_distance(
-                        a_field,
-                        b_field,
-                        distance_func=helper,
-                        len_func=compute_bit_length,
+                        a_field, b_field, helper, compute_bit_length, field.name
                     )
-                elif isinstance(a_field, BitLengthAware) or a is None:
-                    if not isinstance(b_field, BitLengthAware) or b is None:
+                elif isinstance(a_field, BitLengthAware):
+                    if not isinstance(b_field, BitLengthAware):
                         raise TypeError(
                             f"{a_field} is a BitLengthAware, but not {b_field}"
                         )
-                    dist, ops = helper(a_field, b_field)
+                    dist, ops = helper(a_field, b_field, KeyValue(field.name))
+                    ops = {ops}
                 else:
                     raise TypeError(f"Unknown type: {a_field} and {b_field}")
+                if filter_identities:
+                    ops = [op for op in ops if not isinstance(op, Identity)]
+                operations.update(ops)
                 total_distance += dist
-                transformations.extend(ops)
-            result = (total_distance, transformations)
+            inner = Inner(key, frozenset(operations))
+            # substitution = Substitute(key, b)
+            # # Arbitrage between Inner and Substitution
+            # transformation = (
+            #     inner
+            #     if total_distance <= a.bit_length() + b.bit_length()
+            #     else substitution
+            # ) # condition always true
+            result = (total_distance, inner)
 
         dp[(ha, hb)] = result
         return result
 
-    distance, transformations = helper(a, b)
-    return distance, tuple(transformations)
+    distance, transformation = helper(source, target)
+    return distance, transformation
 
 
 def edit_distance(
     a: str, b: str, reverse: bool = True
-) -> tuple[int, Sequence[Operation[str]]]:
+) -> tuple[int, Sequence[Operation]]:
     """
     Computes the edit distance between two strings.
 
@@ -747,14 +631,206 @@ def edit_distance(
     distance, transformations = sequence_edit_distance(
         a,
         b,
-        distance_func=lambda x, y: (0, (Identity(x),))
+        distance_func=lambda x, y: (0, Identity(KeyValue(None)))
         if x == y
-        else (2, (Substitute(x, y),)),
+        else (2, Substitute(KeyValue(None), y)),
         len_func=lambda x: 1,
     )
     if not reverse:
         tuple(reversed(transformations))
     return distance, transformations
+
+
+def apply_transformation(
+    source: BitLengthAware, operation: ExtendedOperation
+) -> BitLengthAware:
+    """
+    Applies a sequence of transformations to transform the source into the destination.
+
+    Args:
+        source: The source BitLengthAware object.
+        transformations: Tuple of operations (e.g., Identity, Substitute, Prune, etc.).
+
+    Returns:
+        The transformed BitLengthAware object.
+    """
+
+    match operation.key.value:
+        case None:
+            match operation:
+                case Identity(_):
+                    return source
+                case Substitute(_, after):
+                    return after
+                case Inner(_, operations) if isinstance(source, Primitive):
+                    for op in operations:
+                        if isinstance(op, Substitute) and op.key.value is None:
+                            return op.after  # Apply the substitution
+                    print(
+                        f"No applicable Substitute found in Inner for Primitive {source}, operation ignored"
+                    )
+                    return source
+                case Inner(_, operations) if not is_dataclass(
+                    source
+                ) or isinstance(source, Primitive):
+                    print(
+                        f"Inner operation on a non tree node: {source}, operation ignored"
+                    )
+                    return source
+                case Inner(_, operations):
+                    result = source
+                    for op in operations:
+                        result = apply_transformation(source, op)
+                    return result
+                case _:
+                    print(
+                        f"Invalid operation for None key: {operation}, operation ignored"
+                    )
+                    return source
+        case str() as field_name:
+            if not is_dataclass(source) or isinstance(source, Primitive):
+                print(
+                    f"Operation on specific field on non tree node: {source}, operation ignored"
+                )
+                return source
+            else:
+                if isinstance(operation, Graft):
+                    parent_field = getattr(operation.parent, field_name)
+                    return replace(
+                        operation.parent,
+                        **{
+                            field_name: apply_transformation(
+                                parent_field, operation.first
+                            )
+                        },
+                    )
+                source_field = getattr(source, field_name)
+                match operation:
+                    case Add(_, value) | Delete(_, value) if not isinstance(
+                        source_field, frozenset
+                    ):
+                        print(
+                            f"Trying to add or delete element to a non frozen set field: {source_field} with a string key: {field_name}, operation ignored"
+                        )
+                        return source
+                    case (
+                        Identity() | Substitute() | Inner() | Prune() | Graft()
+                    ) if not isinstance(source_field, BitLengthAware):
+                        print(
+                            f"Invalid operation on a non BitLengthAware field: {source_field} with a string key: {field_name}, operation ignored"
+                        )
+                        return source
+                    case Identity(_):
+                        return source
+                    case Substitute(_, after):
+                        return replace(source, **{field_name: after})
+                    case Inner(_, ops):
+                        assert isinstance(source_field, BitLengthAware)
+                        return replace(
+                            source,
+                            **{
+                                field_name: apply_transformation(
+                                    source_field, Inner(KeyValue(None), ops)
+                                )
+                            },
+                        )
+                    case Prune(_, then):
+                        assert isinstance(source_field, BitLengthAware)
+                        return apply_transformation(source_field, then)
+                    case Add(_, value):
+                        assert isinstance(source_field, frozenset)
+                        return replace(
+                            source,
+                            **{field_name: source_field.union({value})},
+                        )
+                    case Delete(_, value):
+                        assert isinstance(source_field, frozenset)
+                        return replace(
+                            source,
+                            **{field_name: source_field.difference({value})},
+                        )
+                    case _:
+                        print(
+                            f"Invalid operation for string key: {operation}, operation ignored"
+                        )
+                        return source
+        case (str() as field_name, int() as index):
+            if not is_dataclass(source) or isinstance(source, Primitive):
+                print(
+                    f"Operation on specific field on non tree node: {source}, operation ignored"
+                )
+                return source
+            else:
+                if isinstance(operation, Graft):
+                    parent_field = getattr(operation.parent, field_name)
+                    return replace(
+                        operation.parent,
+                        **{
+                            field_name: parent_field[:index]
+                            + (apply_transformation(source, operation.first),)
+                            + parent_field[index + 1 :]
+                        },
+                    )
+                source_field = getattr(source, field_name)
+                assert isinstance(source_field, tuple)
+                match operation:
+                    case Identity(_):
+                        return source
+                    case Substitute(_, after):
+                        return replace(
+                            source,
+                            **{
+                                field_name: source_field[:index]
+                                + (after,)
+                                + source_field[index + 1 :]
+                            },
+                        )
+                    case Inner(_, ops):
+                        return replace(
+                            source,
+                            **{
+                                field_name: source_field[:index]
+                                + (
+                                    apply_transformation(
+                                        source_field[index],
+                                        Inner(KeyValue(None), ops),
+                                    ),
+                                )
+                                + source_field[index + 1 :]
+                            },
+                        )
+                    case Add(
+                        _, value
+                    ):  # Migbt add a warning if the length doesn't match? Or remove tuple keys for addition altogether?
+                        return replace(
+                            source,
+                            **{field_name: source_field + (value,)},
+                        )
+                    case Delete(_, value) if (
+                        len(source_field) == index - 1
+                        or source_field[-1] == value
+                    ):
+                        return replace(
+                            source, **{field_name: source_field[:-1]}
+                        )
+                    case Delete(_, value):
+                        print(
+                            "Delete on out of bound or non matching elements on tuple, operation ignored"
+                        )
+                        return source
+                    case Prune(_, then):
+                        assert isinstance(source_field[index], BitLengthAware)
+                        return apply_transformation(source_field[index], then)
+                    case _:
+                        print(
+                            f"Invalid operation for tuple key: {operation}, operation ignored"
+                        )
+                        return source
+        case _:
+            print(
+                f"Invalid key {operation.key.value} for {operation}, operation ignored"
+            )
+            return source
 
 
 ### Test Functions
@@ -764,58 +840,82 @@ def test_edit_distance():
     """Tests the edit distance computation for strings."""
     a = "kitten"
     b = "sitting"
-    distance, transformations = edit_distance(a, b)
-    assert distance == sum(op.bit_length() for op in transformations), (
-        "The sum of the operations bit length should math the distance"
+
+    a_tuple = tuple(CharValue(c) for c in a)
+    b_tuple = tuple(CharValue(c) for c in b)
+
+    distance, transformation = sequence_edit_distance(
+        a_tuple,
+        b_tuple,
+        distance_func=lambda x, y: (0, Identity(KeyValue(None)))
+        if x == y
+        else (2, Substitute(KeyValue(None), y)),
+        len_func=lambda x: 1,
+    )
+    print(f"Distance: {distance}")
+    print(
+        f"Transformation bit length: {sum(op.bit_length() for op in transformation)}"
     )
     print(f"Distance between {a} and {b}: {distance}")
-    print(f"Steps: {len(transformations)}")
-    for transformation in transformations:
+    print(f"Steps: {len(transformation)}")
+    for transformation in transformation:
         print(str(transformation))
 
 
 def test_set_edit_distance():
     """Tests the edit distance computation for sets."""
-    source_set = frozenset({"a", "b"})
-    target_set = frozenset({"a", "c"})
-    distance, transformations = set_edit_distance(
+    source_set = frozenset({CharValue("a"), CharValue("b")})
+    target_set = frozenset({CharValue("a"), CharValue("c")})
+    distance, transformation = set_edit_distance(
         source_set,
         target_set,
-        distance_func=lambda x, y: (0, (Identity(x),))
+        distance_func=lambda x, y: (0, Identity(KeyValue(None)))
         if x == y
-        else (2, (Substitute(x, y),)),
+        else (2, Substitute(KeyValue(None), y)),
         len_func=lambda x: 1,
     )
-    assert distance == sum(op.bit_length() for op in transformations), (
-        "The sum of the operations bit length should math the distance"
+    print(f"Distance: {distance}")
+    print(f"Transformation: {transformation}")
+    print(
+        f"Transformation bit length: {sum(op.bit_length() for op in transformation)}"
     )
     print(f"Distance between {source_set} and {target_set}: {distance}")
     print("Transformations:")
-    for transformation in transformations:
-        print(str(transformation))
+    for operation in transformation:
+        print(str(operation))
 
 
-def test_bit_length_edit_distance():
-    @dataclass(frozen=True)
-    class MockValue(Primitive):
-        value: int
+@dataclass(frozen=True)
+class MockValue(Primitive):
+    value: int
 
-        def bit_length(self) -> int:
-            return 1
+    def bit_length(self) -> int:
+        return 1
 
-    @dataclass(frozen=True)
-    class TreeNode(BitLengthAware, RoseNode[MockValue]):
-        children: "tuple[TreeNode, ...]" = field(default_factory=tuple)
 
-        def bit_length(self) -> int:
-            """Return the size of the subtree (number of nodes)."""
-            return self.value.bit_length() + sum(
-                child.bit_length() for child in self.children
-            )
+@dataclass(frozen=True)
+class CharValue(Primitive):
+    value: str
 
-        def __str__(self):
-            return f"{self.value} -> ({'|'.join(str(child) for child in self.children)})"
+    def bit_length(self) -> int:
+        return 1
 
+
+@dataclass(frozen=True)
+class TreeNode(BitLengthAware, RoseNode[MockValue]):
+    children: "tuple[TreeNode, ...]" = field(default_factory=tuple)
+
+    def bit_length(self) -> int:
+        """Return the size of the subtree (number of nodes)."""
+        return self.value.bit_length() + sum(
+            child.bit_length() for child in self.children
+        )
+
+    def __str__(self):
+        return f"{self.value} -> ({'|'.join(str(child) for child in self.children)})"
+
+
+def test_recursive_edit_distance():
     # Create primitive values
     prim1 = MockValue(1)
     prim2 = MockValue(2)
@@ -840,52 +940,181 @@ def test_bit_length_edit_distance():
 
     # **Test Case 1: Identical Trees**
     # distance, transformations = recursive_edit_distance(root1, root2)
-    distance, transformations = recursive_edit_distance(root1, root2)
+    distance, transformation = recursive_edit_distance(root1, root2)
     assert distance == 0, "Distance should be 0 for identical trees"
-    assert len(transformations) == 1, "Should have one Identity transformation"
-    assert isinstance(transformations[0], Identity), (
+    assert isinstance(transformation, Identity), (
         "Transformation should be Identity"
     )
     print("Test 1 (Identical trees): Passed")
 
     # **Test Case 2: One Leaf Value Changed**
-    distance, transformations = recursive_edit_distance(root1, root3)
-    print(f"distance: {distance}, transformations: {transformations}")
+    distance, transformation = recursive_edit_distance(root1, root3)
+    print(f"distance: {distance}, transformations: {transformation}")
     assert distance == 2, "Distance should be 2 (substitute leaf2 with leaf3)"
-    assert any(isinstance(op, Substitute) for op in transformations), (
-        "Should include Substitute"
-    )
+    assert any(
+        isinstance(operation, Substitute)
+        for operation in breadth_first_preorder_bitlengthaware(transformation)
+    ), "Should include Substitute"
     print("Test 2 (One leaf changed): Passed")
 
     # **Test Case 3: Added Node**
-    distance, transformations = recursive_edit_distance(root1, root4)
+    distance, transformation = recursive_edit_distance(root1, root4)
     assert distance == 1, "Distance should be 1 (add leaf4)"
-    assert any(isinstance(op, Add) for op in transformations), (
-        "Should include Add"
-    )
+    print(f"transformation: {transformation}")
+    assert any(
+        isinstance(op, Add)
+        for op in breadth_first_preorder_bitlengthaware(transformation)
+    ), "Should include Add"
     print("Test 3 (Added node): Passed")
 
     # **Test Case 4: Completely Different Trees**
-    distance, transformations = recursive_edit_distance(root1, root5)
+    distance, transformation = recursive_edit_distance(root1, root5)
     assert distance == 4, (
         "Distance should be 4 (substitute value, delete two children)"
     )
-    assert any(isinstance(op, Substitute) for op in transformations), (
-        "Should include Substitute"
-    )
-    assert any(isinstance(op, Delete) for op in transformations), (
-        "Should include Delete"
-    )
+    assert any(
+        isinstance(op, Substitute)
+        for op in breadth_first_preorder_bitlengthaware(transformation)
+    ), "Should include Substitute"
+    assert any(
+        isinstance(op, Delete)
+        for op in breadth_first_preorder_bitlengthaware(transformation)
+    ), "Should include Delete"
     print("Test 4 (Different trees): Passed")
 
     print("\nAll tests completed successfully!")
     print("Sample transformations (root1 to root3):")
-    _, sample_transforms = bit_length_edit_distance(root1, root3)
-    for op in sample_transforms:
-        print(f"  {op}")
+    _, sample_transforms = recursive_edit_distance(root1, root3)
+    print(f"  {sample_transforms}")
+
+
+def test_extended_edit_distance():
+    """
+    Tests the extended_edit_distance function, focusing on Prune and Graft operations.
+    """
+
+    # Create leaf nodes
+    leaf_E = TreeNode(MockValue(3))  # Node C with value 3
+    leaf_D = TreeNode(MockValue(3))  # Node C with value 3
+    leaf_C = TreeNode(MockValue(2))  # Node B with value 2
+
+    node_B = TreeNode(MockValue(0), (leaf_C, leaf_D))
+
+    # Create parent node A with children B and C
+    node_A = TreeNode(MockValue(1), (node_B, leaf_E))  # A -> (B, C)
+
+    # Test 1: Prune operation
+    # Source: A -> (B, E), Target: B
+    print("Testing Prune operation:")
+    distance, transformation = extended_edit_distance(node_A, node_B)
+    assert transformation is not None, "The trasnformation should not be None"
+    print(f"Distance: {distance}")
+    print(f"Transformation {transformation}:")
+    assert distance == 2, f"Expected distance 2 for Prune, got {distance}"
+    assert any(
+        isinstance(op, Prune)
+        for op in breadth_first_preorder_bitlengthaware(transformation)
+    ), "Transformations should include Prune"
+    print("Prune test passed.\n")
+
+    # Test 2: Graft operation
+    # Source: B, Target: A -> (B, E)
+    print("Testing Graft operation:")
+    distance, transformation = extended_edit_distance(node_B, node_A)
+    assert transformation is not None, "The trasnformation should not be None"
+    print(f"Distance: {distance}")
+    print(f"Transformation: {transformation}")
+    assert distance == 2, f"Expected distance 2 for Graft, got {distance}"
+    assert any(
+        isinstance(op, Graft)
+        for op in breadth_first_preorder_bitlengthaware(transformation)
+    ), "Transformations should include Graft"
+    print("Graft test passed.\n")
+
+    print("All extended edit distance tests passed successfully!")
+
+
+def test_apply_transformations():
+    """
+    Tests the application of transformations to ensure source objects are correctly
+    transformed into target objects.
+    """
+    print("Starting transformation application tests...\n")
+
+    # Wrapper for tuples
+    @dataclass(frozen=True)
+    class TupleWrapper(BitLengthAware):
+        items: tuple[MockValue, ...]
+
+        def bit_length(self) -> int:
+            return sum(item.bit_length() for item in self.items)
+
+        def __str__(self) -> str:
+            return (
+                f"TupleWrapper({', '.join(str(item) for item in self.items)})"
+            )
+
+    # **Test Case 1: Simple Primitive Substitution**
+    source_1 = MockValue(1)
+    target_1 = MockValue(2)
+    _, transform_1 = recursive_edit_distance(source_1, target_1)
+    print(f" Transformation: {transform_1}")
+    result_1 = apply_transformation(source_1, transform_1)
+    assert result_1 == target_1, f"Test 1 failed: {result_1} != {target_1}"
+    print("Test 1 (Primitive Substitution): Passed")
+
+    # Test Case 2: Tuple
+    source_2 = TupleWrapper((MockValue(1), MockValue(2), MockValue(3)))
+    target_2 = TupleWrapper((MockValue(1), MockValue(4), MockValue(3)))
+    _, transform_2 = recursive_edit_distance(source_2, target_2)
+    print(f" Transformation: {transform_2}")
+    result_2 = apply_transformation(source_2, transform_2)
+    print(f"result_2: {[result_2]}")
+    assert result_2 == target_2, f"Test 2 failed: {result_2} != {target_2}"
+    print("Test 2 (tuple): Passed")
+
+    # **Test Case 3: Dataclass with Tuple Field**
+    source_3 = TreeNode(
+        MockValue(1), (TreeNode(MockValue(2)), TreeNode(MockValue(3)))
+    )
+    target_3 = TreeNode(
+        MockValue(1), (TreeNode(MockValue(2)), TreeNode(MockValue(4)))
+    )
+    _, transform_3 = recursive_edit_distance(source_3, target_3)
+    print(f" Transformation: {transform_3}")
+    result_3 = apply_transformation(source_3, transform_3)
+    assert result_3 == target_3, f"Test 3 failed: {result_3} != {target_3}"
+    print("Test 3 (Dataclass with Tuple): Passed")
+
+    # **Test Case 4: Prune Operation**
+    leaf_E = TreeNode(MockValue(3))
+    leaf_D = TreeNode(MockValue(3))
+    leaf_C = TreeNode(MockValue(2))
+    node_B = TreeNode(MockValue(0), (leaf_C, leaf_D))
+    node_A = TreeNode(MockValue(1), (node_B, leaf_E))
+    source_4 = node_A
+    target_4 = node_B
+    _, transform_4 = extended_edit_distance(source_4, target_4)
+    assert transform_4 is not None, "The trasnformation should not be None"
+    result_4 = apply_transformation(source_4, transform_4)
+    assert result_4 == target_4, f"Test 4 failed: {result_4} != {target_4}"
+    print("Test 4 (Prune Operation): Passed")
+
+    # **Test Case 5: Graft Operation**
+    source_5 = node_B
+    target_5 = node_A
+    _, transform_5 = extended_edit_distance(source_5, target_5)
+    assert transform_5 is not None, "The trasnformation should not be None"
+    result_5 = apply_transformation(source_5, transform_5)
+    assert result_5 == target_5, f"Test 5 failed: {result_5} != {target_5}"
+    print("Test 5 (Graft Operation): Passed")
+
+    print("\nAll transformation application tests passed successfully!")
 
 
 if __name__ == "__main__":
     test_edit_distance()
     test_set_edit_distance()
-    test_bit_length_edit_distance()
+    test_recursive_edit_distance()
+    test_extended_edit_distance()
+    test_apply_transformations()

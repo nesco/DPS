@@ -78,6 +78,20 @@ class Primitive(BitLengthAware):
         return str(self.value)
 
 
+@dataclass(frozen=True)
+class KeyValue(Primitive):
+    """
+    It has 0 value so operations have the length of their edit dsitances
+    """
+
+    value: (
+        str | None | tuple[str | None, int]
+    )  # int -> tuple, str -> dataclass, None -> Primitive or Frozen set
+
+    def bit_length(self) -> int:
+        return 0
+
+
 def ensure_all_instances(seq: Iterable[object], cls: type[T]) -> Iterable[T]:
     if not all(isinstance(item, cls) for item in seq):
         raise TypeError(f"Not all items are instances of {cls}")

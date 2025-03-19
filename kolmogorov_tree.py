@@ -85,7 +85,6 @@ from localtypes import (
     ensure_all_instances,
 )
 from tree_functionals import (
-    breadth_first_preorder,
     dataclass_subvalues,
     depth_first_preorder,
     postorder_map,
@@ -823,10 +822,10 @@ def get_subvalues(obj: BitLengthAware) -> Iterator[BitLengthAware]:
 
 
 # bitlength aware
-def breadth_first_preorder_bitlengthaware(
-    root: BitLengthAware,
-) -> Iterator[BitLengthAware]:
-    return breadth_first_preorder(get_subvalues, root)
+# def breadth_first_preorder_bitlengthaware(
+#     root: BitLengthAware,
+# ) -> Iterator[BitLengthAware]:
+#     return breadth_first_preorder(get_subvalues, root)
 
 
 def depth_first_preorder_bitlengthaware(
