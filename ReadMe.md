@@ -6,8 +6,8 @@
 - grid.py: defines the main operations on grids
 - helpers.py: helper functions
 - freeman.py: defines the Freeman tree
-- syntax_tree.py: defines the syntax trees, and operation on them
-- lattice.py: defines the operation lattice
+- kolmogorov_tree.py: defines the syntax trees, and operation on them
+- hierarchy.py: defines the connected components hierarchy under inclusion
 
 ## Ideas:
 
