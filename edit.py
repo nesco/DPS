@@ -6,25 +6,7 @@ If there is some kind of neutral element in the "set" of objects to compare, the
 
 For tree type structures, Identity only mean the current non-tree values of the compared node are similar, as operations on their children will be linearized and thus counted
 
-Operations:
-    - Identity -> Do nothing
-    - Substitute -> Substitute a bitlengthaware element by another
-    - Add ->
-        * if source is None, then Add a bitlengthaware element, like a Substitue(None, Elem)
-        * If source is tuple, Add a new element at the end, so the key is not needed
-        * If source is set, add a new element to it
-        * If source is a dataclass bitlengthaware element, add to the corresponding field, or maybe overwrite it if it exists
-            Q: What if it exists, but the elems are not the same?
-    - Delete ->
-        * If source is a Bitlength aware element, returns None, like Substitute(Elem, None), should raise an exception maybe
-        * If source is a tuple, remove the element similar to it from the tuple?
-        * If source is a set, remove the element form the set
-        * If source is a dataclass bitlengthaware element, remove the corresponding field if it exists?
-            Q: What if it exists, but the elems are not the same?
-    - Pruning -> For a dataclass bitlength aware element, only keep the elements similar to it if it exist (by key or by equality)?
-        * Field name?
-        * Numbering
-    - Graft -> Add it to the key
+Note: For a bitlengthaware dataclass, an object is considered a leaf if and only if it inherits from Primitive
 """
 
 from collections import defaultdict
@@ -38,7 +20,7 @@ from localtypes import (
     Primitive,
     ensure_all_instances,
 )
-from tree_functionals import (
+from utils.tree_functionals import (
     RoseNode,
     breadth_first_preorder_bitlengthaware,
     cached_hash,

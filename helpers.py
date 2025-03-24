@@ -8,31 +8,25 @@ Or a set-centric one:
     - Points: set[Point], {(column, row, value)} / (column, row, value) -> {True, False}
 """
 
-import os
 import json
-from re import X
-import time
+import os
 import pathlib
-from itertools import combinations
-from functools import wraps, reduce
+import time
 import traceback
-
-from enum import StrEnum
 from collections import defaultdict
-from dataclasses import dataclass, asdict
+from functools import reduce, wraps
+from itertools import combinations
 from typing import (
-    Optional,
     Callable,
-    Literal,
+    Concatenate,
+    Optional,
+    ParamSpec,
+    overload,
 )
-from typing import Concatenate, TypeVar, ParamSpec, overload, Iterator
 
 from category import *
+from grid import DIRECTIONS, GridOperations, grid_to_points
 from localtypes import *
-
-from grid import GridOperations
-from grid import grid_to_points
-from grid import DIRECTIONS, MOVES
 
 # Shortcuts
 proportions = GridOperations.proportions
@@ -40,19 +34,14 @@ zeros = GridOperations.zeros
 
 ## Constants
 # Define ANSI escape codes for the closest standard terminal colors
-from constants import COLORS, DATA, DEBUG
-
-
-class TraversalModes(StrEnum):
-    """Graph Traversal methods"""
-
-    DFS = "dfs"
-    BFS = "bfs"
+from constants import DATA, DEBUG
 
 
 # set_to_quotient groups togetherm elements of the set into equivalence classes
 # based on the projection operations
-def set_to_quotient(projection: Callable[[T], U], object_set: set[T]) -> Quotient:
+def set_to_quotient(
+    projection: Callable[[T], U], object_set: set[T]
+) -> Quotient:
     """
     Given a function, represent a set by a couple (quotient set, equivalence classes).
     The quotients are the dict keys and the equivalence classes the values.
@@ -152,12 +141,17 @@ def to_grid(func: Callable[[T], U]) -> Callable[[list[list[T]]], list[list[U]]]:
     @wraps(func)
     def wrapper(arg: list[list[T]]) -> list[list[U]]:
         height, width = len(arg), len(arg[0])
-        return [[func(arg[row][col]) for col in range(width)] for row in range(height)]
+        return [
+            [func(arg[row][col]) for col in range(width)]
+            for row in range(height)
+        ]
 
     return wrapper
 
 
-def coordinate_shift(transformation_ls: list[tuple[Coord, Coord]]) -> Optional[Coord]:
+def coordinate_shift(
+    transformation_ls: list[tuple[Coord, Coord]],
+) -> Optional[Coord]:
     "Given a list of coordinate changes, find if there is a unique shift"
     shifts = set()
     for (col1, row1), (col2, row2) in transformation_ls:
@@ -174,10 +168,15 @@ def argmin_by_len(lst):
 
 # Might be replaceable by a simple "in valid region"
 def valid_coordinates(
-    height: int, width: int, valid_region: Optional[set[Coord]], coordinates: Coord
+    height: int,
+    width: int,
+    valid_region: Optional[set[Coord]],
+    coordinates: Coord,
 ) -> bool:
     in_borders = 0 <= coordinates[0] < width and 0 <= coordinates[1] < height
-    respecting_constraints = coordinates in valid_region if valid_region else True
+    respecting_constraints = (
+        coordinates in valid_region if valid_region else True
+    )
     return in_borders & respecting_constraints
 
 
@@ -203,7 +202,9 @@ def list_to_grid(height, width, coordinates_ls):
 
 def grid_to_list(grid):
     width, height = proportions(grid)
-    return [(j, i) for i in range(height) for j in range(width) if grid[i][j] == 1]
+    return [
+        (j, i) for i in range(height) for j in range(width) if grid[i][j] == 1
+    ]
 
 
 ### Function
@@ -297,7 +298,9 @@ def distance_jaccard_grid(grid1: Grid, grid2: Grid):
 
 
 def distance_jaccard_optimal_grid(grid1: Grid, grid2: Grid):
-    return distance_jaccard_optimal(grid_to_points(grid1), grid_to_points(grid2))
+    return distance_jaccard_optimal(
+        grid_to_points(grid1), grid_to_points(grid2)
+    )
 
 
 # Distances in grids represented as Points
@@ -307,7 +310,9 @@ def distance_jaccard(points1: Points, points2: Points) -> float:
     return 1 - intersection / union if union else 0
 
 
-def distance_jaccard_optimal(points1: Points, points2: Points) -> tuple[float, Coord]:
+def distance_jaccard_optimal(
+    points1: Points, points2: Points
+) -> tuple[float, Coord]:
     min_distance = float("inf")
     min_shift = (0, 0)
 
@@ -352,7 +357,9 @@ def mask_colors(grid, mask):
 
 def grid_to_color_coords(grid: Grid) -> dict[Color, Coords]:
     width, height = proportions(grid)
-    colors = set([grid[row][col] for row in range(height) for col in range(width)])
+    colors = set(
+        [grid[row][col] for row in range(height) for col in range(width)]
+    )
     colors_coords = {}
     for color in colors:
         color_coords = set()
@@ -450,10 +457,12 @@ def printf_binary_grid(grid):
 
 
 ## Data
+"""
 def read_path(path):
     with open(os.path.join(DATA, path), "r") as file:
         data = json.load(file)
     return data
+"""
 
 
 def get_all():
@@ -524,7 +533,10 @@ def set_to_category1(sets: list[set], distance: Distance) -> Category:
                 for j, b in list(associations[i][a]):
                     for k, c in list(associations[j][b]):
                         # (i, a) is not in itself as the identity transition is not saved
-                        if (k, c) not in associations[i][a] and (k, c) != (i, a):
+                        if (k, c) not in associations[i][a] and (k, c) != (
+                            i,
+                            a,
+                        ):
                             # Transitivity violation found, remove the weakest link
                             links = [
                                 (
@@ -584,9 +596,9 @@ def set_to_category1(sets: list[set], distance: Distance) -> Category:
                             to_process.append(associated)
 
                 # Only keep clusters with one element from each set
-                if len(clique) == len(sets) and len(set(i for i, _ in clique)) == len(
-                    sets
-                ):
+                if len(clique) == len(sets) and len(
+                    set(i for i, _ in clique)
+                ) == len(sets):
                     cliques.append(clique)
 
                 processed.update(clique)

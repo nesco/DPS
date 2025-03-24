@@ -1,15 +1,21 @@
-from typing import Optional, Callable, Literal, Final
-from typing import cast
-
 from collections import deque
-
-from helpers import TraversalModes
-from helpers import *
 
 # from lattice import *
 from dataclasses import dataclass
+from enum import StrEnum
+from typing import Callable, Final, Literal, Optional, cast
+
+# from helpers import *
+from localtypes import Coord, Coords
+
 
 # Directions
+class TraversalModes(StrEnum):
+    """Graph Traversal methods"""
+
+    DFS = "dfs"
+    BFS = "bfs"
+
 
 Tower = Literal[0, 1, 2, 3]
 Bishop = Literal[4, 5, 6, 7]
@@ -23,14 +29,14 @@ BISHOP: Final[list[Bishop]] = [4, 5, 6, 7]
 KING: Final[list[King]] = [0, 1, 2, 3, 4, 5, 6, 7]
 
 DIRECTIONS_FREEMAN: Final[dict[King, Coord]] = {
-    0: (-1, 0),
-    1: (0, -1),
-    2: (1, 0),
-    3: (0, 1),
-    4: (-1, -1),
-    5: (1, -1),
-    6: (1, 1),
-    7: (-1, 1),
+    0: Coord(-1, 0),
+    1: Coord(0, -1),
+    2: Coord(1, 0),
+    3: Coord(0, 1),
+    4: Coord(-1, -1),
+    5: Coord(1, -1),
+    6: Coord(1, 1),
+    7: Coord(-1, 1),
 }
 
 DIRECTIONS_ARROW: Final[dict[King, str]] = {
@@ -54,7 +60,10 @@ def shift4_tower(direction: Tower, shift: int) -> Tower:
 def shift4_bishop(direction: Bishop, shift: int) -> Bishop:
     return cast(
         Bishop,
-        (((direction - NUM_DIRECTIONS_ORTHOGONAL) + shift) % NUM_DIRECTIONS_ORTHOGONAL)
+        (
+            ((direction - NUM_DIRECTIONS_ORTHOGONAL) + shift)
+            % NUM_DIRECTIONS_ORTHOGONAL
+        )
         + NUM_DIRECTIONS_ORTHOGONAL,
     )
 
@@ -83,7 +92,8 @@ def shift8(direction: King, shift: int) -> King:
         # 4 -> 1, 5 -> 2, 6 -> 3, 7 -> 0
         return cast(
             King,
-            (direction - NUM_DIRECTIONS_ORTHOGONAL + 1) % NUM_DIRECTIONS_ORTHOGONAL,
+            (direction - NUM_DIRECTIONS_ORTHOGONAL + 1)
+            % NUM_DIRECTIONS_ORTHOGONAL,
         )
 
 
@@ -118,13 +128,16 @@ class FreemanNode:
         path_str = "".join([str(move) for move in self.path])
         if not self.children:
             return path_str
-        children_str = "[" + ", ".join([str(child) for child in self.children]) + "]"
+        children_str = (
+            "[" + ", ".join([str(child) for child in self.children]) + "]"
+        )
         return f"{path_str}{children_str}"
 
     def __eq__(self, other) -> bool:
         if isinstance(other, "FreemanNode"):
             return self.path == other.path and self.children == other.children
         return False
+
 
 def decode_freeman(start: Coord, root: FreemanNode) -> Coords:
     """Convert Freeman trie back to coordinates"""
@@ -137,7 +150,7 @@ def decode_freeman(start: Coord, root: FreemanNode) -> Coords:
             coord = current
             for direction in child.path:
                 dx, dy = DIRECTIONS_FREEMAN[direction]
-                coord = (coord[0] + dx, coord[1] + dy)
+                coord = Coord(coord[0] + dx, coord[1] + dy)
                 coords.add(coord)
             queue.append((coord, child))
 
@@ -153,6 +166,7 @@ def arrowify(root: FreemanNode):
     result = "".join(map(movement_to_arrow, str(root)))
     print(result)
 
+
 def available_transitions_freeman(
     is_valid: Callable[[Coord], bool], coordinates: Coord
 ) -> list[Transition]:
@@ -164,7 +178,7 @@ def available_transitions_freeman(
             col + DIRECTIONS_FREEMAN[direction][0],
             row + DIRECTIONS_FREEMAN[direction][1],
         )
-        ncoordinates = (ncol, nrow)
+        ncoordinates = Coord(ncol, nrow)
         if is_valid(ncoordinates):
             transitions.append((direction, ncoordinates))
     return transitions
@@ -226,13 +240,14 @@ def encode_connected_component(
     else:
         return dfs_traversal(start)
 
+
 ### Real Freeman boundary
 
 
 def is_boundary(coords: Coords, coord: Coord):
     for i in range(NUM_DIRECTIONS):
         dcol, drow = DIRECTIONS_FREEMAN[cast(King, i)]
-        ncoord: Coord = (coord[0] + dcol, coord[1] + drow)
+        ncoord: Coord = Coord(coord[0] + dcol, coord[1] + drow)
         if ncoord not in coords:
             return True
     return False
@@ -252,7 +267,7 @@ def next_boundary_cell(
     for i in range(NUM_DIRECTIONS):
         ndir: King = shift8(dir, LEFT_TURN + i)
         dcol, drow = DIRECTIONS_FREEMAN[ndir]
-        ncoord: Coord = (current[0] + dcol, current[1] + drow)
+        ncoord: Coord = Coord(current[0] + dcol, current[1] + drow)
         if ncoord in coords and is_boundary(coords, ncoord):
             return ncoord, ndir
     return None
@@ -283,6 +298,6 @@ def freeman_to_boundary_coords(start: Coord, freeman: Path) -> Coords:
     current = start
     for dir in freeman:
         dcol, drow = DIRECTIONS_FREEMAN[dir]
-        current = current[0] + dcol, current[1] + drow
+        current = Coord(current[0] + dcol, current[1] + drow)
         coords.add(current)
     return coords

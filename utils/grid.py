@@ -11,45 +11,64 @@ Operations occurs on four main data format: Grid, Mask, Points, and Coords
     4\ CoordsOperations
 """
 
-from localtypes import Grid, ColorGrid, Proportions, Mask, Points, Coords, Color, CoordsGeneralized, Box, Coord
+from re import M
+from collections.abc import Callable, Mapping
+
 from constants import COLORS
-from typing import Callable, Optional
+from localtypes import (
+    Box,
+    Color,
+    ColorGrid,
+    Coord,
+    Coords,
+    CoordsGeneralized,
+    Grid,
+    Mask,
+    Point,
+    Points,
+    Proportions,
+)
 
 # Constants
 
 DIRECTIONS = {
     "0": (-1, 0),  # left
     "1": (0, -1),  # up
-    "2": (1, 0),   # right
-    "3": (0, 1),   # down
-    "4": (-1, -1), # up-left
+    "2": (1, 0),  # right
+    "3": (0, 1),  # down
+    "4": (-1, -1),  # up-left
     "5": (1, -1),  # up-right
-    "6": (1, 1),   # down-right
+    "6": (1, 1),  # down-right
     "7": (-1, 1),  # down-left
 }
 
 MOVES = "01234567"
 
+
 # helpers
 def matrix_to_proportions(matrix: list[list]) -> Proportions:
     height, width = len(matrix), len(matrix[0])
-    return width, height
+    return Proportions(width, height)
 
 
 # Functions (basic utils)
+
 
 def unpack_coords(coords: CoordsGeneralized) -> tuple[list[int], list[int]]:
     cols, rows, *_ = zip(*coords)
     return (list(cols), list(rows))
 
-def proportions_to_box(prop: Proportions, corner_top_right: Coord = (0, 0)):
+
+def proportions_to_box(prop: Proportions, corner_top_right: Coord = Coord(0, 0)) -> Box:
     col_min, row_min = corner_top_right
     width, height = prop
-    return (col_min, row_min), (col_min + width - 1, row_min + height - 1)
+    return Coord(col_min, row_min), Coord(col_min + width - 1, row_min + height - 1)
+
 
 def box_to_proportions(box: Box) -> Proportions:
     (col_min, row_min), (col_max, row_max) = box
-    return (row_max - row_min + 1, col_max - col_min + 1)
+    return Proportions(row_max - row_min + 1, col_max - col_min + 1)
+
 
 # Grid Base Operations
 class GridOperations:
@@ -66,14 +85,17 @@ class GridOperations:
 
     @staticmethod
     def identity(height: int, width: int) -> ColorGrid:
-        return [[1 if col == row else 0 for col in range(width)]
-                for row in range(height)]
+        return [
+            [1 if col == row else 0 for col in range(width)]
+            for row in range(height)
+        ]
 
     @staticmethod
     def copy(grid: Grid) -> Grid:
         width, height = GridOperations.proportions(grid)
-        return [[grid[row][col] for col in range(width)]
-                for row in range(height)]
+        return [
+            [grid[row][col] for col in range(width)] for row in range(height)
+        ]
 
     @staticmethod
     def from_mask(mask: Mask, color_map: tuple[Color, Color] = (1, 0)) -> Grid:
@@ -82,7 +104,10 @@ class GridOperations:
         """
         width, height = MaskOperations.proportions(mask)
         return [
-            [color_map[0] if mask[row][col] else color_map[1] for col in range(width)]
+            [
+                color_map[0] if mask[row][col] else color_map[1]
+                for col in range(width)
+            ]
             for row in range(height)
         ]
 
@@ -100,7 +125,9 @@ class GridOperations:
             raise ValueError("Some points have negative rows or cols")
 
         if not all(0 <= val < 9 for val in vals):
-            raise ValueError("Some points have a color outside the [0, 9] range")
+            raise ValueError(
+                "Some points have a color outside the [0, 9] range"
+            )
 
         # Get the proportions of the grid, beware of the off-by-one error
         nheight = max(rows) + 1
@@ -111,9 +138,13 @@ class GridOperations:
         final_height = height if height is not None else nheight
 
         if final_width < nwidth:
-            raise ValueError(f"Given width: {final_width} is too small, it should be at least: {nwidth}")
+            raise ValueError(
+                f"Given width: {final_width} is too small, it should be at least: {nwidth}"
+            )
         if final_height < nheight:
-            raise ValueError(f"Given height: {final_height} is too small, it should be at least: {nheight}")
+            raise ValueError(
+                f"Given height: {final_height} is too small, it should be at least: {nheight}"
+            )
         # Constructing the scaffold, and filling it with the extracted points
         grid = GridOperations.zeros(final_height, final_width)
         GridOperations.populate(grid, points)
@@ -132,15 +163,19 @@ class GridOperations:
     @staticmethod
     def map(grid: ColorGrid, f: Callable[[int], int]) -> ColorGrid:
         width, height = GridOperations.proportions(grid)
-        return [[f(grid[row][col]) for col in range(width)] for row in range(height)]
+        return [
+            [f(grid[row][col]) for col in range(width)] for row in range(height)
+        ]
 
     @staticmethod
     def populate(grid: ColorGrid, points: Points) -> None:
         try:
             for col, row, val in points:
                 grid[row][col] = val
-        except IndexError as e:
-            raise ValueError("The given list of points do not fit within the grid")
+        except IndexError:
+            raise ValueError(
+                "The given list of points do not fit within the grid"
+            )
 
     @staticmethod
     def print(grid: ColorGrid):
@@ -158,6 +193,7 @@ class GridOperations:
             print(f"{COLORS[5]}   ", "\033[0m")
 
         print(f"{COLORS[5]}   " * (width + 2), "\033[0m")
+
 
 class MaskOperations:
     """Basic mask operations and constructors"""
@@ -181,14 +217,17 @@ class MaskOperations:
         height = nheight if height is None else height
 
         if width < nwidth:
-            raise ValueError(f"Given width: {width} is too small, it should be at least: {nwidth}")
+            raise ValueError(
+                f"Given width: {width} is too small, it should be at least: {nwidth}"
+            )
         if height < nheight:
-            raise ValueError(f"Given height: {height} is too small, it should be at least: {nheight}")
+            raise ValueError(
+                f"Given height: {height} is too small, it should be at least: {nheight}"
+            )
 
         # Constructing the scaffold, and filling it with the extracted points
         mask = MaskOperations.falses(height, width)
         MaskOperations.populate(mask, coords)
-
 
         return mask
 
@@ -202,13 +241,18 @@ class MaskOperations:
         try:
             for col, row in coords:
                 mask[row][col] = True
-        except IndexError as e:
-            raise ValueError("The given list of points do not fit within the grid")
+        except IndexError:
+            raise ValueError(
+                "The given list of points do not fit within the grid"
+            )
 
     @staticmethod
     def map_mask(mask: Mask, f: Callable[[bool], bool]) -> Mask:
         width, height = MaskOperations.proportions(mask)
-        return [[f(mask[row][col]) for col in range(width)] for row in range(height)]
+        return [
+            [f(mask[row][col]) for col in range(width)] for row in range(height)
+        ]
+
 
 class PointsOperations:
     """Operations for point-based grid representation"""
@@ -218,12 +262,16 @@ class PointsOperations:
     def from_grid(grid: ColorGrid) -> Points:
         width, height = GridOperations.proportions(grid)
         return set(
-            [(col, row, grid[row][col]) for col in range(width) for row in range(height)]
+            [
+                Point(col, row, grid[row][col])
+                for col in range(width)
+                for row in range(height)
+            ]
         )
 
     @staticmethod
     def from_coords(coords: Coords, color: Color = 1):
-        return set([(col, row, color) for col, row in coords])
+        return set([Point(col, row, color) for col, row in coords])
 
     # Operations
     @staticmethod
@@ -237,22 +285,57 @@ class PointsOperations:
         # Get the proportions of the grid, beware of the off-by-one error
         height = max(rows) + 1
         width = max(cols) + 1
-        return (width, height)
+        return Proportions(width, height)
+
 
 class CoordsOperations:
     """Basic coords operations and constructors"""
 
     # Constructors
+
+    @staticmethod
+    def from_grid(grid: ColorGrid) -> dict[Color, Coords]:
+        width, height = GridOperations.proportions(grid)
+        colors = set(
+            grid[row][col] for row in range(height) for col in range(width)
+        )
+        color_dict = {}
+        for color in colors:
+            color_coords = set(
+                (col, row)
+                for row in range(height)
+                for col in range(width)
+                if grid[row][col] == color
+            )
+            color_dict[color] = color_coords
+        return color_dict
+
     @staticmethod
     def from_mask(mask: Mask) -> Coords:
         width, height = MaskOperations.proportions(mask)
         return set(
-            [(col, row) for row in range(height) for col in range(width) if mask[row][col]]
+            [
+                Coord(col, row)
+                for row in range(height)
+                for col in range(width)
+                if mask[row][col]
+            ]
         )
 
     @staticmethod
-    def from_points(points: Points) -> Coords:
-        return set((col, row) for col, row, color in points)
+    def from_points_erase(points: Points) -> Coords:
+        return set(Coord(col, row) for col, row, color in points)
+
+    @staticmethod
+    def from_points(points: Points) -> Mapping[Color, Coords]:
+        colors = set(color for col, row, color in points)
+        coords_dict = {
+            color_key: set(
+                Coord(col, row) for col, row, color in points if color == color_key
+            )
+            for color_key in colors
+        }
+        return coords_dict
 
     # Operations
     @staticmethod
@@ -266,14 +349,16 @@ class CoordsOperations:
         # Get the proportions of the grid, beware of the off-by-one error
         height = max(rows) + 1
         width = max(cols) + 1
-        return (width, height)
+        return Proportions(width, height)
 
     @staticmethod
     def box(coords: CoordsGeneralized) -> Box:
         cols, rows = unpack_coords(coords)
         row_min, row_max = min(rows), max(rows)
         col_min, col_max = min(cols), max(cols)
-        return (col_min, row_min), (col_max, row_max)
+        return Coord(col_min, row_min), Coord(col_max, row_max)
+
+
 # Constructors as Functors
 
 ## grid <> points
@@ -288,5 +373,14 @@ mask_to_coords = CoordsOperations.from_mask
 mask_to_grid = GridOperations.from_mask
 
 ## points <> coords
-points_to_coords = CoordsOperations.from_points
+points_to_coords = CoordsOperations.from_points_erase
 coords_to_points = PointsOperations.from_coords
+
+## points > coords_dict
+points_to_coords_by_color = CoordsOperations.from_points
+grid_to_coords_by_color = CoordsOperations.from_grid
+
+
+## Grid <> Proportions
+grid_to_proportions = GridOperations.proportions
+coords_to_proportions = CoordsOperations.proportions

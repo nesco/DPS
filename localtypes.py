@@ -9,40 +9,68 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Iterable, ParamSpec, TypeVar, cast
+from typing import Any, Iterable, ParamSpec, NamedTuple, TypeVar, TypedDict, cast
+
+from collections.abc import Set, Mapping
 
 # Basic type variables for generic operations
 T = TypeVar("T")
 U = TypeVar("U")
 P = ParamSpec("P")
 
+# Data Tyoe
+type Json = dict[str, None | int | str | bool | list[Json] | dict[str, Json]]
+
+
+class Example(TypedDict):
+    input: ColorGrid
+    output: ColorGrid
+
+
+class TaskData(TypedDict):
+    train: list[Example]
+    test: list[Example]
+
+
 # Color-related types
-Color = int
-Colors = set[Color]
+type Color = int
+type Colors = Set[Color]
 
 # Grid representations
-ColorGrid = list[list[Color]]  # Functional: grid[row][col] -> color
-Mask = list[list[bool]]  # Boolean mask: grid[row][col] -> is_selected
-Grid = ColorGrid | Mask  # Generic grid type
+type ColorGrid = list[list[Color]]  # Functional: grid[row][col] -> color
+type Mask = list[list[bool]]  # Boolean mask: grid[row][col] -> is_selected
+type Grid = ColorGrid | Mask  # Generic grid type
 
 # Coordinate systems
-Coord = tuple[int, int]  # (col, row) coordinates
-Coords = set[Coord]  # Set of coordinates
-Box = tuple[Coord, Coord]  # (top_left, bottom_right) corners
-Proportions = tuple[int, int]  # (width, height) of a grid
+class Coord(NamedTuple):
+    col: int
+    row: int
+
+#type Coord = tuple[int, int]  # (col, row) coordinates
+type Coords = Set[Coord] # Set of coordinates
+type Box = tuple[Coord, Coord]  # (top_left, bottom_right) corners
+
+class Proportions(NamedTuple):
+    width: int
+    heigth: int
 
 # Point system (extended coordinates)
-Point = tuple[int, int, int]  # (col, row, color)
-Points = set[Point]  # Set of colored points
+# type Point = tuple[int, int, int]  # (col, row, color)
+class Point(NamedTuple):
+    col: int
+    row: int
+    color: int
+
+type Points = Set[Point] # Set of colored points
 
 # Combined types
-CoordsGeneralized = Points | Coords  # Either colored or uncolored coordinates
+type CoordsGeneralized = Points | Coords  # Either colored or uncolored coordinates
 
 # Graph traversal
-Trans = tuple[str, Coord]  # (direction, target_coordinate)
+type Trans = tuple[str, Coord]  # (direction, target_coordinate)
 
 # Category theory
-Quotient = dict[U, set[T]]  # Maps representatives to their equivalence classes
+type Quotient[U, T] = Mapping[U, Set[T]]  # Maps representatives to their equivalence classes
 
 # Type aliases for improving code readability
 Height = int
@@ -51,6 +79,11 @@ Row = int
 Col = int
 Direction = str
 
+@dataclass(frozen=True)
+class GridObject():
+    """Class containing all informations to represent a connected component"""
+    colors: Colors
+    coords: Coords
 
 # Base interface for values with bit lengths
 @dataclass(frozen=True)

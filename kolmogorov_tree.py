@@ -58,7 +58,7 @@ import math
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict, deque
 from collections.abc import Collection
-from dataclasses import dataclass, field, fields, is_dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 from typing import (
     Any,
@@ -72,11 +72,6 @@ from typing import (
     cast,
 )
 
-from edit import (
-    Add,
-    Delete,
-    Operation,
-)
 from localtypes import (
     BitLengthAware,
     Color,
@@ -1989,46 +1984,6 @@ def symbolize_together(
     return final_trees, final_symbols
 
 
-# Distance
-def bla_distance(
-    base: BitLengthAware | None,
-    target: BitLengthAware | None,
-    symbols: tuple[KNode[T], ...],
-) -> tuple[int, tuple[Operation[BitLengthAware], ...]]:
-    """
-    Computes the distance between two BitLengthAware objects, handling KNodes recursively via k_divergence, and tracks transformations.
-    None is considered as a neutral element used to complete the BitLengthAware class.
-
-    Args:
-        base: First BitLengthAware object (or None), acts like the base element for the transformation..
-        target: Second BitLengthAware object (or None), acts like the target node for the transformation.
-        symbols: Symbol table for resolving SymbolNodes.
-
-    Returns:
-        int: Distance between base and target.
-        transformations:
-    """
-
-    distance = 0
-    transformations: list[Operation[BitLengthAware]] = []
-
-    match base, target:
-        case None, None:
-            pass  # May be Identity(None) ? to discuss as it changes the return type only for this case
-        case _, None:
-            distance = base.bit_length()
-            transformations.append(Delete(base))
-        case None, _:
-            distance = target.bit_length()
-            transformations.append(Add(target))
-        case Primitive(base_value), Primitive(target_value):
-            pass
-        case _, _:
-            pass
-
-    return distance, tuple(transformations)
-
-
 # Tests
 def test_encode_run_length():
     # Test Case 1: Empty Input
@@ -2292,7 +2247,7 @@ def test_shift():
 
     # Test 6: Shifting RootNode
     program = ProductNode((create_move_node(0), create_move_node(1)))
-    root = RootNode(program, CoordValue((0, 0)), PaletteValue(frozenset({1})))
+    root = RootNode(program, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
     shifted_root = shift(root, 2)
     assert isinstance(shifted_root, RootNode), (
         "Shifted result should be a RootNode"
@@ -2312,7 +2267,7 @@ def test_shift():
     assert shifted_root.node.children[1].data == 3, (
         "Second MoveValue should shift to 3"
     )
-    assert shifted_root.position == CoordValue((0, 0)), (
+    assert shifted_root.position == CoordValue(Coord(0, 0)), (
         "Position should be unchanged"
     )
     assert shifted_root.colors == PaletteValue(frozenset({1})), (
@@ -2706,7 +2661,7 @@ def test_is_abstraction():
 
     # Test Case 7: RootNode with VariableNode in program
     root_with_var = RootNode(
-        var_child, CoordValue((0, 0)), PaletteValue(frozenset({1}))
+        var_child, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
     )
     assert is_abstraction(root_with_var), (
         "Test Case 7 Failed: RootNode with VariableNode in program should return True"
@@ -2827,10 +2782,10 @@ def test_find_symbol_candidates():
     pattern = ProductNode(
         (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(2)))
     )  # bit_length = 15
-    tree1 = RootNode(pattern, CoordValue((0, 0)), PaletteValue(frozenset({1})))
-    tree2 = RootNode(pattern, CoordValue((1, 1)), PaletteValue(frozenset({2})))
-    tree3 = RootNode(pattern, CoordValue((2, 2)), PaletteValue(frozenset({3})))
-    tree4 = RootNode(pattern, CoordValue((3, 3)), PaletteValue(frozenset({4})))
+    tree1 = RootNode(pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
+    tree2 = RootNode(pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2})))
+    tree3 = RootNode(pattern, CoordValue(Coord(2, 2)), PaletteValue(frozenset({3})))
+    tree4 = RootNode(pattern, CoordValue(Coord(3, 3)), PaletteValue(frozenset({4})))
     trees = (tree1, tree2, tree3, tree4)
     candidates = find_symbol_candidates(
         trees, min_occurrences=2, max_patterns=5
@@ -2846,7 +2801,7 @@ def test_find_symbol_candidates():
     # Test Case 2: Frequency Threshold - Pattern Below Threshold
     unique_tree = RootNode(
         PrimitiveNode(MoveValue(3)),
-        CoordValue((0, 0)),
+        CoordValue(Coord(0, 0)),
         PaletteValue(frozenset({1})),
     )
     trees = (tree1, unique_tree)  # Pattern appears only once
@@ -2861,10 +2816,10 @@ def test_find_symbol_candidates():
     # Test Case 3: Bit-Length Savings - Exclude Non-Saving Patterns
     short_pattern = PrimitiveNode(MoveValue(2))  # Bit length too small to save
     tree5 = RootNode(
-        short_pattern, CoordValue((0, 0)), PaletteValue(frozenset({1}))
+        short_pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
     )
     tree6 = RootNode(
-        short_pattern, CoordValue((1, 1)), PaletteValue(frozenset({2}))
+        short_pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2}))
     )
     trees = (tree5, tree6)
     candidates = find_symbol_candidates(
@@ -2887,7 +2842,7 @@ def test_find_symbol_candidates():
                 PrimitiveNode(MoveValue(2)),
             )
         ),
-        CoordValue((0, 0)),
+        CoordValue(Coord(0, 0)),
         PaletteValue(frozenset({1})),
     )
     tree8 = RootNode(
@@ -2900,7 +2855,7 @@ def test_find_symbol_candidates():
                 PrimitiveNode(MoveValue(2)),
             )
         ),
-        CoordValue((1, 1)),
+        CoordValue(Coord(1, 1)),
         PaletteValue(frozenset({2})),
     )
     tree9 = RootNode(
@@ -2913,7 +2868,7 @@ def test_find_symbol_candidates():
                 PrimitiveNode(MoveValue(2)),
             )
         ),
-        CoordValue((2, 2)),
+        CoordValue(Coord(2, 2)),
         PaletteValue(frozenset({3})),
     )
     trees = (tree7, tree8, tree9)
@@ -2944,12 +2899,12 @@ def test_find_symbol_candidates():
     # Test Case 5b: Edge Case - No Common Patterns
     tree10 = RootNode(
         PrimitiveNode(MoveValue(1)),
-        CoordValue((0, 0)),
+        CoordValue(Coord(0, 0)),
         PaletteValue(frozenset({1})),
     )
     tree11 = RootNode(
         PrimitiveNode(MoveValue(2)),
-        CoordValue((1, 1)),
+        CoordValue(Coord(1, 1)),
         PaletteValue(frozenset({2})),
     )
     trees = (tree10, tree11)
@@ -3127,12 +3082,12 @@ def test_factor_by_existing_symbols():
     pattern = ProductNode(
         (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)))
     )
-    tree = RootNode(pattern, CoordValue((0, 0)), PaletteValue(frozenset({1})))
+    tree = RootNode(pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
     symbols = (pattern,)
     result = factor_by_existing_symbols(tree, symbols)
     expected = RootNode(
         SymbolNode(IndexValue(0), (), pattern.bit_length()),
-        CoordValue((0, 0)),
+        CoordValue(Coord(0, 0)),
         PaletteValue(frozenset({1})),
     )
     assert result == expected, (
@@ -3143,7 +3098,7 @@ def test_factor_by_existing_symbols():
     # Test Case 2: No Matching Pattern
     tree = RootNode(
         PrimitiveNode(MoveValue(1)),
-        CoordValue((0, 0)),
+        CoordValue(Coord(0, 0)),
         PaletteValue(frozenset({1})),
     )
     symbols = (pattern,)
@@ -3377,39 +3332,39 @@ def test_symbolize_together():
             PrimitiveNode(MoveValue(4)),
         )
     )
-    tree1 = RootNode(pattern, CoordValue((0, 0)), PaletteValue(frozenset({1})))
-    tree2 = RootNode(pattern, CoordValue((1, 1)), PaletteValue(frozenset({2})))
+    tree1 = RootNode(pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
+    tree2 = RootNode(pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2})))
     trees = (tree1, tree2)
     symbol_tables = [(), ()]
     final_trees, final_symbols = symbolize_together(trees, symbol_tables)
     expected_symbol = RootNode(
-        node=ProductNode(
-            children=(
-                PrimitiveNode(value=MoveValue(value=2)),
-                PrimitiveNode(value=MoveValue(value=3)),
-                PrimitiveNode(value=MoveValue(value=4)),
-                PrimitiveNode(value=MoveValue(value=4)),
+        ProductNode(
+            (
+                PrimitiveNode(MoveValue(2)),
+                PrimitiveNode(MoveValue(3)),
+                PrimitiveNode(MoveValue(4)),
+                PrimitiveNode(MoveValue(4)),
             )
         ),
-        position=VariableNode(index=VariableValue(value=0)),
-        colors=VariableNode(index=VariableValue(value=1)),
+        VariableNode(VariableValue(0)),
+        VariableNode(VariableValue(1)),
     )
     expected_trees = (
         SymbolNode(
-            index=IndexValue(value=0),
-            parameters=(
-                CoordValue(value=(0, 0)),
+            IndexValue(0),
+            (
+                CoordValue(Coord(0, 0)),
                 PaletteValue(value=frozenset({1})),
             ),
-            reference_length=expected_symbol.bit_length(),
+            expected_symbol.bit_length(),
         ),
         SymbolNode(
-            index=IndexValue(value=0),
-            parameters=(
-                CoordValue(value=(1, 1)),
+            IndexValue(0),
+            (
+                CoordValue(Coord(1, 1)),
                 PaletteValue(value=frozenset({2})),
             ),
-            reference_length=expected_symbol.bit_length(),
+            expected_symbol.bit_length(),
         ),
     )
     expected_symbols = (expected_symbol,)
@@ -3454,8 +3409,8 @@ def test_symbolize_together():
             PrimitiveNode(MoveValue(4)),
         )
     )
-    tree1 = RootNode(pattern, CoordValue((0, 0)), PaletteValue(frozenset({1})))
-    tree2 = RootNode(pattern, CoordValue((1, 1)), PaletteValue(frozenset({2})))
+    tree1 = RootNode(pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
+    tree2 = RootNode(pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2})))
     trees = (tree1, tree2)
     symbol_tables = [(), ()]  # Empty symbol tables to start fresh
     final_trees, final_symbols = symbolize_together(trees, symbol_tables)
@@ -3498,7 +3453,7 @@ def run_tests():
     assert symbol.bit_length() == 10, (
         "SymbolNode bit length should be 10 (3 + 7)"
     )
-    root = RootNode(product, CoordValue((0, 0)), PaletteValue(frozenset({1})))
+    root = RootNode(product, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
     assert root.bit_length() == 34, (
         "RootNode bit length should be 34 (3 + 17 + 10 + 4)"
     )
@@ -3539,13 +3494,13 @@ def run_tests():
     symbol_node = SymbolNode(IndexValue(0), ())
     root_with_symbol = RootNode(
         symbol_node,
-        CoordValue((0, 0)),
+        CoordValue(Coord(0, 0)),
         PaletteValue(frozenset({1})),
     )
     resolved = resolve_symbols(root_with_symbol, symbols)
     expected_resolved = RootNode(
         ProductNode((move_right, move_down, move_right)),
-        CoordValue((0, 0)),
+        CoordValue(Coord(0, 0)),
         PaletteValue(frozenset({1})),
     )
     assert resolved == expected_resolved, "Symbol resolution failed"

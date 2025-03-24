@@ -3,12 +3,15 @@ Module for functions of Direct Acyclic Graphs
 """
 
 from collections import deque
-from typing import Any
+from typing import Any, TypeVar
 
+from collections.abc import Mapping, Set
+
+T = TypeVar('T')
 
 def topological_sort(
-    parent_to_children: dict[Any, set[Any]],
-) -> tuple[Any, ...]:
+    parent_to_children: Mapping[T, Set[T]],
+) -> tuple[T, ...]:
     sorted_list = []
 
     # Step 1: Get all nodes

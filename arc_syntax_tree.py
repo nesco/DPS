@@ -24,7 +24,8 @@ from freeman import (
     King,
     encode_connected_component,
 )
-from grid import coords_to_points, points_to_grid_colored
+from utils.grid import coords_to_points, points_to_grid_colored
+
 from kolmogorov_tree import (
     CoordValue,
     CountValue,
@@ -47,7 +48,7 @@ from kolmogorov_tree import (
     reverse_node,
     shift,
 )
-from lattice import input_to_lattice
+from lattice_old import input_to_lattice
 from localtypes import Coord, Coords, Points
 
 
@@ -132,7 +133,7 @@ def encode_freeman_to_knode(freeman: FreemanNode) -> KNode[MoveValue]:
 
 
 def component_to_knode(
-    freeman_node: FreemanNode, start_position: tuple[int, int], colors: set[int]
+    freeman_node: FreemanNode, start_position: Coord, colors: set[int]
 ) -> RootNode:
     """Encode a Freeman tree for a connected component into a RootNode."""
     program = encode_freeman_to_knode(freeman_node)
@@ -160,7 +161,7 @@ def decode_knode(
         match knode:
             case PrimitiveNode(MoveValue(direction)):
                 delta = DIRECTIONS_FREEMAN[cast(King, direction)]
-                new_pos = (pos[0] + delta[0], pos[1] + delta[1])
+                new_pos = Coord(pos[0] + delta[0], pos[1] + delta[1])
                 coords.add(new_pos)
                 return {new_pos}
             case ProductNode(children):
@@ -237,7 +238,7 @@ def decode_knode(
                 height = height.value
                 width = width.value
                 rect_points = [
-                    (pos[0] + j, pos[1] + i)
+                    Coord(pos[0] + j, pos[1] + i)
                     for i in range(height)
                     for j in range(width)
                 ]

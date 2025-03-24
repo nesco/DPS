@@ -1,5 +1,6 @@
 """
 Functionals for tree structures. It would work for graphs, if adapted by using `seen = set()`construct to avoid cycles
+Note: For a bitlengthaware dataclass, an object is considered a leaf if and only if it inherits from Primitive
 """
 
 from collections import deque
