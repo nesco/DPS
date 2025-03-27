@@ -18,14 +18,14 @@ The kolmogorov nodes are in a way the transitions of an automata over grid coord
 from dataclasses import dataclass
 from typing import Generic, cast
 
+# from ast import Moves
 from freeman import (
     DIRECTIONS_FREEMAN,
     FreemanNode,
     King,
+    TraversalModes,
     encode_connected_component,
 )
-from utils.grid import coords_to_points, points_to_grid_colored
-
 from kolmogorov_tree import (
     CoordValue,
     CountValue,
@@ -38,18 +38,19 @@ from kolmogorov_tree import (
     RepeatNode,
     RootNode,
     SumNode,
-    SymbolNode,
     T,
     VariableNode,
+    expand_repeats,
     factorize_tuple,
     iterable_to_product,
     iterable_to_sum,
     postmap,
+    premap,
     reverse_node,
     shift,
 )
-from lattice_old import input_to_lattice
-from localtypes import Coord, Coords, Points
+from localtypes import Colors, Coord, Coords, Points
+from utils.grid import coords_to_points, points_to_grid_colored
 
 
 def moves_to_rect(moves: str) -> tuple[int, int] | None:
@@ -68,9 +69,10 @@ def moves_to_rect(moves: str) -> tuple[int, int] | None:
     )
 
 
-def extract_moves_from_product(node: KNode) -> str | None:
+def extract_moves_from_product(knode: KNode) -> str | None:
     """Extract move string from a ProductNode of PrimitiveNodes with MoveValues."""
-    if isinstance(node, ProductNode):
+    if isinstance(knode, ProductNode):
+        node = cast(ProductNode, expand_repeats(knode))
         moves = []
         for child in node.children:
             if isinstance(child, PrimitiveNode) and isinstance(
@@ -83,6 +85,7 @@ def extract_moves_from_product(node: KNode) -> str | None:
     return None
 
 
+# TO-DO: Make it work, or add a default symbol for rects
 def detect_rect_node(node: KNode) -> KNode:
     """Replace a ProductNode with a RectNode if it forms a rectangle."""
     moves_str = extract_moves_from_product(node)
@@ -108,7 +111,7 @@ def freeman_to_knode(freeman: FreemanNode) -> KNode[MoveValue]:
 
     # Step 2: Recursively encode children
     children = iterable_to_sum(
-        tuple(freeman_to_knode(child) for child in freeman.children)
+        frozenset({freeman_to_knode(child) for child in freeman.children})
     )
     if children:
         product.append(children)
@@ -125,15 +128,18 @@ def encode_freeman_to_knode(freeman: FreemanNode) -> KNode[MoveValue]:
     """Encode a Freeman tree with compression (factorization and rectangle detection)."""
     uncompressed_knode = freeman_to_knode(freeman)
 
+    print(f"before factorizing: {uncompressed_knode}")
+    factored_node = postmap(uncompressed_knode, factorize_tuple)
     # Apply rectangle detection
-    factored_node = postmap(uncompressed_knode, detect_rect_node)
+    factored_node = premap(uncompressed_knode, detect_rect_node)
     # Factorize the KTree
-    factored_node = postmap(factored_node, factorize_tuple)
+    # factored_node = postmap(factored_node, factorize_tuple)
+    print(f"after factorizing: {factored_node}")
     return factored_node
 
 
-def component_to_knode(
-    freeman_node: FreemanNode, start_position: Coord, colors: set[int]
+def freeman_node_to_root_node(
+    freeman_node: FreemanNode, start_position: Coord, colors: Colors
 ) -> RootNode:
     """Encode a Freeman tree for a connected component into a RootNode."""
     program = encode_freeman_to_knode(freeman_node)
@@ -153,7 +159,6 @@ def decode_knode(
 ) -> Coords:
     """Unfold a concrete KNode in the set of coords traversed by the pathes it represents."""
     coords = {start}
-    current_positions = {start}
 
     def execute(knode: KNode, pos: Coord) -> Coords:
         """Supports SumNode not always at the end"""
@@ -173,7 +178,12 @@ def decode_knode(
                         new_positions.update(new_p)
                     current = new_positions
                 return current
-            case SumNode((RepeatNode(node, count),)):
+            case SumNode(children) if len(children) == 1 and isinstance(
+                next(iter(children)), RepeatNode
+            ):
+                repeat = next(iter(children))
+                repeat = cast(RepeatNode, repeat)
+                node, count = repeat.node, repeat.count
                 if isinstance(count, VariableNode):
                     raise TypeError(
                         "Trying to uncompress an abstract Repeat node"
@@ -253,7 +263,6 @@ def decode_knode(
 
 def decode_root(root: RootNode[MoveValue]) -> Points:
     node, position, colors = root.node, root.position, root.colors
-    points = set()
 
     if isinstance(position, VariableNode) or isinstance(colors, VariableNode):
         raise TypeError("Root should not contain variables during decoding")
@@ -298,6 +307,109 @@ class UnionNode(Generic[T]):
             if self.normalizing_node is None
             else self.normalizing_node.bit_length()
         )
+
+
+def get_potential_starting_points(component: Coords) -> Coords:
+    """
+    Return a list of special points which could serve as starting points to construct a Freeman Tree from a mask
+
+    Args:
+        object_coords: Coords
+
+    Return:
+        Coords: set of potential coordinates
+    """
+
+    starts = set()
+    if not component:
+        return starts
+
+    # Step 1: Extract x and y coordinates
+    col_coords, row_coords = zip(*component)
+
+    # Step 2: Find the box boundaries:
+    col_max, col_min = max(col_coords), min(col_coords)
+    row_max, row_min = max(row_coords), min(row_coords)
+
+    # Step 3:  Adding corner points if they are in the mask
+    corners = [
+        (col_min, row_min),
+        (col_max, row_min),
+        (col_min, row_max),
+        (col_max, row_max),
+    ]
+
+    starts |= {corner for corner in corners if corner in component}
+
+    # Step 4: The closest point to the approximate centroid
+    col_centroid = sum(col_coords) // len(col_coords)
+    row_centroid = sum(row_coords) // len(row_coords)
+
+    def distance_to_centroid(coord):
+        return (coord[0] - col_centroid) ** 2 + (coord[1] - row_centroid) ** 2
+
+    closest_to_centroid = min(component, key=distance_to_centroid)
+    starts.add(closest_to_centroid)
+
+    return starts
+
+
+def syntax_tree_at(
+    component: Coords,
+    colors: Colors,
+    start: Coord,
+    traversal_mode: TraversalModes = TraversalModes.DFS,
+) -> RootNode[MoveValue]:
+    """
+    Transforms the mask of a connected component, with it's starting point, to a KNode of MoveValues
+    """
+
+    # Step 0: Validate the start point:
+    if start not in component:
+        raise ValueError(f"Starting point: {start}, noot in component")
+
+    # Step 1: Build the Freeman tree of the component
+    def is_coord_in_component(coord: Coord) -> bool:
+        return coord in component
+
+    freeman = encode_connected_component(
+        start, is_coord_in_component, traversal_mode
+    )
+
+    # Step 2: Construct the RootNode
+    root_node = freeman_node_to_root_node(freeman, start, colors)
+
+    return root_node
+
+
+def component_to_raw_syntax_tree_distribution(
+    component: Coords, colors: Colors
+) -> tuple[RootNode[MoveValue], ...]:
+    """
+    Args
+        component: A connected component
+        colors: A color palette
+
+    Returns:
+
+    """
+    starts = get_potential_starting_points(component)
+
+    configuration_space = {
+        (start, traversal_mode)
+        for start in starts
+        for traversal_mode in TraversalModes
+    }
+    raw_syntax_tree_distribution = [
+        syntax_tree_at(component, colors, start, traversal_mode)
+        for start, traversal_mode in configuration_space
+    ]
+
+    return tuple(
+        sorted(raw_syntax_tree_distribution, key=lambda st: st.bit_length())
+    )
+
+    # symbolized syntax tree distribution
 
 
 ### tests
@@ -348,7 +460,7 @@ def test_encode_decode(grid, start, colors, name):
     # Step 1: Encode
     freeman = grid_to_freeman(grid, start, colors)
     print(f"freeman :{freeman}")
-    tree = component_to_knode(freeman, start, colors)
+    tree = freeman_node_to_root_node(freeman, start, colors)
     print(f"{name} Encoded Tree: {tree}")
 
     # Step 2: Decode
@@ -363,8 +475,6 @@ def test_encode_decode(grid, start, colors, name):
 
 
 if __name__ == "__main__":
-    from lattice import input_to_lattice
-
     # Test grids defined as lists of lists (ColorGrid format)
     grids = {
         "Simple Square": [[1, 1, 1], [1, 1, 1], [1, 1, 1]],

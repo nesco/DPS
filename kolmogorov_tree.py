@@ -9,7 +9,8 @@ aims to approximate Kolmogorov complexity through minimum description length.
 The tree structure consists of:
 - ProductNodes for deterministic sequences
 - SumNodes for non-deterministic branching
-- RepeatNodes for repetition extraction
+- RepeatNodes for repetition extraction for ProductNodes, an artifact of DFS
+- NestedNodes is like RepeatNodes but for SumNodes, an artificat of BFS
 - SymbolNodes for pattern abstraction and reuse
 - Variable binding for lambda abstraction
 
@@ -79,7 +80,7 @@ from localtypes import (
     Primitive,
     ensure_all_instances,
 )
-from tree_functionals import (
+from utils.tree_functionals import (
     dataclass_subvalues,
     depth_first_preorder,
     postorder_map,
@@ -94,9 +95,10 @@ class BitLength(IntEnum):
     """Defines bit lengths for generic components in the Kolmogorov Tree."""
 
     COUNT = 5  # 5 bits for repeat counts (0-31), specific value suitable for ARC grid sizes
-    NODE_TYPE = 3  # 3 bits for up to 8 node types
+    NODE_TYPE = 4  # 4 bits for up to 16 node types
     INDEX = 7  # 7 bits for symbol indices (up to 128 symbols)
     VAR = 1  # 2 bits for variable indices (up to 2 variables per symbol)
+    NONE = 0
 
 
 class ARCBitLength(IntEnum):
@@ -152,6 +154,14 @@ class IndexValue(Primitive):
         return BitLength.INDEX  # 7 bits
 
 
+@dataclass(frozen=True)
+class NoneValue(Primitive):
+    """Represents a None."""
+
+    def bit_length(self) -> int:
+        return BitLength.NONE
+
+
 # ARC Specific primitves
 @dataclass(frozen=True)
 class MoveValue(Alphabet):
@@ -191,6 +201,9 @@ class CoordValue(Primitive):
 
     def bit_length(self) -> int:
         return ARCBitLength.COORD  # 10 bits (5 per coordinate)
+
+    def __str__(self) -> str:
+        return str(tuple(self.value))
 
 
 T = TypeVar("T", bound=Alphabet)
@@ -338,8 +351,10 @@ class SumNode(CollectionNode[T]):
         ):
             return "[+" + str(next(iter(self.children))) + "]"
         # Sort children by string representation for consistent output
-        sorted_children = sorted(self.children, key=str)
-        return "[" + "|".join(str(child) for child in sorted_children) + "]"
+        #
+        children_str = [str(child) for child in self.children]  # Compute once
+        sorted_str = sorted(children_str)  # Sort precomputed strings
+        return "[" + "|".join(sorted_str) + "]"  # Use precomputed strings
 
 
 @dataclass(frozen=True)
@@ -364,6 +379,37 @@ class RepeatNode(MetaNode[T]):
 
     def __str__(self) -> str:
         return f"({str(self.node)})*{{{self.count}}}"
+
+
+# TO-DO for Nested node:
+# [ ] Extraction
+# [ ] Decoding
+# [ ] Symbolization
+@dataclass(frozen=True)
+class NestedNode(KNode[T]):
+    """
+    Represents A finite equivalent of the fixed point combinator.
+    The catch is it can only acts on possibly recursive properties.
+    It acts like a more powerful version of the SymbolNode for abstracted patterns.
+    It looks like RepeatNode a lot, especially because its kind of the same for breadth-first traversal.
+    It can be seen as a RepeatNode for Symbols
+
+    Y_0(i, node) = node
+    Y_c(i, node) ~ "s_i((Y_c-1(i, node),))"
+    """
+
+    index: IndexValue
+    node: KNode[T]
+    count: CountValue | VariableNode
+
+    def bit_length(self) -> int:
+        index_len = self.index.bit_length()
+        terminal_node = self.node.bit_length()
+        count_len = self.count.bit_length()
+        return super().bit_length() + index_len + terminal_node + count_len
+
+    def __str__(self) -> str:
+        return f"Y_{{{self.count}}}(s_{self.index}, {self.node})"
 
 
 @dataclass(frozen=True)
@@ -431,7 +477,8 @@ class RootNode(MetaNode[T]):
         return super().bit_length() + pos_len + colors_len
 
     def __str__(self) -> str:
-        pos_str = str(self.position)
+        position = self.position
+        pos_str = str(position)
         colors_str = str(self.colors)
         node_str = str(self.node)
         return f"Root({node_str}, {pos_str}, {colors_str})"
@@ -460,7 +507,7 @@ def next_layer(layer: Iterable[KNode]) -> tuple[KNode, ...]:
 type Parameters = tuple[BitLengthAware, ...]
 
 
-def generate_abstractions(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
+def extract_template(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
     """Generate abstracted versions of a KNode by replacing subparts with variables."""
     abstractions: list[tuple[KNode[T], Parameters]] = []
 
@@ -470,7 +517,7 @@ def generate_abstractions(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
         return abstractions
 
     match knode:
-        case CollectionNode(children) if len(children) > 2:
+        case ProductNode(children) if len(children) > 2:
             # Abstract up to two distinct elements for now
             child_counter = Counter(children)  # Count occurrences of each child
             child_set = list(child_counter.keys())
@@ -485,7 +532,7 @@ def generate_abstractions(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
                 VariableNode(VariableValue(0)) if c == max_children[0] else c
                 for c in children
             )
-            abstractions.append((type(knode)(nodes1), (max_children[0],)))
+            abstractions.append((ProductNode(nodes1), (max_children[0],)))
 
             # If there are at least two distinct children and length > 2
             if len(max_children) > 1 and len(children) > 2:
@@ -496,7 +543,7 @@ def generate_abstractions(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
                     else c
                     for c in children
                 )
-                abstractions.append((type(knode)(nodes2), (max_children[0],)))
+                abstractions.append((ProductNode(nodes2), (max_children[0],)))
 
                 # Then absttract the top two
                 nodes3 = tuple(
@@ -505,7 +552,43 @@ def generate_abstractions(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
                     else c
                     for c in children
                 )
-                abstractions.append((type(knode)(nodes3), tuple(max_children)))
+                abstractions.append((ProductNode(nodes3), tuple(max_children)))
+        case SumNode(children) if len(children) > 2:
+            # Abstract up to two distinct elements for now
+            child_counter = Counter(children)  # Count occurrences of each child
+            child_set = list(child_counter.keys())
+            max_children = sorted(
+                child_set,
+                key=lambda x: x.bit_length() * child_counter[x],
+                reverse=True,
+            )[:2]
+
+            # Abstract the most frequent/largest child
+            nodes1 = frozenset(
+                VariableNode(VariableValue(0)) if c == max_children[0] else c
+                for c in children
+            )
+            abstractions.append((SumNode(nodes1), (max_children[0],)))
+
+            # If there are at least two distinct children and length > 2
+            if len(max_children) > 1 and len(children) > 2:
+                # Abstract the second most frequent/largest child
+                nodes2 = frozenset(
+                    VariableNode(VariableValue(0))
+                    if c == max_children[1]
+                    else c
+                    for c in children
+                )
+                abstractions.append((SumNode(nodes2), (max_children[0],)))
+
+                # Then absttract the top two
+                nodes3 = frozenset(
+                    VariableNode(VariableValue(max_children.index(c)))
+                    if c in max_children
+                    else c
+                    for c in children
+                )
+                abstractions.append((SumNode(nodes3), tuple(max_children)))
         case RepeatNode(node, count):
             # For a RepeatNode, either the node or the count can be abstracted
             abstractions.extend(
@@ -517,6 +600,36 @@ def generate_abstractions(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
                     (
                         RepeatNode(node, VariableNode(VariableValue(0))),
                         (count,),
+                    ),
+                ]
+            )
+        case NestedNode(index, node, count):
+            abstractions.extend(
+                [
+                    (
+                        NestedNode(
+                            index, VariableNode(VariableValue(0)), count
+                        ),
+                        (node,),
+                    ),
+                    (
+                        NestedNode(
+                            index,
+                            node,
+                            VariableNode(VariableValue(0)),
+                        ),
+                        (count,),
+                    ),
+                    (
+                        NestedNode(
+                            index,
+                            VariableNode(VariableValue(0)),
+                            VariableNode(VariableValue(1)),
+                        ),
+                        (
+                            node,
+                            count,
+                        ),
                     ),
                 ]
             )
@@ -591,7 +704,166 @@ def generate_abstractions(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
     return abstractions
 
 
-def get_iterator(knodes: Collection[KNode[T]]) -> frozenset[KNode[T]]:
+def extract_nested_sum_template(
+    snode: SumNode[T],
+) -> tuple[SumNode[T], SumNode[T]] | None:
+    """
+    Like generate abstractions but for structures like [0[]|4]
+
+    Returns
+        tuple[SumNode[T], SumNode[T]]: (template, parameter)
+    """
+    max_product = max(
+        [node for node in snode.children if isinstance(node, ProductNode)],
+        key=lambda x: x.bit_length(),
+        default=None,
+    )
+
+    if not max_product:
+        return None
+
+    max_sum = max(
+        [node for node in max_product.children if isinstance(node, SumNode)],
+        key=lambda x: x.bit_length(),
+        default=None,
+    )
+
+    if not max_sum:
+        return None
+
+    new_product = ProductNode(
+        tuple(
+            node if node != max_sum else VariableNode(VariableValue(0))
+            for node in max_product.children
+        )
+    )
+
+    new_sum = SumNode(
+        frozenset(
+            {
+                node if node != max_product else new_product
+                for node in snode.children
+            }
+        )
+    )
+
+    return new_sum, max_sum
+
+
+def extract_nested_product_template(
+    pnode: ProductNode[T],
+) -> tuple[ProductNode[T], ProductNode[T]] | None:
+    """
+    Like generate abstractions but for structures like [0[]|4]
+
+    Returns
+        tuple[SumNode[T], SumNode[T]]: (template, parameter)
+    """
+    max_sum = max(
+        [node for node in pnode.children if isinstance(node, SumNode)],
+        key=lambda x: x.bit_length(),
+        default=None,
+    )
+
+    if not max_sum:
+        return None
+
+    max_product = max(
+        [node for node in max_sum.children if isinstance(node, ProductNode)],
+        key=lambda x: x.bit_length(),
+        default=None,
+    )
+
+    if not max_product:
+        return None
+
+    new_sum = SumNode(
+        frozenset(
+            {
+                node if node != max_product else VariableNode(VariableValue(0))
+                for node in max_sum.children
+            }
+        )
+    )
+
+    new_product = ProductNode(
+        tuple(node if node != max_sum else new_sum for node in pnode.children)
+    )
+
+    return new_product, max_product
+
+
+def detect_recursive_collection(
+    knode: SumNode[T] | ProductNode[T],
+) -> tuple[KNode[T], KNode[T], int] | None:
+    """
+    Detects a recursive pattern in a SumNode, returning the common template, terminal node, and recursion count.
+
+    Args:
+        snode: The SumNode to analyze.
+
+    Returns:
+        tuple[KNode[T], KNode[T], int]: (template, terminal_node, count) if a recursive pattern is found, else None.
+    """
+    count = 0
+    current = knode
+    common_template = None
+
+    while True:
+        assert isinstance(current, type(knode))
+        extraction = (
+            extract_nested_sum_template(current)
+            if isinstance(current, SumNode)
+            else extract_nested_product_template(current)
+        )
+
+        if extraction is None:
+            break
+        template, parameter = extraction
+
+        if count == 0:
+            common_template = (
+                template  # Set the template on the first iteration
+            )
+        elif template != common_template:
+            break  # Stop if the template changes
+
+        if not isinstance(parameter, type(knode)):
+            break  # Stop if the parameter isn’t a SumNode
+
+        count += 1
+        current = parameter
+
+    if count >= 1 and common_template is not None:
+        return common_template, current, count
+    return None
+
+
+def nested_collection_to_nested_node(
+    knode: SumNode[T] | ProductNode[T],
+) -> tuple[NestedNode[T], KNode[T]] | None:
+    """
+    Transforms a CollectionNode with a recursive pattern into a NestedNode, returning the node and its template.
+
+    Args:
+        snode: The SumNode to transform.
+
+    Returns:
+        tuple[NestedNode[T], KNode[T]]: (nested_node, template) if a recursive pattern is found, else None.
+    """
+    recursive_info = detect_recursive_collection(knode)
+    if recursive_info is None:
+        return None
+
+    template, terminal_node, count = recursive_info
+    # Use a placeholder index; the symbol table must be updated externally
+    nested_node = NestedNode(
+        index=IndexValue(0), node=terminal_node, count=CountValue(count)
+    )
+    return nested_node, template
+
+
+def get_iterator_old(knodes: Collection[KNode[T]]) -> frozenset[KNode[T]]:
     """
     This function identifies if the input nodes form an arithmetic sequence and encodes it as a single RepeatNode.
     It leverages a hacky double meaning: while a standard RepeatNode(X, N) means "X for _ in range(N)",
@@ -606,6 +878,34 @@ def get_iterator(knodes: Collection[KNode[T]]) -> frozenset[KNode[T]]:
         isinstance(n, PrimitiveNode) and isinstance(n.value, MoveValue)
         for n in nodes
     ):
+        for start_node in nodes:
+            for step in [1, -1]:
+                expected = {
+                    shift(start_node, step * k) for k in range(len(nodes))
+                }
+                if expected == nodes:
+                    repeat_node = RepeatNode(
+                        start_node, CountValue(step * len(nodes))
+                    )
+                    return frozenset([repeat_node])
+    return nodes
+
+
+def get_iterator(knodes: Collection[KNode[T]]) -> frozenset[KNode[T]]:
+    """
+    This function identifies if the input nodes form an arithmetic sequence and encodes it as a single RepeatNode.
+    It leverages a hacky double meaning: while a standard RepeatNode(X, N) means "X for _ in range(N)",
+    when used as the sole child of a SumNode, e.g., SumNode((Repeat(X, N),)), it represents
+    "SumNode(tuple(shift(X, k) for k in range(N)))" if N > 0, or shifts with negative increments if N < 0.
+    This compresses arithmetic enumerations cost-free, enhancing expressiveness.
+    """
+    nodes = frozenset(knodes)
+    if len(nodes) < 2:
+        return frozenset(nodes)
+    if all(
+        isinstance(n, PrimitiveNode) and isinstance(n.value, MoveValue)
+        for n in nodes
+    ) or all(isinstance(n, RepeatNode) for n in nodes):
         for start_node in nodes:
             for step in [1, -1]:
                 expected = {
@@ -700,12 +1000,16 @@ def construct_product_node(nodes: Iterable[KNode[T]]) -> ProductNode[T]:
                 if len(primitives) > 1:
                     # Replace with run-length encoded version (assumes encode_run_length exists)
                     encoded = encode_run_length(primitives)
-                    simplified[i:j] = list(
-                        encoded.children
-                    )  # Insert the children directly                    i += 1
-                    i += len(
-                        encoded.children
-                    )  # Move index past inserted elements
+                    if isinstance(encoded, ProductNode):
+                        simplified[i:j] = list(
+                            encoded.children
+                        )  # Insert the children directly                    i += 1
+                        i += len(
+                            encoded.children
+                        )  # Move index past inserted elements
+                    else:
+                        simplified[i:j] = [encoded]
+                        i += 1
                 else:
                     i += 1
             case RepeatNode(node=base, count=CountValue(count)) if i + 1 < len(
@@ -728,14 +1032,15 @@ def construct_product_node(nodes: Iterable[KNode[T]]) -> ProductNode[T]:
     return ProductNode(tuple(simplified))
 
 
-def iterable_to_product(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
+def iterable_to_product(iterable: Iterable[KNode[T]]) -> KNode[T]:
     nodes: list[KNode[T]] = list(iterable)
     if not nodes:
-        return None
+        raise ValueError("Emprty iterable. Can't produce a product out of it")
     elif len(nodes) == 1:
         return nodes[0]
     else:
-        return construct_product_node(nodes)
+        nnodes = construct_product_node(nodes)
+        return flatten_product(nnodes)
 
 
 def iterable_to_sum(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
@@ -753,13 +1058,20 @@ def reconstruct_knode(
 ) -> KNode[T]:
     """Reconstructs a KNode with its original data and new children."""
     match knode:
-        case CollectionNode(_):
-            new_node = type(knode)(tuple(new_children))
+        case SumNode(_):
+            new_node = SumNode(frozenset(new_children))
+            if factorize:
+                new_node = factorize_tuple(new_node)
+            return new_node
+        case ProductNode(_):
+            new_node = ProductNode(tuple(new_children))
             if factorize:
                 new_node = factorize_tuple(new_node)
             return new_node
         case RepeatNode(_, count):
             return RepeatNode(new_children[0], count)
+        case NestedNode(index, _, count):
+            return NestedNode(index, new_children[0], count)
         case RootNode(_, position, colors):
             return RootNode(new_children[0], position, colors)
         case SymbolNode(index, parameters):
@@ -780,6 +1092,11 @@ def children(knode: KNode) -> Iterator[KNode]:
         case CollectionNode(children):
             return iter(children)
         case RepeatNode(node, count):
+            children = [node]
+            if isinstance(count, VariableNode):
+                children.append(count)
+            return iter(children)
+        case NestedNode(_, node, count):
             children = [node]
             if isinstance(count, VariableNode):
                 children.append(count)
@@ -870,6 +1187,8 @@ def reverse_node(knode: KNode[T]) -> KNode[T]:
             return type(knode)(reversed_children)
         case RepeatNode(node, count):
             return RepeatNode(reverse_node(node), count)
+        case NestedNode(index, node, count):
+            return NestedNode(index, reverse_node(node), count)
         case SymbolNode(index, parameters):
             reversed_params = tuple(
                 reverse_node(p) if isinstance(p, KNode) else p
@@ -919,7 +1238,9 @@ def shift(node: KNode[T], k: int) -> KNode[T]:
     return postmap(node, lambda n: shift_f(n, k))
 
 
-def encode_run_length(primitives: Iterable[PrimitiveNode[T]]) -> ProductNode[T]:
+def encode_run_length(
+    primitives: Iterable[PrimitiveNode[T]],
+) -> ProductNode[T] | RepeatNode[T] | PrimitiveNode[T]:
     """
     Encodes an iterable of PrimitiveNode[T] into a ProductNode[T] using run-length encoding.
     Consecutive identical PrimitiveNodes are compressed into RepeatNodes when the sequence
@@ -972,6 +1293,10 @@ def encode_run_length(primitives: Iterable[PrimitiveNode[T]]) -> ProductNode[T]:
         sequence.extend([current] * count)
 
     # Return the sequence as a ProductNode
+    if len(sequence) == 1:
+        assert isinstance(sequence[0], RepeatNode | PrimitiveNode)
+        return sequence[0]
+
     return ProductNode(tuple(sequence))
 
 
@@ -1050,7 +1375,7 @@ def find_repeating_pattern(
     for pattern_len in range(1, max_pattern_len + 1):
         pattern = nodes[offset : offset + pattern_len]
         pattern_node = (
-            construct_product_node(pattern) if len(pattern) > 1 else pattern[0]
+            iterable_to_product(pattern) if len(pattern) > 1 else pattern[0]
         )
 
         for reverse in [False, True]:
@@ -1071,7 +1396,7 @@ def find_repeating_pattern(
                 # Compare the segment with the pattern or its reverse
                 if len(segment) == pattern_len:
                     segment_node = (
-                        construct_product_node(segment)
+                        iterable_to_product(segment)
                         if len(segment) > 1
                         else segment[0]
                     )
@@ -1116,6 +1441,7 @@ def flatten_sum(node: SumNode[T]) -> KNode[T]:
     if len(node.children) > 1:
         return node
 
+    # Preserves iterators
     child = next(iter(node.children))
     if isinstance(child, RepeatNode):
         return node
@@ -1145,6 +1471,13 @@ def factorize_tuple(node: KNode[T]) -> KNode[T]:
     """
     if isinstance(node, SumNode):
         # For SumNode, delegate to get_iterator for arithmetic sequence compression
+        first = next(iter(node.children))
+        if (
+            isinstance(first, RepeatNode)
+            and isinstance(first.count, CountValue)
+            and first.count == 5
+        ):
+            print("TEST")
         children = get_iterator(node.children)
         # If there is a no repeat single node, flatten the tuple
         # For the iterator hack, no unpacking
@@ -1205,7 +1538,7 @@ def factorize_tuple(node: KNode[T]) -> KNode[T]:
     # Reconstruct the ProductNode with simplified children
     if len(simplified) == 1 and simplified[0] == node:
         return node  # Avoid unnecessary reconstruction
-    return construct_product_node(simplified)
+    return cast(KNode, iterable_to_product(simplified))
 
 
 # High-order functions
@@ -1255,53 +1588,6 @@ def premap(
     )
 
 
-def postmap_unsafe(
-    knode: KNode, f: Callable[[KNode], KNode | None]
-) -> KNode | None:
-    """
-    Map a function alongside a KNode. It updates first childrens, then updates the base node
-
-    Args:
-        knode: The KNode tree to transform
-        f: A function that takes a KNode and returns a transformed KNode, or returning None.
-
-    Returns:
-        KNode: A new KNode tree with the function f applied to each node
-    """
-    match knode:
-        case CollectionNode(children):
-            mapped_children = tuple(
-                node
-                for child in children
-                if (node := postmap_unsafe(child, f)) is not None
-            )
-            return f(factorize_tuple(type(knode)(mapped_children)))
-        case RepeatNode(node, count):
-            nnode = postmap_unsafe(node, f)
-            return f(RepeatNode(nnode, count)) if nnode is not None else None
-        case RootNode(node, position, color):
-            nnode = postmap_unsafe(node, f)
-            return (
-                f(RootNode(nnode, position, color))
-                if nnode is not None
-                else None
-            )
-        case SymbolNode(index, parameters):
-            nparameters = tuple(
-                nparam
-                for p in parameters
-                if (
-                    nparam := (
-                        postmap_unsafe(p, f) if isinstance(p, KNode) else p
-                    )
-                )
-                is not None
-            )
-            return f(SymbolNode(index, nparameters))
-        case _:
-            return f(knode)
-
-
 # Decompression
 def expand_repeats(
     node: SumNode[T] | ProductNode[T] | RepeatNode[T] | PrimitiveNode[T],
@@ -1313,7 +1599,9 @@ def expand_repeats(
         if isinstance(knode, RepeatNode):
             if isinstance(knode.count, VariableNode):
                 raise TypeError("Trying to uncompress a variable repeat")
-            return ProductNode(tuple([knode.node] * knode.count.value))
+            return cast(
+                KNode, iterable_to_product([knode.node] * knode.count.value)
+            )
         else:
             return knode
 
@@ -1395,6 +1683,21 @@ def unify(
             elif count != s_count:
                 return False
             return unify(node, s_node, bindings)
+        case NestedNode(index, node, count):
+            subtree = cast(NestedNode, subtree)
+            s_node = subtree.node
+            s_count = subtree.count
+            if isinstance(count, VariableNode):
+                index = count.index.value
+                if index in bindings:
+                    if bindings[index] != s_count:
+                        return False
+                else:
+                    bindings[index] = s_count
+            elif count != s_count:
+                return False
+            return unify(node, s_node, bindings)
+
         case RootNode(node, position, colors):
             subtree = cast(RootNode, subtree)
             if not unify(position, subtree.position, bindings):
@@ -1468,6 +1771,15 @@ def substitute_variables(abstraction: KNode[T], params: Parameters) -> KNode[T]:
                     f"Trying to substitute a count variable to a wrong parameter: {count}"
                 )
             return RepeatNode(node, count)
+        case NestedNode(index, node, count) if isinstance(
+            count, VariableNode
+        ) and count.index.value < len(params):
+            count = params[count.index.value]
+            if not isinstance(count, CountValue):
+                raise TypeError(
+                    f"Trying to substitute a count variable to a wrong parameter: {count}"
+                )
+            return NestedNode(index, node, count)
         case RootNode(node, VariableNode(index1), VariableNode(index2)) if (
             index1.value < len(params) and index2.value < len(params)
         ):
@@ -1621,6 +1933,80 @@ def create_rect(height: int, width: int) -> KNode | None:
     return create_moves_sequence(first_row + other_rows)
 
 
+def extract_nested_patterns(
+    symbol_table: list[KNode[T]],
+    tree: KNode[T],
+) -> KNode[T]:
+    """
+    Traverses a Kolmogorov Tree to identify and replace nested patterns with NestedNodes,
+    extracting their templates into a symbol table.
+
+    Args:
+        tree: The input Kolmogorov Tree (KNode[T]).
+
+    Returns:
+        Tuple[KNode[T], Tuple[KNode[T], ...]]: A tuple containing:
+            - The transformed tree with NestedNodes replacing nested patterns.
+            - A tuple of templates (symbol table) extracted from the nested patterns.
+    """
+
+    def mapping_function(node: KNode[T]) -> KNode[T]:
+        """
+        Mapping function for postmap to detect nested patterns and replace them with NestedNodes.
+
+        Args:
+            node: The current node being processed.
+
+        Returns:
+            KNode[T]: The transformed node (either a NestedNode or the original node).
+        """
+        # Only process SumNode or ProductNode for nested patterns
+        if isinstance(node, (SumNode, ProductNode)):
+            result = nested_collection_to_nested_node(node)
+            if result is not None:
+                nested_node, template = result
+                # Greedy test, it might be better because the template might be shared with others
+                if (
+                    nested_node.bit_length() + template.bit_length()
+                    <= node.bit_length()
+                ):
+                    # Add the template to the symbol table and get its index
+                    if template in symbol_table:
+                        index = symbol_table.index(template)
+                    else:
+                        index = len(symbol_table)
+                        symbol_table.append(template)
+                    # Create a new NestedNode with the correct index
+                    # Since NestedNode is frozen, instantiate a new one
+                    new_nested_node = NestedNode(
+                        IndexValue(index), nested_node.node, nested_node.count
+                    )
+                    return new_nested_node
+        # Return the node unchanged if no pattern is detected
+        return node
+
+    # Apply postmap to transform the tree
+    new_tree = premap(tree, mapping_function)
+    return new_tree
+
+
+def expand_nested_node(
+    nested_node: NestedNode[T], symbol_table: tuple[KNode[T], ...]
+) -> KNode[T]:
+    """Expands a NestedNode using its template from the symbol table."""
+    template = symbol_table[nested_node.index.value]
+    current = nested_node.node
+
+    if not isinstance(nested_node.count, CountValue):
+        raise ValueError(
+            f"Trying to expand a nested node with a variable count: {nested_node}"
+        )
+
+    for _ in range(nested_node.count.value):
+        current = substitute_variables(template, (current,))
+    return current
+
+
 def find_symbol_candidates(
     trees: tuple[KNode[T], ...],
     min_occurrences: int = 2,
@@ -1644,7 +2030,7 @@ def find_symbol_candidates(
     for subtree in all_subtrees:
         pattern_counter[subtree] += 1
         pattern_matches[subtree].add(subtree)
-        for abs_pattern, params in generate_abstractions(subtree):
+        for abs_pattern, params in extract_template(subtree):
             pattern_counter[abs_pattern] += 1
             pattern_matches[abs_pattern].add(subtree)
 
@@ -1675,7 +2061,7 @@ def find_symbol_candidates(
             sum(
                 p.bit_length()
                 for s in pattern_matches[pat]
-                for _, ps in generate_abstractions(s)
+                for _, ps in extract_template(s)
                 if pat == _
                 for p in ps
             )
@@ -1995,8 +2381,8 @@ def test_encode_run_length():
     # Test Case 2: Single Node
     node = PrimitiveNode(MoveValue(1))
     result = encode_run_length([node])
-    assert result == ProductNode((node,)), (
-        "Test Case 2 Failed: Single node should be wrapped in ProductNode"
+    assert result == node, (
+        "Test Case 2 Failed: Single node should not be wrapped in ProductNode"
     )
 
     # Test Case 3: No Repeats
@@ -2021,9 +2407,7 @@ def test_encode_run_length():
     # Test Case 5: Long Repeats
     nodes = [PrimitiveNode(MoveValue(1))] * 3
     result = encode_run_length(nodes)
-    expected = ProductNode(
-        (RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(3)),)
-    )
+    expected = RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(3))
     assert result == expected, (
         "Test Case 5 Failed: Three identical nodes should be compressed"
     )
@@ -2065,9 +2449,7 @@ def test_encode_run_length():
     # Test Case 8: All Identical
     nodes = [PrimitiveNode(MoveValue(5))] * 10
     result = encode_run_length(nodes)
-    expected = ProductNode(
-        (RepeatNode(PrimitiveNode(MoveValue(5)), CountValue(10)),)
-    )
+    expected = RepeatNode(PrimitiveNode(MoveValue(5)), CountValue(10))
     assert result == expected, (
         "Test Case 8 Failed: All identical nodes should compress into one RepeatNode"
     )
@@ -2075,9 +2457,7 @@ def test_encode_run_length():
     # Test Case 9: Input as Iterator
     nodes = iter([PrimitiveNode(MoveValue(1))] * 4)
     result = encode_run_length(nodes)
-    expected = ProductNode(
-        (RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(4)),)
-    )
+    expected = RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(4))
     assert result == expected, (
         "Test Case 9 Failed: Iterator input not handled correctly"
     )
@@ -2247,7 +2627,9 @@ def test_shift():
 
     # Test 6: Shifting RootNode
     program = ProductNode((create_move_node(0), create_move_node(1)))
-    root = RootNode(program, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
+    root = RootNode(
+        program, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
+    )
     shifted_root = shift(root, 2)
     assert isinstance(shifted_root, RootNode), (
         "Shifted result should be a RootNode"
@@ -2447,6 +2829,38 @@ def test_get_iterator():
         "Test Case 9 Failed: Sequence with increment +2 should not be compressed"
     )
 
+    # Test Case 10: Sequence of RepeatNodes with same count
+    r0 = RepeatNode(PrimitiveNode(MoveValue(0)), CountValue(5))
+    r1 = RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(5))
+    r2 = RepeatNode(PrimitiveNode(MoveValue(2)), CountValue(5))
+    r3 = RepeatNode(PrimitiveNode(MoveValue(3)), CountValue(5))
+    nodes = [r0, r1, r2, r3]
+    result = get_iterator(nodes)
+    assert len(result) == 1, (
+        "Test Case 10 Failed: Should return a frozenset with one RepeatNode"
+    )
+    repeat_node = next(iter(result))
+    assert isinstance(repeat_node, RepeatNode), (
+        "Test Case 10 Failed: Result should be a RepeatNode"
+    )
+    assert repeat_node.node in nodes, (
+        "Test Case 10 Failed: The node should be one of the original nodes"
+    )
+    assert isinstance(repeat_node.count, CountValue) and abs(
+        repeat_node.count.value
+    ) == len(nodes), (
+        "Test Case 10 Failed: The count should equal the number of nodes"
+    )
+    # Verify that shifts regenerate the original set
+    if repeat_node.count.value > 0:
+        shifts = range(repeat_node.count.value)
+    else:
+        shifts = range(0, repeat_node.count.value, -1)
+    expected = {shift(repeat_node.node, k) for k in shifts}
+    assert expected == frozenset(nodes), (
+        "Test Case 10 Failed: Shifts should regenerate the original set"
+    )
+
     print("Test get_iterator - Passed")
 
 
@@ -2539,11 +2953,9 @@ def test_factorize_tuple():
     nodes = [PrimitiveNode(MoveValue(2))] * 3
     product = ProductNode(tuple(nodes))
     result = factorize_tuple(product)
-    expected = ProductNode(
-        (RepeatNode(PrimitiveNode(MoveValue(2)), CountValue(3)),)
-    )
+    expected = RepeatNode(PrimitiveNode(MoveValue(2)), CountValue(3))
     assert result == expected, (
-        "Test Case 3 Failed: Repeating nodes should be compressed"
+        f"Test Case 3 Failed: Repeating nodes should be compressed. Got {[result]} instead of {[expected]}"
     )
 
     # Test Case 4: Alternating ProductNode
@@ -2558,15 +2970,9 @@ def test_factorize_tuple():
 
     product = ProductNode(tuple(nodes))
     result = factorize_tuple(product)
-    expected = ProductNode(
-        (
-            RepeatNode(
-                ProductNode(
-                    (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(0)))
-                ),
-                CountValue(-3),
-            ),
-        )
+    expected = RepeatNode(
+        ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(0)))),
+        CountValue(-3),
     )
     assert result == expected, (
         "Test Case 4 Failed: Alternating pattern should be compressed with negative count"
@@ -2676,6 +3082,212 @@ def test_is_abstraction():
     print("Test is_abstraction - Passed")
 
 
+def test_extract_nested_sum_template():
+    """Tests the extract_nested_sum_template function."""
+
+    def create_move_node(value):
+        return PrimitiveNode(MoveValue(value))
+
+    a, b, c, d, e, f, g, h = [create_move_node(i) for i in range(8)]
+    inner_sum1 = SumNode(frozenset([b, c]))
+    inner_sum2 = SumNode(frozenset([f, g]))
+    prod1 = ProductNode((a, inner_sum1, d))
+    prod2 = ProductNode((e, inner_sum2, h))
+    main_sum = SumNode(frozenset([prod1, prod2]))
+    result = extract_nested_sum_template(main_sum)
+    assert result is not None, "Expected a template and parameter"
+    template, parameter = result
+    var_node = VariableNode(VariableValue(0))
+    expected_template1 = SumNode(
+        frozenset([ProductNode((a, var_node, d)), prod2])
+    )
+    expected_template2 = SumNode(
+        frozenset([prod1, ProductNode((e, var_node, h))])
+    )
+    if template.children == expected_template1.children:
+        assert parameter == inner_sum1, "Parameter should be inner_sum1"
+    elif template.children == expected_template2.children:
+        assert parameter == inner_sum2, "Parameter should be inner_sum2"
+    else:
+        assert False, f"Unexpected template structure: {str(template)}"
+    sum_no_product = SumNode(frozenset([a, b, c]))
+    assert extract_nested_sum_template(sum_no_product) is None, "Expected None"
+    prod_no_sum = ProductNode((a, b, c))
+    sum_with_prod_no_sum = SumNode(frozenset([prod_no_sum]))
+    assert extract_nested_sum_template(sum_with_prod_no_sum) is None, (
+        "Expected None"
+    )
+    print("Test extract_nested_sum_template - Passed")
+
+
+def test_extract_nested_product_template():
+    """Tests the extract_nested_product_template function."""
+
+    def create_move_node(value):
+        return PrimitiveNode(MoveValue(value))
+
+    a, b, c, d, e, f = [create_move_node(i) for i in range(6)]
+    inner_prod1 = ProductNode((b, c))
+    inner_prod2 = ProductNode((d, e))
+    sum_inner = SumNode(frozenset([inner_prod1, inner_prod2]))
+    main_product = ProductNode((a, sum_inner, f))
+    result = extract_nested_product_template(main_product)
+    assert result is not None, "Expected a template and parameter"
+    template, parameter = result
+    var_node = VariableNode(VariableValue(0))
+    expected_template1 = ProductNode(
+        (a, SumNode(frozenset([var_node, inner_prod2])), f)
+    )
+    expected_template2 = ProductNode(
+        (a, SumNode(frozenset([inner_prod1, var_node])), f)
+    )
+    if template.children == expected_template1.children:
+        assert parameter == inner_prod1, "Parameter should be inner_prod1"
+    elif template.children == expected_template2.children:
+        assert parameter == inner_prod2, "Parameter should be inner_prod2"
+    else:
+        assert False, f"Unexpected template structure: {str(template)}"
+    product_no_sum = ProductNode((a, b, c))
+    assert extract_nested_product_template(product_no_sum) is None, (
+        "Expected None"
+    )
+    sum_no_product = SumNode(frozenset([a, b]))
+    product_with_sum = ProductNode((sum_no_product, c))
+    assert extract_nested_product_template(product_with_sum) is None, (
+        "Expected None"
+    )
+    print("Test extract_nested_product_template - Passed")
+
+
+def test_nested_collection_to_nested_node():
+    """
+    Tests the `nested_collection_to_nested_node` function for capturing recursive patterns in SumNodes.
+    Verifies template extraction, terminal node identification, recursion count, and reconstruction.
+    """
+
+    # Helper functions to expand NestedNode for testing
+    def substitute(template, substitution):
+        """Substitutes VariableNodes in a template with given nodes."""
+        if isinstance(template, SumNode):
+            new_children = frozenset(
+                substitute(child, substitution) for child in template.children
+            )
+            return SumNode(new_children)
+        elif isinstance(template, ProductNode):
+            new_children = tuple(
+                substitute(child, substitution) for child in template.children
+            )
+            return ProductNode(new_children)
+        elif isinstance(template, VariableNode):
+            return substitution[template.index.value]
+        return template
+
+    def expand_nested(template, terminal, count):
+        """Expands a NestedNode by applying the template `count` times starting from the terminal."""
+        current = terminal
+        for _ in range(count):
+            current = substitute(template, {0: current})
+        return current
+
+    # Test Case 1: Recursive SumNode with multiple levels
+    # Pattern: [0 Rec | 4], repeated 3 times for simplicity (scalable to 8 as in your example)
+    terminal = SumNode(
+        frozenset([PrimitiveNode(MoveValue(1)), PrimitiveNode(MoveValue(2))])
+    )
+    level1 = SumNode(
+        frozenset(
+            [
+                ProductNode((PrimitiveNode(MoveValue(0)), terminal)),
+                PrimitiveNode(MoveValue(4)),
+            ]
+        )
+    )
+    level2 = SumNode(
+        frozenset(
+            [
+                ProductNode((PrimitiveNode(MoveValue(0)), level1)),
+                PrimitiveNode(MoveValue(4)),
+            ]
+        )
+    )
+    level3 = SumNode(
+        frozenset(
+            [
+                ProductNode((PrimitiveNode(MoveValue(0)), level2)),
+                PrimitiveNode(MoveValue(4)),
+            ]
+        )
+    )
+
+    result = nested_collection_to_nested_node(level3)
+    assert result is not None, (
+        "Expected a NestedNode and template for recursive SumNode"
+    )
+    nested_node, template = result
+
+    # Expected template: [0 Var(0) | 4]
+    var_node = VariableNode(VariableValue(0))
+    expected_template = SumNode(
+        frozenset(
+            [
+                ProductNode((PrimitiveNode(MoveValue(0)), var_node)),
+                PrimitiveNode(MoveValue(4)),
+            ]
+        )
+    )
+
+    # Verify template
+    assert template == expected_template, (
+        f"Template mismatch: expected {expected_template}, got {template}"
+    )
+
+    # Verify NestedNode properties
+    assert isinstance(nested_node, NestedNode), "Result should be a NestedNode"
+    assert nested_node.node == terminal, (
+        f"Terminal node mismatch: expected {terminal}, got {nested_node.node}"
+    )
+    assert (
+        isinstance(nested_node.count, CountValue)
+        and nested_node.count.value == 3
+    ), f"Count mismatch: expected 3, got {nested_node.count.value}"
+    # Index is a placeholder (0), not critical for this test
+
+    # Verify reconstruction
+    expanded = expand_nested(
+        template, nested_node.node, nested_node.count.value
+    )
+    assert expanded == level3, "Expanded node should match original level3"
+
+    # Test Case 2: Non-recursive SumNode
+    non_recursive = SumNode(
+        frozenset([PrimitiveNode(MoveValue(1)), PrimitiveNode(MoveValue(2))])
+    )
+    result = nested_collection_to_nested_node(non_recursive)
+    assert result is None, "Expected None for non-recursive SumNode"
+
+    # Test Case 3: Recursive SumNode with single level
+    result = nested_collection_to_nested_node(level1)
+    assert result is not None, (
+        "Expected a NestedNode for single-level recursive SumNode"
+    )
+    nested_node, template = result
+    assert template == expected_template, (
+        "Template mismatch in single-level case"
+    )
+    assert nested_node.count.value == 1, (
+        f"Count should be 1, got {nested_node.count.value}"
+    )
+    assert nested_node.node == terminal, (
+        "Terminal node mismatch in single-level case"
+    )
+    expanded = expand_nested(
+        template, nested_node.node, nested_node.count.value
+    )
+    assert expanded == level1, "Expanded node should match original level1"
+
+    print("Test nested_collection_to_nested_node - Passed")
+
+
 def test_resolve_symbols():
     # Test Case 1: Test that a tree with no symbols remains unchanged.
     node = PrimitiveNode(MoveValue(1))
@@ -2782,10 +3394,18 @@ def test_find_symbol_candidates():
     pattern = ProductNode(
         (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(2)))
     )  # bit_length = 15
-    tree1 = RootNode(pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
-    tree2 = RootNode(pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2})))
-    tree3 = RootNode(pattern, CoordValue(Coord(2, 2)), PaletteValue(frozenset({3})))
-    tree4 = RootNode(pattern, CoordValue(Coord(3, 3)), PaletteValue(frozenset({4})))
+    tree1 = RootNode(
+        pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
+    )
+    tree2 = RootNode(
+        pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2}))
+    )
+    tree3 = RootNode(
+        pattern, CoordValue(Coord(2, 2)), PaletteValue(frozenset({3}))
+    )
+    tree4 = RootNode(
+        pattern, CoordValue(Coord(3, 3)), PaletteValue(frozenset({4}))
+    )
     trees = (tree1, tree2, tree3, tree4)
     candidates = find_symbol_candidates(
         trees, min_occurrences=2, max_patterns=5
@@ -3057,11 +3677,11 @@ def test_matching():
     bindings2 = matches(pattern, subtree2)
     assert bindings2 is None, "Expected no match for different elements"
 
-    # Test Case 8: Integration with generate_abstractions
+    # Test Case 8: Integration with extract_template
     node = ProductNode(
         (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)))
     )
-    abstractions = generate_abstractions(node)
+    abstractions = extract_template(node)
 
     for pattern, params in abstractions:
         index = IndexValue(0)
@@ -3082,7 +3702,9 @@ def test_factor_by_existing_symbols():
     pattern = ProductNode(
         (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)))
     )
-    tree = RootNode(pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
+    tree = RootNode(
+        pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
+    )
     symbols = (pattern,)
     result = factor_by_existing_symbols(tree, symbols)
     expected = RootNode(
@@ -3126,7 +3748,7 @@ def test_factor_by_existing_symbols():
     multi_tree = ProductNode((pattern, pattern))
     result = factor_by_existing_symbols(multi_tree, symbols)
     symbol_node = SymbolNode(IndexValue(0), (), pattern.bit_length())
-    expected = ProductNode((RepeatNode(symbol_node, CountValue(2)),))
+    expected = RepeatNode(symbol_node, CountValue(2))
     assert result == expected, (
         "Test Case 4 Failed: Should replace multiple occurrences"
     )
@@ -3306,7 +3928,7 @@ def test_merge_symbol_tables():
     unified, mappings = merge_symbol_tables([table1, table2])
     assert unified == table2, "Test Case 3 Failed: Unified table incorrect"
     assert mappings == [[1], [0, 1]], "Test Case 3 Failed: Mappings incorrect"
-    print("Test Case 3: Merging with Nested Symbols - Passed")
+    print("Test Case 4: Merging with Nested Symbols and Variables - Passed")
 
     # Test Case 4: Empty Tables
     unified, mappings = merge_symbol_tables([(), ()])
@@ -3332,8 +3954,12 @@ def test_symbolize_together():
             PrimitiveNode(MoveValue(4)),
         )
     )
-    tree1 = RootNode(pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
-    tree2 = RootNode(pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2})))
+    tree1 = RootNode(
+        pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
+    )
+    tree2 = RootNode(
+        pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2}))
+    )
     trees = (tree1, tree2)
     symbol_tables = [(), ()]
     final_trees, final_symbols = symbolize_together(trees, symbol_tables)
@@ -3409,8 +4035,12 @@ def test_symbolize_together():
             PrimitiveNode(MoveValue(4)),
         )
     )
-    tree1 = RootNode(pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
-    tree2 = RootNode(pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2})))
+    tree1 = RootNode(
+        pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
+    )
+    tree2 = RootNode(
+        pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2}))
+    )
     trees = (tree1, tree2)
     symbol_tables = [(), ()]  # Empty symbol tables to start fresh
     final_trees, final_symbols = symbolize_together(trees, symbol_tables)
@@ -3433,29 +4063,68 @@ def run_tests():
     """Runs simple tests to verify KolmogorovTree functionality."""
     # Test 1: Basic node creation and bit length
     move_right = PrimitiveNode(MoveValue(2))
-    assert move_right.bit_length() == 6, (
-        "PrimitiveNode bit length should be 6 (3 + 3)"
+    assert (
+        move_right.bit_length()
+        == BitLength.NODE_TYPE + MoveValue(2).bit_length()
+    ), (
+        f"PrimitiveNode bit length should be {BitLength.NODE_TYPE + MoveValue(2).bit_length()} ( {BitLength.NODE_TYPE} + {MoveValue(2).bit_length()})"
     )
     product = ProductNode((move_right, move_right))
-    assert product.bit_length() == 17, (
-        "ProductNode bit length should be 17 (3 + 6 + 6 + 2)"
+    assert (
+        product.bit_length()
+        == BitLength.NODE_TYPE + 2 + 2 * move_right.bit_length()
+    ), (
+        f"ProductNode bit length should be {BitLength.NODE_TYPE + 2 + 2 * move_right.bit_length()} ({BitLength.NODE_TYPE} + 2 + 2 * {move_right.bit_length()})"
     )
     move_down = PrimitiveNode(MoveValue(3))
     sum_node = SumNode(frozenset((move_right, move_down)))
-    assert sum_node.bit_length() == 17, (
-        "SumNode bit length should be 17 (3 + 2 + 6 + 6)"
+    assert (
+        sum_node.bit_length()
+        == BitLength.NODE_TYPE
+        + 2
+        + move_right.bit_length()
+        + move_down.bit_length()
+    ), (
+        f"SumNode bit length should be {BitLength.NODE_TYPE + 2 + move_right.bit_length() + move_down.bit_length()} ({BitLength.NODE_TYPE} + 2 + {move_right.bit_length()} + {move_down.bit_length()})"
     )
     repeat = RepeatNode(move_right, CountValue(3))
-    assert repeat.bit_length() == 14, (
-        "RepeatNode bit length should be 14 (3 + 6 + 5)"
+    assert (
+        repeat.bit_length()
+        == BitLength.NODE_TYPE + BitLength.COUNT + move_right.bit_length()
+    ), (
+        f"RepeatNode bit length should be {BitLength.NODE_TYPE + BitLength.COUNT + move_right.bit_length()} ({BitLength.NODE_TYPE} + {move_right.bit_length()} + {BitLength.COUNT})"
     )
+    nested = NestedNode(IndexValue(0), repeat, CountValue(3))
+    assert (
+        nested.bit_length()
+        == BitLength.NODE_TYPE
+        + BitLength.COUNT
+        + BitLength.INDEX
+        + repeat.bit_length()
+    ), f"RepeatNode bit length should be {
+        BitLength.NODE_TYPE
+        + BitLength.INDEX
+        + BitLength.COUNT
+        + sum_node.bit_length()
+        + repeat.bit_length()
+    } ({BitLength.NODE_TYPE} + {BitLength.INDEX} + {repeat.bit_length()} + {
+        BitLength.COUNT
+    })"
     symbol = SymbolNode(IndexValue(0), ())
-    assert symbol.bit_length() == 10, (
-        "SymbolNode bit length should be 10 (3 + 7)"
+    assert symbol.bit_length() == BitLength.NODE_TYPE + BitLength.INDEX, (
+        f"SymbolNode bit length should be {BitLength.NODE_TYPE + BitLength.INDEX} ({BitLength.NODE_TYPE} + {BitLength.INDEX})"
     )
-    root = RootNode(product, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
-    assert root.bit_length() == 34, (
-        "RootNode bit length should be 34 (3 + 17 + 10 + 4)"
+    root = RootNode(
+        product, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
+    )
+    assert (
+        root.bit_length()
+        == BitLength.NODE_TYPE
+        + product.bit_length()
+        + ARCBitLength.COORD
+        + ARCBitLength.COLORS
+    ), (
+        "RootNode bit length should be {BitLength.NODE_TYPE + product.bit_length() + ARCBitLength.COORD + ARCBitLength.COLORS} ({BitLength.NODE_TYPE} + {product.bit_length()} + {ARCBitLength.COORD} + {ARCBitLength.COLORS})"
     )
     print("Test 1: Basic node creation and bit length - Passed")
 
@@ -3466,7 +4135,7 @@ def run_tests():
     assert str(repeat) == "(2)*{3}", "RepeatNode str should be '(2)*{3}'"
     assert str(symbol) == "s_0", "SymbolNode str should be 's_0'"
     assert str(root) == "Root(22, (0, 0), {1})", (
-        "RootNode str should be 'Root(22, (0, 0), {1})'"
+        f"RootNode str should be 'Root(22, (0, 0), {1})'. Got {str(root)} instead"
     )
     print("Test 2: String representations - Passed")
 
@@ -3517,6 +4186,9 @@ def run_tests():
     test_resolve_symbols()
     test_find_symbol_candidates()
     test_matching()
+    test_extract_nested_sum_template()
+    test_extract_nested_product_template()
+    test_nested_collection_to_nested_node()
     test_factor_by_existing_symbols()
     test_remap_symbol_indices()
     test_remap_sub_symbols()

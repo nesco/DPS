@@ -287,6 +287,12 @@ class PointsOperations:
         width = max(cols) + 1
         return Proportions(width, height)
 
+    @staticmethod
+    def print(points: Points, proportions: Proportions):
+        width, height = proportions
+        grid = GridOperations.from_points(points, width, height)
+        GridOperations.print(grid)
+
 
 class CoordsOperations:
     """Basic coords operations and constructors"""
@@ -302,7 +308,7 @@ class CoordsOperations:
         color_dict = {}
         for color in colors:
             color_coords = set(
-                (col, row)
+                Coord(col, row)
                 for row in range(height)
                 for col in range(width)
                 if grid[row][col] == color
