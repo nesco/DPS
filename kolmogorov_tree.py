@@ -418,7 +418,6 @@ class SymbolNode(KNode[T]):
 
     index: IndexValue  # Index in the symbol table
     parameters: tuple[BitLengthAware, ...] = field(default_factory=tuple)
-    reference_length: int = 0
 
     def bit_length(self) -> int:
         params_len = sum(param.bit_length() for param in self.parameters)
@@ -1333,12 +1332,12 @@ def arity(node: KNode) -> int:
     # For now, all VariableNodes are direct children of the node
     # If it cease to be the case one day, replace by
     # sub_values = breadth_first_preorder_knode(node)
-    subvalues = get_subvalues(node)
+    subvalues = depth_first_preorder_bitlengthaware(node)
     variable_numbers = [
         value.value for value in subvalues if isinstance(value, VariableValue)
     ]
     if variable_numbers:
-        return max(variable_numbers)
+        return max(variable_numbers) + 1
     return 0
 
 
@@ -1735,7 +1734,7 @@ def abstract_node(
     """
 
     if pattern == node:
-        return SymbolNode(index, (), pattern.bit_length())
+        return SymbolNode(index, ())
 
     bindings = matches(pattern, node)
 
@@ -1746,9 +1745,15 @@ def abstract_node(
             bindings.get(j, PrimitiveNode(MoveValue(0)))
             for j in range(max(bindings.keys(), default=-1) + 1)
         )
-        return SymbolNode(index, params, pattern.bit_length())
+        return SymbolNode(index, params)
 
     return node
+
+
+def node_to_symbolized_node(
+    index: IndexValue, pattern: KNode[T], knode: KNode[T]
+) -> KNode[T]:
+    return postmap(knode, lambda node: abstract_node(index, pattern, node))
 
 
 def substitute_variables(abstraction: KNode[T], params: Parameters) -> KNode[T]:
@@ -1945,9 +1950,10 @@ def extract_nested_patterns(
         tree: The input Kolmogorov Tree (KNode[T]).
 
     Returns:
-        Tuple[KNode[T], Tuple[KNode[T], ...]]: A tuple containing:
-            - The transformed tree with NestedNodes replacing nested patterns.
-            - A tuple of templates (symbol table) extracted from the nested patterns.
+        KNode[T]: The transformed tree with NestedNodes replacing nested patterns.
+
+    Edge-Effects:
+        Fill the given symbol table with templates extracted from the nested patterns.
     """
 
     def mapping_function(node: KNode[T]) -> KNode[T]:
@@ -1991,7 +1997,7 @@ def extract_nested_patterns(
 
 
 def expand_nested_node(
-    nested_node: NestedNode[T], symbol_table: tuple[KNode[T], ...]
+    nested_node: NestedNode[T], symbol_table: Sequence[KNode[T]]
 ) -> KNode[T]:
     """Expands a NestedNode using its template from the symbol table."""
     template = symbol_table[nested_node.index.value]
@@ -2003,8 +2009,29 @@ def expand_nested_node(
         )
 
     for _ in range(nested_node.count.value):
-        current = substitute_variables(template, (current,))
+        current = postmap(
+            template, lambda node: substitute_variables(node, (current,))
+        )
     return current
+
+
+def expand_all_nested_nodes(knode: KNode[T], symbol_table: Sequence[KNode[T]]):
+    """
+    Expand all the inner NestedNodes of a given node.
+
+    Args:
+        knode: KNode possibly containing nested nodes
+        symbol_table: Symbol Table containing all the template referenced by NestedNode. It will fail otherwise.
+    Returns:
+        KNode[T]: node free of NestedNodes
+    """
+
+    def expand_f(node: KNode[T]) -> KNode[T]:
+        if isinstance(node, NestedNode):
+            return expand_nested_node(node, symbol_table)
+        return node
+
+    return postmap(knode, expand_f)
 
 
 def find_symbol_candidates(
@@ -2071,6 +2098,42 @@ def find_symbol_candidates(
         # return (count - 1) * (avg_len - symb_len) - pat.bit_length()
         return current_len - (count * symb_len + pat.bit_length())
 
+    common_patterns_test = [pat for pat in common_patterns]
+    for pat in common_patterns_test:
+        print(f"Pattern: {pat}")
+        print(f"Bit gain: {bit_gain(pat)}")
+        print(f"Count: {pattern_counter[pat]}")
+        print(
+            f"Current len: {sum(s.bit_length() for s in pattern_matches[pat])}"
+        )
+        print(
+            f"Param len: {
+                (
+                    sum(
+                        p.bit_length()
+                        for s in pattern_matches[pat]
+                        for _, ps in extract_template(s)
+                        if pat == _
+                        for p in ps
+                    )
+                    / pattern_counter[pat]
+                )
+            }"
+        )
+        param_len = (
+            sum(
+                p.bit_length()
+                for s in pattern_matches[pat]
+                for _, ps in extract_template(s)
+                if pat == _
+                for p in ps
+            )
+            / pattern_counter[pat]
+        )
+        symb_len = BitLength.NODE_TYPE + BitLength.INDEX + int(param_len)
+        print(f"symb len: {symb_len}")
+        print(f"repeat len: {pat.bit_length()}")
+
     # Might need
     # and pattern_counter[node] > tree_count (lattice_count)
     # You may want more than 1 per full tree ?
@@ -2086,9 +2149,11 @@ def symbolize_pattern(
     new_symbol: KNode[T],
 ) -> tuple[tuple[KNode[T], ...], tuple[KNode[T], ...]]:
     index = IndexValue(len(symbols))
-    trees = tuple(abstract_node(index, new_symbol, tree) for tree in trees)
+    trees = tuple(
+        node_to_symbolized_node(index, new_symbol, tree) for tree in trees
+    )
     symbols = tuple(
-        abstract_node(index, new_symbol, tree) for tree in symbols
+        node_to_symbolized_node(index, new_symbol, tree) for tree in symbols
     ) + (new_symbol,)
     return trees, symbols
 
@@ -2115,16 +2180,22 @@ def greedy_symbolization(
 def symbolize(
     trees: tuple[KNode[T], ...], symbols: tuple[KNode[T], ...]
 ) -> tuple[tuple[KNode[T], ...], tuple[KNode[T], ...]]:
+    i = 0
     # Phase 1: Non-symbolic patterns
     while True:
+        print(f"Turn n°{i}")
         candidates = [
             c
             for c in find_symbol_candidates(trees + symbols)
             if not is_symbolized(c) and not isinstance(c, RootNode)
         ]
+        print(f"candidates len: {len(candidates)}")
         if not candidates:
             break
         trees, symbols = symbolize_pattern(trees, symbols, candidates[0])
+        print(f"Candidates: {candidates[0]}")
+
+        i += 1
 
     # # Phase 2: Symbolic patterns by depth
     # for depth in range(1, max_depth(trees) + 1):
@@ -2203,7 +2274,7 @@ def remap_symbol_indices(
     def update_node(node: KNode[T]) -> KNode[T]:
         if isinstance(node, SymbolNode) and node.index.value < len(mapping):
             new_index = IndexValue(mapping[node.index.value])
-            return SymbolNode(new_index, node.parameters, node.reference_length)
+            return SymbolNode(new_index, node.parameters)
         return node
 
     return postmap(tree, update_node, factorize=False)
@@ -2228,7 +2299,7 @@ def remap_sub_symbols(
     def update_index(node: KNode[T]) -> KNode[T]:
         if isinstance(node, SymbolNode) and node.index.value < len(mapping):
             new_index = IndexValue(mapping[node.index.value])
-            return SymbolNode(new_index, node.parameters, node.reference_length)
+            return SymbolNode(new_index, node.parameters)
         return node
 
     return postmap(symbol, update_index, factorize=False)
@@ -2368,6 +2439,70 @@ def symbolize_together(
     final_trees, final_symbols = symbolize(factored_trees, unified_symbols)
 
     return final_trees, final_symbols
+
+
+def unsymbolize(knode: KNode[T], symbol_table: Sequence[KNode[T]]) -> KNode[T]:
+    """
+    Completely unsymbolize a given node.
+    If the symbol table contains all the referenced templates, the resulting node
+    should be free of any SymbolNodes or NestedNodes.
+
+    Args:
+        knode: KNode containing NestedNodes and SymbolNodes.
+        symbol_table: Symbol table containing all the templates referenced by NestedNodes and SymbolNodes
+    """
+    nnode = knode
+    # Step 1: First unsymbolize SymbolNode
+    pass
+
+    # Step 2: Then unsymbolize NestedNodes
+    nnode = expand_all_nested_nodes(nnode, symbol_table)
+    return nnode
+
+
+# Helpers for tests
+def root_to_symbolize():
+    # Step 1: Define Primitive Nodes
+    move0 = PrimitiveNode(MoveValue(0))
+    move1 = PrimitiveNode(MoveValue(1))
+    move2 = PrimitiveNode(MoveValue(2))
+    move3 = PrimitiveNode(MoveValue(3))
+    move5 = PrimitiveNode(MoveValue(5))
+    move6 = PrimitiveNode(MoveValue(6))
+    move7 = PrimitiveNode(MoveValue(7))
+
+    # Step 2: Define Repeat Nodes
+    repeat0 = RepeatNode(move0, CountValue(4))
+    repeat1 = RepeatNode(move1, CountValue(4))
+    repeat2 = RepeatNode(move2, CountValue(4))
+    repeat3 = RepeatNode(move3, CountValue(4))
+
+    # Step 3: Build the Nested Structure
+    level3 = ProductNode((move7, repeat3))  # "7(3)*{4}"
+    level2 = SumNode(frozenset({repeat2, level3}))  # "[(2)*{4}|7(3)*{4}]"
+    level1 = ProductNode((move6, level2))  # "6[(2)*{4}|7(3)*{4}]"
+    level0 = SumNode(
+        frozenset({repeat1, level1})
+    )  # "[(1)*{4}|6[(2)*{4}|7(3)*{4}]]"
+    level_1 = ProductNode((move5, level0))  # "5[(1)*{4}|6[(2)*{4}|7(3)*{4}]]"
+    level_2 = SumNode(
+        frozenset({repeat0, level_1})
+    )  # "[(0)*{4}|5[(1)*{4}|6[(2)*{4}|7(3)*{4}]]]"
+    program = ProductNode(
+        (move0, level_2)
+    )  # "0[(0)*{4}|5[(1)*{4}|6[(2)*{4}|7(3)*{4}]]]"
+
+    # Step 4: Create the Root Node
+    root_node = RootNode(
+        program, CoordValue(Coord(5, 5)), PaletteValue(frozenset({1}))
+    )
+
+    # Verify the string representation
+    # print(
+    #     str(root_node)
+    # )  # Should output: "Root(0[(0)*{4}|5[(1)*{4}|6[(2)*{4}|7(3)*{4}]]], (5, 5), {1})"
+
+    return root_node
 
 
 # Tests
@@ -3082,6 +3217,89 @@ def test_is_abstraction():
     print("Test is_abstraction - Passed")
 
 
+def test_arity():
+    """
+    Test function for the `arity` function, which computes the number of parameters
+    in a Kolmogorov Tree pattern based on the highest variable index plus one.
+    """
+    # Test Case 1: Single variable with index 0
+    node1 = VariableNode(VariableValue(0))
+    assert arity(node1) == 1, (
+        "Test Case 1 Failed: Expected arity 1 for VariableNode(0)"
+    )
+
+    # Test Case 2: No variables
+    node2 = PrimitiveNode(MoveValue(2))
+    assert arity(node2) == 0, (
+        "Test Case 2 Failed: Expected arity 0 for no variables"
+    )
+
+    # Test Case 3: Two variables with indices 0 and 1
+    node3 = ProductNode(
+        (VariableNode(VariableValue(0)), VariableNode(VariableValue(1)))
+    )
+    assert arity(node3) == 2, (
+        f"Test Case 3 Failed: Expected arity 2 for indices [0, 1], got {arity(node3)}"
+    )
+
+    # Test Case 4: Single variable in a RepeatNode
+    node4 = RepeatNode(VariableNode(VariableValue(0)), CountValue(4))
+    assert arity(node4) == 1, (
+        "Test Case 4 Failed: Expected arity 1 for index [0]"
+    )
+
+    # Test Case 5: Variables with indices 0 and 2 in a SumNode
+    node5 = SumNode(
+        frozenset(
+            {VariableNode(VariableValue(0)), VariableNode(VariableValue(2))}
+        )
+    )
+    assert arity(node5) == 3, (
+        "Test Case 5 Failed: Expected arity 3 for indices [0, 2]"
+    )
+
+    # Test Case 6: Variable in a NestedNode
+    node6 = NestedNode(
+        IndexValue(0), VariableNode(VariableValue(1)), CountValue(3)
+    )
+    assert arity(node6) == 2, (
+        "Test Case 6 Failed: Expected arity 2 for index [1]"
+    )
+
+    # Test Case 7: Variable in a SymbolNode's parameters
+    node7 = SymbolNode(IndexValue(0), (VariableNode(VariableValue(0)),))
+    assert arity(node7) == 1, (
+        "Test Case 7 Failed: Expected arity 1 for index [0]"
+    )
+
+    # Test Case 8: No variables in a RepeatNode
+    node8 = RepeatNode(PrimitiveNode(MoveValue(2)), CountValue(4))
+    assert arity(node8) == 0, (
+        "Test Case 8 Failed: Expected arity 0 for no variables"
+    )
+
+    # Test Case 9: Variables in nested structure
+    node9 = ProductNode(
+        (
+            VariableNode(VariableValue(0)),
+            RepeatNode(VariableNode(VariableValue(1)), CountValue(3)),
+        )
+    )
+    assert arity(node9) == 2, (
+        "Test Case 9 Failed: Expected arity 2 for indices [0, 1]"
+    )
+
+    # Test Case 10: Same variable used multiple times
+    node10 = ProductNode(
+        (VariableNode(VariableValue(0)), VariableNode(VariableValue(0)))
+    )
+    assert arity(node10) == 1, (
+        "Test Case 10 Failed: Expected arity 1 for index [0]"
+    )
+
+    print("All arity tests passed successfully!")
+
+
 def test_extract_nested_sum_template():
     """Tests the extract_nested_sum_template function."""
 
@@ -3246,10 +3464,11 @@ def test_nested_collection_to_nested_node():
     assert nested_node.node == terminal, (
         f"Terminal node mismatch: expected {terminal}, got {nested_node.node}"
     )
-    assert (
-        isinstance(nested_node.count, CountValue)
-        and nested_node.count.value == 3
-    ), f"Count mismatch: expected 3, got {nested_node.count.value}"
+    assert isinstance(nested_node.count, CountValue)
+
+    assert nested_node.count.value == 3, (
+        f"Count mismatch: expected 3, got {nested_node.count.value}"
+    )
     # Index is a placeholder (0), not critical for this test
 
     # Verify reconstruction
@@ -3274,6 +3493,7 @@ def test_nested_collection_to_nested_node():
     assert template == expected_template, (
         "Template mismatch in single-level case"
     )
+    assert isinstance(nested_node.count, CountValue)
     assert nested_node.count.value == 1, (
         f"Count should be 1, got {nested_node.count.value}"
     )
@@ -3286,6 +3506,42 @@ def test_nested_collection_to_nested_node():
     assert expanded == level1, "Expanded node should match original level1"
 
     print("Test nested_collection_to_nested_node - Passed")
+
+
+def test_symbolize_pattern():
+    root_node = root_to_symbolize()
+
+    # Create PrimitiveNodes
+    move0 = PrimitiveNode(MoveValue(0))
+    move5 = PrimitiveNode(MoveValue(5))
+    move6 = PrimitiveNode(MoveValue(6))
+    move7 = PrimitiveNode(MoveValue(7))
+
+    # Create SymbolNodes
+    s0_3 = SymbolNode(IndexValue(0), (PrimitiveNode(MoveValue(3)),))
+    s0_2 = SymbolNode(IndexValue(0), (PrimitiveNode(MoveValue(2)),))
+    s0_1 = SymbolNode(IndexValue(0), (PrimitiveNode(MoveValue(1)),))
+    s0_0 = SymbolNode(IndexValue(0), (PrimitiveNode(MoveValue(0)),))
+
+    # Build the tree bottom-up
+    inner_sum = SumNode(frozenset({ProductNode((move7, s0_3)), s0_2}))
+    prod6 = ProductNode((move6, inner_sum))
+    sum2 = SumNode(frozenset({prod6, s0_1}))
+    prod5 = ProductNode((move5, sum2))
+    sum3 = SumNode(frozenset({prod5, s0_0}))
+    program = ProductNode((move0, sum3))
+
+    # Create the RootNode
+    root_symbolized = RootNode(
+        program, CoordValue(Coord(5, 5)), PaletteValue(frozenset({1}))
+    )
+
+    symbol = RepeatNode(VariableNode(VariableValue(0)), CountValue(4))
+    r_symb, sym_table = symbolize_pattern((root_node,), tuple(), symbol)
+    assert len(r_symb) == 1
+    assert len(sym_table) == 1
+    assert r_symb[0] == root_symbolized
+    assert sym_table[0] == symbol
 
 
 def test_resolve_symbols():
@@ -3696,6 +3952,78 @@ def test_matching():
     print("Test matching - Passed")
 
 
+def test_expand_nested_node():
+    """
+    Tests the expand_nested_node function, which expands a NestedNode by recursively
+    applying a template from a symbol table to a terminal node for a specified count.
+    """
+    # Common node definitions
+    move0 = PrimitiveNode(MoveValue(0))  # Template prefix
+    move1 = PrimitiveNode(MoveValue(1))  # Terminal node
+    move2 = PrimitiveNode(MoveValue(2))  # SumNode alternative
+    move3 = PrimitiveNode(MoveValue(3))  # Template suffix
+    var0 = VariableNode(VariableValue(0))  # Variable for substitution
+
+    # Test Case 1: Simple ProductNode Template with SumNode
+    # Template: ProductNode((move3, SumNode(frozenset({move0, var0}))))
+    template1 = ProductNode((move3, SumNode(frozenset({move0, var0}))))
+    symbols1 = (template1,)
+
+    # Count=1: ProductNode((move3, SumNode(frozenset({move0, move2}))))
+    nested1 = NestedNode(IndexValue(0), move2, CountValue(1))
+    expected1 = ProductNode((move3, SumNode(frozenset({move0, move2}))))
+    result1 = expand_nested_node(nested1, symbols1)
+    assert result1 == expected1, (
+        f"Test Case 1 (count=1) Failed: Expected {expected1}, got {result1}"
+    )
+
+    # Count=2: ProductNode((move3, SumNode(frozenset({move0, expected1}))))
+    nested2 = NestedNode(IndexValue(0), move2, CountValue(2))
+    expected2 = ProductNode((move3, SumNode(frozenset({move0, expected1}))))
+    result2 = expand_nested_node(nested2, symbols1)
+    assert result2 == expected2, (
+        f"Test Case 1 (count=2) Failed: Expected {expected2}, got {result2}"
+    )
+
+    # Count=3:
+    nested3 = NestedNode(IndexValue(0), move2, CountValue(3))
+    expected3 = ProductNode((move3, SumNode(frozenset({move0, expected2}))))
+    result3 = expand_nested_node(nested3, symbols1)
+    assert result3 == expected3, (
+        f"Test Case 1 (count=3) Failed: Expected {expected3}, got {result3}"
+    )
+
+    # Test Case 2: Complex Template with SumNode
+    # Template: ProductNode((MoveValue(0), SumNode({Var(0), MoveValue(2)}), MoveValue(3)))
+    sum_template = SumNode(frozenset({var0, move3}))
+    template2 = ProductNode((move0, sum_template, move3))
+    symbols2 = (template2,)
+
+    # Count=1: ProductNode((MoveValue(0), SumNode({MoveValue(1), MoveValue(3)}), MoveValue(3)))
+    nested1_2 = NestedNode(IndexValue(0), move1, CountValue(1))
+    expected1_2 = ProductNode(
+        (move0, SumNode(frozenset({move1, move3})), move3)
+    )
+    result1_2 = expand_nested_node(nested1_2, symbols2)
+    assert result1_2 == expected1_2, (
+        f"Test Case 2 (count=1) Failed: Expected {expected1_2}, got {result1_2}"
+    )
+
+    # Count=2: ProductNode((MoveValue(0), SumNode({ProductNode((MoveValue(0), SumNode({MoveValue(1), MoveValue(3)}), MoveValue(3))), MoveValue(2)}), MoveValue(3)))
+    nested2_2 = NestedNode(IndexValue(0), move1, CountValue(2))
+    inner_sum = SumNode(frozenset({move1, move3}))
+    inner_product = ProductNode((move0, inner_sum, move3))
+    expected2_2 = ProductNode(
+        (move0, SumNode(frozenset({inner_product, move3})), move3)
+    )
+    result2_2 = expand_nested_node(nested2_2, symbols2)
+    assert result2_2 == expected2_2, (
+        f"Test Case 2 (count=2) Failed: Expected {expected2_2}, got {result2_2}"
+    )
+
+    print("Test expand_nested_node - Passed")
+
+
 def test_factor_by_existing_symbols():
     """Tests the factor_by_existing_symbols function for replacing matching patterns with SymbolNodes."""
     # Test Case 1: Basic Pattern Replacement
@@ -3708,7 +4036,7 @@ def test_factor_by_existing_symbols():
     symbols = (pattern,)
     result = factor_by_existing_symbols(tree, symbols)
     expected = RootNode(
-        SymbolNode(IndexValue(0), (), pattern.bit_length()),
+        SymbolNode(IndexValue(0), ()),
         CoordValue(Coord(0, 0)),
         PaletteValue(frozenset({1})),
     )
@@ -3735,7 +4063,7 @@ def test_factor_by_existing_symbols():
     result = factor_by_existing_symbols(nested_tree, symbols)
     expected = ProductNode(
         (
-            SymbolNode(IndexValue(0), (), pattern.bit_length()),
+            SymbolNode(IndexValue(0), ()),
             PrimitiveNode(MoveValue(4)),
         )
     )
@@ -3747,7 +4075,7 @@ def test_factor_by_existing_symbols():
     # Test Case 4: Multiple Matches
     multi_tree = ProductNode((pattern, pattern))
     result = factor_by_existing_symbols(multi_tree, symbols)
-    symbol_node = SymbolNode(IndexValue(0), (), pattern.bit_length())
+    symbol_node = SymbolNode(IndexValue(0), ())
     expected = RepeatNode(symbol_node, CountValue(2))
     assert result == expected, (
         "Test Case 4 Failed: Should replace multiple occurrences"
@@ -3838,9 +4166,7 @@ def test_remap_sub_symbols():
     mapping = [1]
     original_table = (PrimitiveNode(MoveValue(2)),)
     result = remap_sub_symbols(symbol, mapping, original_table)
-    expected = SymbolNode(
-        IndexValue(1), (PrimitiveNode(MoveValue(1)),), symbol.reference_length
-    )
+    expected = SymbolNode(IndexValue(1), (PrimitiveNode(MoveValue(1)),))
     assert result == expected, (
         "Test Case 2 Failed: Should remap outer symbol index"
     )
@@ -3982,7 +4308,6 @@ def test_symbolize_together():
                 CoordValue(Coord(0, 0)),
                 PaletteValue(value=frozenset({1})),
             ),
-            expected_symbol.bit_length(),
         ),
         SymbolNode(
             IndexValue(0),
@@ -3990,7 +4315,6 @@ def test_symbolize_together():
                 CoordValue(Coord(1, 1)),
                 PaletteValue(value=frozenset({2})),
             ),
-            expected_symbol.bit_length(),
         ),
     )
     expected_symbols = (expected_symbol,)
@@ -4179,6 +4503,7 @@ def run_tests():
     test_construct_product_node()
     test_shift()
     test_get_iterator()
+    test_arity()
 
     test_find_repeating_pattern()
     test_factorize_tuple()
@@ -4189,7 +4514,9 @@ def run_tests():
     test_extract_nested_sum_template()
     test_extract_nested_product_template()
     test_nested_collection_to_nested_node()
+    test_expand_nested_node()
     test_factor_by_existing_symbols()
+    test_symbolize_pattern()
     test_remap_symbol_indices()
     test_remap_sub_symbols()
     test_merge_symbol_tables()

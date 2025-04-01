@@ -128,13 +128,11 @@ def encode_freeman_to_knode(freeman: FreemanNode) -> KNode[MoveValue]:
     """Encode a Freeman tree with compression (factorization and rectangle detection)."""
     uncompressed_knode = freeman_to_knode(freeman)
 
-    print(f"before factorizing: {uncompressed_knode}")
     factored_node = postmap(uncompressed_knode, factorize_tuple)
     # Apply rectangle detection
     factored_node = premap(uncompressed_knode, detect_rect_node)
     # Factorize the KTree
     # factored_node = postmap(factored_node, factorize_tuple)
-    print(f"after factorizing: {factored_node}")
     return factored_node
 
 
