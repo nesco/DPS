@@ -1,6 +1,8 @@
-from arc_syntax_tree import component_to_raw_syntax_tree_distribution
+from arc_syntax_tree import (
+    component_to_distribution,
+    component_to_raw_syntax_tree_distribution,
+)
 from hierarchy import grid_to_components_by_colors
-from kolmogorov_tree import extract_nested_patterns, symbolize
 from localtypes import ColorGrid, Colors, Coords
 from utils.grid import GridOperations, PointsOperations, coords_to_points
 from utils.loader import train_task_to_grids
@@ -42,19 +44,17 @@ def display_raw_distribution(component: Coords, colors: Colors):
         component, colors
     )
 
-    symbol_table = []
-    new_distribution = []
     for st in raw_distribution:
         print(f"\nSyntax tree: {st}, length: {st.bit_length()}")
-        new_st = extract_nested_patterns(symbol_table, st)
-        print(f"New Syntax tree: {new_st}, length: {new_st.bit_length()}")
-        new_distribution.append(new_st)
 
-    co_symbolization, symbol_table = symbolize(
-        tuple(new_distribution), tuple(symbol_table)
-    )
-    for st in co_symbolization:
-        print(f"Symbolized Syntax tree: {st}, length: {st.bit_length()}")
 
+def display_distribution(component: Coords, colors: Colors):
+    distribution, symbol_table = component_to_distribution(component, colors)
+
+    print("Distribution: ")
+    for st in distribution:
+        print(f"{st}: {st.bit_length()} bits")
+
+    print("\nSymbol Table: ")
     for i, st in enumerate(symbol_table):
         print(f"Symbol n°{i}: {st}")

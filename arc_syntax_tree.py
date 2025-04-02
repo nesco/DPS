@@ -41,6 +41,7 @@ from kolmogorov_tree import (
     T,
     VariableNode,
     expand_repeats,
+    extract_nested_patterns,
     factorize_tuple,
     iterable_to_product,
     iterable_to_sum,
@@ -48,13 +49,16 @@ from kolmogorov_tree import (
     premap,
     reverse_node,
     shift,
+    symbolize,
 )
 from localtypes import Colors, Coord, Coords, Points
 from utils.grid import coords_to_points, points_to_grid_colored
 
 
 def moves_to_rect(moves: str) -> tuple[int, int] | None:
-    """Detect if a move sequence forms a rectangle, returning (height, width) or None."""
+    """Detect if a move sequence forms a rectangle, returning (height, width) or None.
+    Hypothesis: the rect is explored in a DFS fashion from the top-right corner
+    """
     if not moves or len(moves) <= 2:
         return None
     width = moves.index("3") + 1 if "3" in moves else len(moves) + 1
@@ -87,8 +91,11 @@ def extract_moves_from_product(knode: KNode) -> str | None:
 
 # TO-DO: Make it work, or add a default symbol for rects
 def detect_rect_node(node: KNode) -> KNode:
-    """Replace a ProductNode with a RectNode if it forms a rectangle."""
-    moves_str = extract_moves_from_product(node)
+    """
+    Replace a ProductNode with a RectNode if it forms a rectangle.
+    Hypothesis: the rect is explored in a DFS fashion from the top-right corner
+    """
+    moves_str = str(expand_repeats(node))
     if moves_str:
         rect = moves_to_rect(moves_str)
         if rect:
@@ -408,6 +415,36 @@ def component_to_raw_syntax_tree_distribution(
     )
 
     # symbolized syntax tree distribution
+
+
+def component_to_distribution(
+    component: Coords, colors: Colors
+) -> tuple[tuple[KNode[MoveValue], ...], tuple[KNode[MoveValue], ...]]:
+    symbol_table = []
+
+    # Encode a shape by its raw distribution
+    raw_distribution = component_to_raw_syntax_tree_distribution(
+        component, colors
+    )
+
+    # Compress nested patterns
+    nested_distribution = tuple(
+        extract_nested_patterns(symbol_table, syntax_tree)
+        for syntax_tree in raw_distribution
+    )
+
+    # co-symbolize the entire distribution
+    # Note: A greedy approach can be followed by symbolizing each syntax tree with it's own symbol table
+    # Here, it will further compress represensation which have common templates in the distribution
+    # The theoretical justification I give myself is that the true representation of the shape is the entire distribution,
+    # not a singular syntax tree distribution
+    symbolized_distribution, symbol_table = symbolize(
+        tuple(nested_distribution), tuple(symbol_table)
+    )
+
+    # alternatively full_symbolization(raw_distribution) works also
+
+    return symbolized_distribution, symbol_table
 
 
 ### tests

@@ -1085,7 +1085,7 @@ def reconstruct_knode(
 # Traversal
 
 
-def children(knode: KNode) -> Iterator[KNode]:
+def children_deprecated(knode: KNode) -> Iterator[KNode]:
     """Unified API to access children of standard KNodes nodes"""
     match knode:
         case CollectionNode(children):
@@ -1127,6 +1127,16 @@ def get_subvalues(obj: BitLengthAware) -> Iterator[BitLengthAware]:
         BitLengthAware: Subvalues that are instances of BitLengthAware.
     """
     return dataclass_subvalues(obj)
+
+
+def children(knode: KNode) -> Iterator[KNode]:
+    """Unified API to access children of standard KNodes nodes"""
+
+    return (
+        subvalue
+        for subvalue in get_subvalues(knode)
+        if isinstance(subvalue, KNode)
+    )
 
 
 # Traversal functions
@@ -1589,8 +1599,8 @@ def premap(
 
 # Decompression
 def expand_repeats(
-    node: SumNode[T] | ProductNode[T] | RepeatNode[T] | PrimitiveNode[T],
-) -> SumNode[T] | ProductNode[T] | PrimitiveNode[T]:
+    node: KNode[T],
+) -> KNode[T]:
     """Used to uncompress knodes"""
 
     def expand_repeat_f(knode: KNode) -> KNode:
@@ -1598,9 +1608,7 @@ def expand_repeats(
         if isinstance(knode, RepeatNode):
             if isinstance(knode.count, VariableNode):
                 raise TypeError("Trying to uncompress a variable repeat")
-            return cast(
-                KNode, iterable_to_product([knode.node] * knode.count.value)
-            )
+            return cast(KNode, ProductNode((knode.node,) * knode.count.value))
         else:
             return knode
 
@@ -2098,6 +2106,10 @@ def find_symbol_candidates(
         # return (count - 1) * (avg_len - symb_len) - pat.bit_length()
         return current_len - (count * symb_len + pat.bit_length())
 
+    """
+    # TO-DO: Currently repeats of simple moves by the same count of a move are not symbolized,
+    # because the SymbolNode is heavier
+    # so a lot of repeat by the same count won't be symbolize
     common_patterns_test = [pat for pat in common_patterns]
     for pat in common_patterns_test:
         print(f"Pattern: {pat}")
@@ -2134,6 +2146,7 @@ def find_symbol_candidates(
         print(f"symb len: {symb_len}")
         print(f"repeat len: {pat.bit_length()}")
 
+    """
     # Might need
     # and pattern_counter[node] > tree_count (lattice_count)
     # You may want more than 1 per full tree ?
@@ -2183,7 +2196,6 @@ def symbolize(
     i = 0
     # Phase 1: Non-symbolic patterns
     while True:
-        print(f"Turn n°{i}")
         candidates = [
             c
             for c in find_symbol_candidates(trees + symbols)
@@ -2193,7 +2205,6 @@ def symbolize(
         if not candidates:
             break
         trees, symbols = symbolize_pattern(trees, symbols, candidates[0])
-        print(f"Candidates: {candidates[0]}")
 
         i += 1
 
@@ -2453,11 +2464,35 @@ def unsymbolize(knode: KNode[T], symbol_table: Sequence[KNode[T]]) -> KNode[T]:
     """
     nnode = knode
     # Step 1: First unsymbolize SymbolNode
-    pass
+    nnode = resolve_symbols(nnode, symbol_table)
 
     # Step 2: Then unsymbolize NestedNodes
     nnode = expand_all_nested_nodes(nnode, symbol_table)
     return nnode
+
+
+def unsymbolize_all(
+    trees: Sequence[KNode[T]], symbol_table: Sequence[KNode[T]]
+) -> tuple[KNode[T], ...]:
+    return tuple(unsymbolize(tree, symbol_table) for tree in trees)
+
+
+def full_symbolization(
+    trees: Sequence[KNode[T]],
+) -> tuple[tuple[KNode[T], ...], tuple[KNode[T], ...]]:
+    """
+    Full standard symbolization + node nesting.
+    """
+    # Step 1: nest nodes
+    symbol_table = []
+    nested = tuple(
+        extract_nested_patterns(symbol_table, syntax_tree)
+        for syntax_tree in trees
+    )
+
+    symbolized, symbol_table = symbolize(tuple(nested), tuple(symbol_table))
+
+    return symbolized, symbol_table
 
 
 # Helpers for tests
