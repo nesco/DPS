@@ -13,6 +13,10 @@ from collections import defaultdict
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from functools import cache
 from typing import Any, Callable, Sequence, TypeVar
+from scipy.optimize import linear_sum_assignment
+import numpy as np
+
+from collections.abc import Set
 
 from localtypes import (
     BitLengthAware,
@@ -217,8 +221,117 @@ def sequence_edit_distance(
 
     return dp[m][n], tuple(transformations)
 
-
 def set_edit_distance(
+    source_set: Set[BitLengthAware],
+    target_set: Set[BitLengthAware],
+    distance_func: Callable[
+        [BitLengthAware, BitLengthAware],
+        tuple[int, Operation],
+    ],
+    len_func: Callable[[BitLengthAware], int],
+    key: str | None = None
+) -> tuple[int, Sequence[Operation]]:
+    """
+    Calculates the optimal set edit distance using the Hungarian algorithm
+    and returns the sequence of operations.
+
+    Args:
+        source_set: Set of elements in the source set.
+        target_set: Set of elements in the target set.
+        distance_func: Function(elem1, elem2) -> tuple[cost, operation]
+                       calculating cost and base operation for substitution.
+        len_func: Function(elem) -> cost of adding or deleting elem.
+        key: Optional key associated with the set operation context.
+
+    Returns:
+        Tuple containing:
+            - The minimum total edit distance (int).
+            - A sequence of Operation objects detailing the optimal transformation.
+    """
+    # Convert sets to lists sorted by string representation for consistent ordering
+    # Note: Sorting might impact performance for very large sets but ensures deterministic matrix construction
+    source_list = sorted(list(source_set), key=str)
+    target_list = sorted(list(target_set), key=str)
+
+    n = len(source_list)
+    m = len(target_list)
+
+    # Handle empty set cases directly
+    key_val = KeyValue(key) # Create KeyValue once
+    if n == 0 and m == 0:
+        return 0, tuple()
+    if n == 0:
+        dist = sum(len_func(elem) for elem in target_list)
+        ops = tuple(Add(key_val, elem) for elem in target_list) #
+        return dist, ops
+    if m == 0:
+        dist = sum(len_func(elem) for elem in source_list)
+        ops = tuple(Delete(key_val, elem) for elem in source_list) #
+        return dist, ops
+
+    # Create the cost matrix with dimensions (n+m) x (n+m)
+    cost_matrix = np.full((n + m, n + m), np.inf)
+
+    # 1. Substitution costs (source_i -> target_j)
+    #    Use only the cost component for the assignment algorithm
+    for i in range(n):
+        for j in range(m):
+            cost, _ = distance_func(source_list[i], target_list[j])
+            cost_matrix[i, j] = cost
+
+    # 2. Deletion costs (source_i -> dummy_target_i)
+    for i in range(n):
+        cost_matrix[i, m + i] = len_func(source_list[i])
+
+    # 3. Addition costs (dummy_source_j -> target_j)
+    for j in range(m):
+        cost_matrix[n + j, j] = len_func(target_list[j])
+
+    # 4. Cost of matching dummy source to dummy target (allows skips)
+    for i in range(m):
+         for j in range(n):
+              cost_matrix[n+i,m+j] = 0.0
+
+    # Solve the assignment problem
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+    # The minimum cost is the sum of the costs of the optimal assignment
+    # Need to handle potential infinities if the assignment includes them (shouldn't happen with proper padding)
+    valid_assignment_indices = np.where(cost_matrix[row_ind, col_ind] != np.inf)
+    min_cost = cost_matrix[row_ind[valid_assignment_indices], col_ind[valid_assignment_indices]].sum()
+
+
+    # Determine operations based on the optimal assignment
+    operations = []
+    key_val = KeyValue(key) #
+
+    for r, c in zip(row_ind, col_ind):
+        # Case 1: Match (Substitution/Identity/Inner)
+        if r < n and c < m:
+            source_elem = source_list[r]
+            target_elem = target_list[c]
+            # Recalculate distance_func to get the operation details
+            sub_dist, sub_op = distance_func(source_elem, target_elem)
+            # Use identity_or_inner helper to create the correct operation type
+            final_op = identity_or_inner(source_elem, target_elem, sub_dist, sub_op, key_val)
+            operations.append(final_op)
+
+        # Case 2: Deletion
+        elif r < n and c >= m:
+            source_elem = source_list[r]
+            operations.append(Delete(key_val, source_elem)) #
+
+        # Case 3: Addition
+        elif r >= n and c < m:
+            target_elem = target_list[c]
+            operations.append(Add(key_val, target_elem)) #
+
+        # Case 4: Dummy match (r >= n and c >= m) - Ignore these
+
+    # Return the total minimum cost and the sequence of operations
+    return int(np.round(min_cost)), tuple(operations)
+
+def set_edit_distance_deprecated(
     source_set: set[BitLengthAware] | frozenset[BitLengthAware],
     target_set: set[BitLengthAware] | frozenset[BitLengthAware],
     distance_func: Callable[

@@ -11,7 +11,6 @@ Operations occurs on four main data format: Grid, Mask, Points, and Coords
     4\ CoordsOperations
 """
 
-from re import M
 from collections.abc import Callable, Mapping
 
 from constants import COLORS
@@ -59,10 +58,14 @@ def unpack_coords(coords: CoordsGeneralized) -> tuple[list[int], list[int]]:
     return (list(cols), list(rows))
 
 
-def proportions_to_box(prop: Proportions, corner_top_right: Coord = Coord(0, 0)) -> Box:
+def proportions_to_box(
+    prop: Proportions, corner_top_right: Coord = Coord(0, 0)
+) -> Box:
     col_min, row_min = corner_top_right
     width, height = prop
-    return Coord(col_min, row_min), Coord(col_min + width - 1, row_min + height - 1)
+    return Coord(col_min, row_min), Coord(
+        col_min + width - 1, row_min + height - 1
+    )
 
 
 def box_to_proportions(box: Box) -> Proportions:
@@ -337,7 +340,9 @@ class CoordsOperations:
         colors = set(color for col, row, color in points)
         coords_dict = {
             color_key: set(
-                Coord(col, row) for col, row, color in points if color == color_key
+                Coord(col, row)
+                for col, row, color in points
+                if color == color_key
             )
             for color_key in colors
         }
@@ -363,6 +368,11 @@ class CoordsOperations:
         row_min, row_max = min(rows), max(rows)
         col_min, col_max = min(cols), max(cols)
         return Coord(col_min, row_min), Coord(col_max, row_max)
+
+    @staticmethod
+    def print(coords: Coords, proportions: Proportions):
+        points = PointsOperations.from_coords(coords)
+        PointsOperations.print(points, proportions)
 
 
 # Constructors as Functors

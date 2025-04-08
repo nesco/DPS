@@ -15,6 +15,7 @@ The kolmogorov nodes are in a way the transitions of an automata over grid coord
 
 """
 
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Generic, cast
 
@@ -31,6 +32,7 @@ from kolmogorov_tree import (
     CountValue,
     KNode,
     MoveValue,
+    NoneValue,
     PaletteValue,
     PrimitiveNode,
     ProductNode,
@@ -51,7 +53,13 @@ from kolmogorov_tree import (
     shift,
     symbolize,
 )
-from localtypes import Colors, Coord, Coords, Points
+from localtypes import (
+    Colors,
+    Coord,
+    Coords,
+    Point,
+    Points,
+)
 from utils.grid import coords_to_points, points_to_grid_colored
 
 
@@ -118,7 +126,7 @@ def freeman_to_knode(freeman: FreemanNode) -> KNode[MoveValue]:
 
     # Step 2: Recursively encode children
     children = iterable_to_sum(
-        frozenset({freeman_to_knode(child) for child in freeman.children})
+        frozenset({freeman_to_knode(child) for child in freeman.children}), True
     )
     if children:
         product.append(children)
@@ -147,6 +155,12 @@ def freeman_node_to_root_node(
     freeman_node: FreemanNode, start_position: Coord, colors: Colors
 ) -> RootNode:
     """Encode a Freeman tree for a connected component into a RootNode."""
+    if len(freeman_node.path) == 0 and len(freeman_node.children) == 0:
+        return RootNode(
+            NoneValue(),
+            CoordValue(start_position),
+            PaletteValue(frozenset(colors)),
+        )
     program = encode_freeman_to_knode(freeman_node)
     return RootNode(
         program, CoordValue(start_position), PaletteValue(frozenset(colors))
@@ -154,21 +168,24 @@ def freeman_node_to_root_node(
 
 
 # Decoding
-def decode_knode(
+def decode_knode_coords(
     knode: ProductNode[MoveValue]
     | SumNode[MoveValue]
     | PrimitiveNode[MoveValue]
     | RepeatNode[MoveValue]
-    | RectNode,
+    | RectNode
+    | NoneValue,
     start: Coord,
 ) -> Coords:
     """Unfold a concrete KNode in the set of coords traversed by the pathes it represents."""
     coords = {start}
 
-    def execute(knode: KNode, pos: Coord) -> Coords:
+    def execute(knode: KNode | NoneValue, pos: Coord) -> Coords:
         """Supports SumNode not always at the end"""
         nonlocal coords
         match knode:
+            case NoneValue():
+                return coords
             case PrimitiveNode(MoveValue(direction)):
                 delta = DIRECTIONS_FREEMAN[cast(King, direction)]
                 new_pos = Coord(pos[0] + delta[0], pos[1] + delta[1])
@@ -266,6 +283,80 @@ def decode_knode(
     return coords
 
 
+def decode_knode(
+    knode: ProductNode[MoveValue] | SumNode[MoveValue] | RootNode[MoveValue],
+):
+    """
+    Decoding of KNode that handles top level elements.
+    They are either at top-level unicolored root, sums of unicolored roots or product of a unicolored root
+    which serves as a normalizing background and a sum of unicolored root.
+    """
+
+    start = None
+    color = None
+
+    def execute(knode: KNode[MoveValue]) -> Points:
+        match knode:
+            case RootNode(node, position, colors) if isinstance(
+                position, VariableNode
+            ) or isinstance(colors, VariableNode):
+                raise ValueError(f"RootNode is a pattern: {knode}")
+            case RootNode(node, position, colors) if (
+                isinstance(colors, VariableNode) and len(colors) >= 1
+            ):
+                raise ValueError(
+                    f"RootNode with several colors are undrawable: {colors}"
+                )
+            case RootNode(node, position, colors) if not isinstance(
+                node,
+                NoneValue
+                | ProductNode
+                | SumNode
+                | PrimitiveNode
+                | RepeatNode
+                | RectNode,
+            ):
+                raise ValueError(f"Invalid node: {node} at RootNode")
+            case RootNode(node, position, colors):
+                assert isinstance(colors, PaletteValue)
+                assert isinstance(position, CoordValue)
+                assert isinstance(
+                    node,
+                    NoneValue
+                    | ProductNode
+                    | SumNode
+                    | PrimitiveNode
+                    | RepeatNode
+                    | RectNode,
+                )
+                coords = decode_knode_coords(node, position.value)
+                return coords_to_points(coords, next(iter(colors.value)))
+            case SumNode(children):
+                return frozenset.union(
+                    *(frozenset(execute(child)) for child in children)
+                )
+            case ProductNode(children):
+                # Only keep the latest color at a given point
+                points_by_coords: defaultdict[Coord, list[Point]] = defaultdict(
+                    list
+                )
+                for child in children:
+                    points = execute(child)
+                    for point in points:
+                        col, row, _ = point
+                        points_by_coords[Coord(col, row)].append(point)
+
+                points = set()
+                for point_ls in points_by_coords.values():
+                    points.add(point_ls[-1])
+
+                return points
+            case _:
+                raise ValueError(f"Invalid node at top-level: {knode}")
+
+    return execute(knode)
+
+
 def decode_root(root: RootNode[MoveValue]) -> Points:
     node, position, colors = root.node, root.position, root.colors
 
@@ -286,7 +377,7 @@ def decode_root(root: RootNode[MoveValue]) -> Points:
             | RepeatNode()
             | RectNode()
         ):
-            coords = decode_knode(node, position.value)
+            coords = decode_knode_coords(node, position.value)
         case _:
             raise TypeError("Root's node should be a concrete KNode")
 
@@ -444,7 +535,9 @@ def component_to_distribution(
 
     # alternatively full_symbolization(raw_distribution) works also
 
-    return symbolized_distribution, symbol_table
+    return tuple(
+        sorted(symbolized_distribution, key=lambda x: x.bit_length())
+    ), symbol_table
 
 
 ### tests

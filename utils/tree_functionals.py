@@ -8,7 +8,7 @@ from dataclasses import dataclass, field, fields, is_dataclass
 from functools import cache
 from typing import Callable, Generic, Iterator, Sequence, TypeVar
 
-from typing_extensions import Hashable
+from collections.abc import Hashable
 
 from localtypes import BitLengthAware
 

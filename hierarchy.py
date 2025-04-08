@@ -1,11 +1,35 @@
 from collections import defaultdict
-from collections.abc import Mapping, Set
+from collections.abc import Iterator, Mapping, Set
 from itertools import chain, combinations
+from typing import cast
 
-from localtypes import Color, ColorGrid, Colors, Coord, Coords, GridObject
+from typing_extensions import Iterable
+
+from arc_syntax_tree import component_to_distribution
+from kolmogorov_tree import (
+    MoveValue,
+    PaletteValue,
+    ProductNode,
+    RootNode,
+    SumNode,
+    full_symbolization,
+    iterable_to_sum,
+    unsymbolize,
+)
+from localtypes import (
+    Color,
+    ColorGrid,
+    Colors,
+    Coord,
+    Coords,
+    GridObject,
+)
 from utils.dag_functionals import topological_sort
 from utils.graph import nodes_to_connected_components
-from utils.grid import DIRECTIONS, grid_to_coords_by_color
+from utils.grid import (
+    DIRECTIONS,
+    grid_to_coords_by_color,
+)
 
 
 def coords_to_connected_components(coords: Coords) -> frozenset[Coords]:
@@ -143,6 +167,279 @@ def sort_by_inclusion(
     grid_object_dag: Mapping[GridObject, Set[GridObject]],
 ) -> tuple[GridObject, ...]:
     return topological_sort(grid_object_dag)
+
+
+def dag_to_syntax_trees_linear(
+    grid_object_dag: Mapping[GridObject, Set[GridObject]],
+) -> tuple[
+    dict[
+        GridObject,
+        RootNode[MoveValue] | SumNode[MoveValue] | ProductNode[MoveValue],
+    ],
+    tuple[GridObject, ...],
+]:
+    """
+    The final syntax trees are either:
+        - RootNode with a single color
+        - SumNode of RootNodes with a single colors
+        - ProductNode of a RootNode with a single color and a previously described SumNode
+    The last case is used for background normalization
+
+    Returns:
+        syntax_tree_by_object: dict[
+                GridObject,
+                RootNode[MoveValue] | SumNode[MoveValue] | ProductNode[MoveValue]
+            ]
+        sorted_grid_objects: tuple[GridObject, ...]
+
+    """
+    syntax_by_object: dict[
+        GridObject,
+        RootNode[MoveValue] | SumNode[MoveValue] | ProductNode[MoveValue],
+    ] = {}
+
+    # Step 1: Sort grid objects
+    sorted_grid_objects = tuple(reversed(sort_by_inclusion(grid_object_dag)))
+
+    # Step 2: Compute the best syntax tree for each component
+    # And store it in its raw version
+    # Note: I could do it for unicolored component only,
+    # it would improve performance but degrade the quality of the cosymbolization
+    syntax_trees: list[RootNode[MoveValue]] = []
+
+    for grid_object in sorted_grid_objects:
+        distribution, symbol_table = component_to_distribution(
+            grid_object.coords, grid_object.colors
+        )
+        root = unsymbolize(distribution[0], symbol_table)
+        assert isinstance(root, RootNode)
+        syntax_trees.append(root)
+
+    # Step 2: Symbolize them together
+    symbolized, symbol_table = full_symbolization(syntax_trees)
+
+    # Step 3: Construct a flat representation first
+    flat_syntax_by_object: dict[
+        GridObject,
+        set[RootNode[MoveValue]],
+    ] = {}
+
+    # If an object has no sub-object add its unicolor syntax tree
+    # Otherwise add the dependencies syntax trees
+    for i, grid_object in enumerate(sorted_grid_objects):
+        dependencies = grid_object_dag[grid_object]
+        if not dependencies:
+            flat_syntax_by_object[grid_object] = set({syntax_trees[i]})
+        else:
+            flat_syntax_by_object[grid_object] = set.union(
+                *[
+                    flat_syntax_by_object[dependency]
+                    for dependency in dependencies
+                ]
+            )
+
+    # Step 4: For each object, construct the final object
+    # Replace the max length root node by a normalized version of the object syntax tree
+    # if it has a greater bit length
+    # If the set is of length one, take the only root node
+    normalized_syntax_trees: list[
+        RootNode[MoveValue] | SumNode[MoveValue] | ProductNode[MoveValue]
+    ] = []
+    for i, grid_object in enumerate(sorted_grid_objects):
+        unicolor_roots = list(flat_syntax_by_object[grid_object])
+        bit_lengthes = [
+            symbolized[syntax_trees.index(root)].bit_length()
+            for root in unicolor_roots
+        ]
+
+        syntax_tree = syntax_trees[i]
+
+        # Check if the object with the greastest bit length has a greater one than the object syntax tree
+        # Ideally it should be corrected by the number of bits the colors of the object syntax tree takes
+        max_index, max_bit_length = max(
+            enumerate(bit_lengthes), key=lambda x: x[1]
+        )
+
+        if max_bit_length > symbolized[i].bit_length():
+            # Create a ProductNode with first the object syntax tree with the color of the dependency to replace
+            # then a SumNode (if needed) of the sub unicolored root nodes
+            # (in practice a ProductNode would work too, but it's morea meaningful for it to be a SUmNode)
+            new_syntax_tree = RootNode(
+                syntax_tree.node,
+                syntax_tree.position,
+                unicolor_roots[max_index].colors,
+            )
+            sum = iterable_to_sum(
+                unicolor_roots[:max_index] + unicolor_roots[max_index + 1 :]
+            )
+            assert sum is not None
+
+            normalized_syntax_trees.append(ProductNode((new_syntax_tree, sum)))
+            # syntax_by_object[grid_object] = ProductNode((new_syntax_tree, sum))
+        else:
+            # Else a SumNode of the sub unicolored root nodes
+            # (in practice a ProductNode would work too, but it's morea meaningful for it to be a SUmNode)
+            sum = iterable_to_sum(unicolor_roots)
+            assert isinstance(sum, SumNode | RootNode)
+            normalized_syntax_trees.append(sum)
+            # syntax_by_object[grid_object] = sum
+
+    for i, object in enumerate(sorted_grid_objects):
+        syntax_by_object[object] = normalized_syntax_trees[i]
+    return syntax_by_object, sorted_grid_objects
+
+    # Test Step 5: Cosymbolize them
+    # for tree in normalized_syntax_trees:
+    #     print(tree)
+
+    # symbolized_syntax_trees, symbol_table = full_symbolization(
+    #     normalized_syntax_trees
+    # )
+
+    # symbolyzed_syntax_by_object = {}
+    # for i, st in enumerate(symbol_table):
+    #     print(f"s_{i}: {st}")
+
+    # for i, object in enumerate(sorted_grid_objects):
+    #     syntax_by_object[object] = normalized_syntax_trees[i]
+    #     symbolyzed_syntax_by_object[object] = symbolized_syntax_trees[i]
+
+    # return syntax_by_object, symbol_table
+
+
+def unpack_dependencies(
+    syntax_trees: Iterable[
+        ProductNode[MoveValue] | SumNode[MoveValue] | RootNode[MoveValue]
+    ],
+) -> Iterator[ProductNode[MoveValue] | RootNode[MoveValue]]:
+    for st in syntax_trees:
+        if isinstance(st, SumNode):
+            children = cast(
+                frozenset[ProductNode[MoveValue] | RootNode[MoveValue]],
+                st.children,
+            )
+            yield from children
+        else:
+            yield st
+
+
+def dag_to_syntax_trees(grid_object_dag: Mapping[GridObject, Set[GridObject]]):
+    # Step 1: Sort grid objects by topological order
+    sorted_grid_objects = tuple(reversed(sort_by_inclusion(grid_object_dag)))
+
+    # Step 2: Get the minimal multi-colored syntax tree per grid object
+    # in it's raw form
+    root_by_grid_object: dict[GridObject, RootNode[MoveValue]] = dict()
+
+    for grid_object in sorted_grid_objects:
+        distribution, symbol_table = component_to_distribution(
+            grid_object.coords, grid_object.colors
+        )
+        root = unsymbolize(distribution[0], symbol_table)
+        assert isinstance(root, RootNode)
+        root_by_grid_object[grid_object] = root
+
+    # Step 3: Construct the unicolored syntax tree for each object
+    syntax_tree_by_grid_object: dict[
+        GridObject,
+        ProductNode[MoveValue] | SumNode[MoveValue] | RootNode[MoveValue],
+    ] = dict()
+    # track replaced syntax trees, as they can be part of several objectq
+    replaced = set()
+
+    for object in sorted_grid_objects:
+        # Get dependencies
+        dependencies = grid_object_dag[object]
+        current_root = root_by_grid_object[object]
+
+        # If an object has no dependency (or one? it can't have just one), it's syntax tree is its standard root
+        if not dependencies:
+            if not isinstance(current_root.colors, PaletteValue):
+                raise ValueError(
+                    f"Root has no palette value: {current_root.colors}"
+                )
+            if len(current_root.colors.value) != 1:
+                raise ValueError(
+                    f"Object without dependency: {object} has a multicolored root: {current_root.colors.value}"
+                )
+            syntax_tree_by_grid_object[object] = current_root
+            continue
+
+        # Else, retrieve all the dependencies syntax trees
+        dependencies_syntax_trees = set(
+            syntax_tree_by_grid_object[dependency]
+            for dependency in dependencies
+        )
+
+        # Unpack them
+        # set because a given syntax tree can be part of several dependencies
+        syntax_trees = tuple(
+            st
+            for st in unpack_dependencies(dependencies_syntax_trees)
+            if st not in replaced
+        )
+
+        # Keep only the backround of product nodes before symbolizing them
+        to_symbolize = tuple(
+            st.children[0] if isinstance(st, ProductNode) else st
+            for st in syntax_trees
+        )
+
+        # Symbolize them with the current object syntaxt tree
+        symbolized, symbol_table = full_symbolization(
+            to_symbolize + (root_by_grid_object[object],)
+        )
+
+        # Get the index of the syntax tree of maximum bit length:
+        max_index, max_bit_length = max(
+            enumerate(symbolized), key=lambda x: x[1].bit_length()
+        )
+
+        # If it's the multicolored root of the current object
+        # Take a SumNode of the dependencies
+        if max_index == len(syntax_trees):
+            sum = iterable_to_sum(
+                syntax_trees
+            )  # It should always be > 1 so no need for the iterable. Just in case one day
+            if not isinstance(sum, SumNode):
+                print(sum)
+            syntax_tree_by_grid_object[object] = sum
+            continue
+
+        # Else, replace swap largest syntax tree
+        # with the syntax tree of the object with the color of the largest unicolored root or background instead
+        max_dependency = syntax_trees[max_index]
+        replaced.add(max_dependency)
+        ndependencies = syntax_trees[:max_index] + syntax_trees[max_index + 1 :]
+
+        match max_dependency:
+            case RootNode(_, _, colors):
+                color = colors
+                sum = iterable_to_sum(ndependencies)
+            case ProductNode(children):
+                # Swap the background
+                first = children[0]
+                assert isinstance(children[1], SumNode | RootNode)
+                if not isinstance(first, RootNode):
+                    raise ValueError(
+                        "Top level ProductNode doesn't begin by a RootNode setting the background color"
+                    )
+                color = first.colors
+                sum = iterable_to_sum(
+                    ndependencies + tuple(unpack_dependencies([children[1]]))
+                )
+            case _:
+                raise TypeError(f"Invalid syntax tree: {max_dependency}")
+        new_root = RootNode(current_root.node, current_root.position, color)
+        assert sum is not None
+        print(f"Choice: {ProductNode((new_root, sum))}")
+        syntax_tree_by_grid_object[object] = ProductNode((new_root, sum))
+
+    print("\n\n")
+    for go in sorted_grid_objects:
+        print(f"{syntax_tree_by_grid_object[go]}")
+
+    return syntax_tree_by_grid_object, sorted_grid_objects
 
 
 def test_coords_to_connected_components():
@@ -367,6 +664,43 @@ def test_components_by_colors_to_grid_object_dag():
         assert result[key] == expected_graph[key], (
             f"DAG mismatch for {key}: expected {expected_graph[key]}, got {result[key]}"
         )
+
+
+def grid_to_syntax_trees(
+    grid: ColorGrid,
+) -> tuple[
+    dict[
+        GridObject,
+        RootNode[MoveValue] | SumNode[MoveValue] | ProductNode[MoveValue],
+    ],
+    tuple[GridObject, ...],
+]:
+    """
+    Chains together the following functions:
+    1. grid_to_components_by_colors: Converts a grid to components by colors
+    2. components_by_colors_to_grid_object_dag: Converts components to a DAG of grid objects
+    3. dag_to_syntax_trees: Converts the DAG to syntax trees
+
+    Args:
+        grid: A ColorGrid representing the input grid
+
+    Returns:
+        tuple containing:
+        - A dictionary mapping GridObjects to their syntax trees
+        - A tuple of sorted GridObjects
+    """
+    # Step 1: Convert grid to components by colors
+    components_by_colors = grid_to_components_by_colors(grid)
+
+    # Step 2: Convert components to a DAG of grid objects
+    grid_object_dag = components_by_colors_to_grid_object_dag(
+        components_by_colors
+    )
+
+    # Step 3: Convert the DAG to syntax trees
+    syntax_trees, sorted_grid_objects = dag_to_syntax_trees(grid_object_dag)
+
+    return syntax_trees, sorted_grid_objects
 
 
 if __name__ == "__main__":

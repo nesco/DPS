@@ -6,22 +6,25 @@ from arc_syntax_tree import (
     decode_root,
     syntax_tree_at,
 )
-from hierarchy import grid_to_components_by_colors
+from hierarchy import (
+    components_by_colors_to_grid_object_dag,
+    dag_to_syntax_trees,
+    grid_to_components_by_colors,
+)
 from kolmogorov_tree import (
     KNode,
     MoveValue,
     expand_all_nested_nodes,
-    expand_repeats,
     extract_nested_patterns,
     unsymbolize_all,
 )
 from localtypes import Colors, Coord, Coords, Proportions
-from utils.display import display_distribution
 from utils.grid import (
     PointsOperations,
     coords_to_points,
     points_to_coords,
 )
+from utils.display import display_objects_syntax_trees
 from utils.loader import train_task_to_grids
 
 
@@ -164,7 +167,9 @@ def test_full_symbolisation():
 
         need_to_be_raw = unsymbolize_all(distribution, symbol_table)
 
-        assert raw_distribution == need_to_be_raw, f"{raw_distribution}, "
+        assert set(raw_distribution) == set(need_to_be_raw), (
+            f"raw: {set(raw_distribution).difference(set(need_to_be_raw))}, need_to_be_raw: {set(need_to_be_raw).difference(set(raw_distribution))}"
+        )
 
     check_symbolization_identity(cross, frozenset({1}))
     check_symbolization_identity(rect, frozenset({3}))
@@ -204,15 +209,21 @@ if __name__ == "__main__":
 
     # st = syntax_tree_at(cross, frozenset({1}), Coord(0, 5))
     # print(st)
-    print("\nCross distribution")
-    display_distribution(cross, frozenset({1}))
+    # print("\nCross distribution")
+    # display_distribution(cross, frozenset({1}))
 
-    print("\nRect distribution")
-    display_distribution(a_rect, frozenset({1}))
+    # print("\nRect distribution")
+    # display_distribution(a_rect, frozenset({1}))
 
-    for st in component_to_raw_syntax_tree_distribution(a_rect, frozenset({1})):
-        expanded = expand_repeats(st)
-        print(f"Expanded: {expanded}")
+    # for st in component_to_raw_syntax_tree_distribution(a_rect, frozenset({1})):
+    #     expanded = expand_repeats(st)
+    #     print(f"Expanded: {expanded}")
 
-    print("\nRect with a hole distribution")
-    display_distribution(rect_with_hole, frozenset({1}))
+    # print("\nRect with a hole distribution")
+    # display_distribution(rect_with_hole, frozenset({1}))
+    grid_object_dag = components_by_colors_to_grid_object_dag(
+        components_by_colors
+    )
+    syntax_by_object, sorted_grid_object = dag_to_syntax_trees(grid_object_dag)
+
+    display_objects_syntax_trees([syntax_by_object[obj] for obj in sorted_grid_object], Proportions(11, 11))

@@ -56,11 +56,14 @@ Non-trial combinations:
 
 import functools
 import math
+import itertools
+
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict, deque
-from collections.abc import Collection
+from collections.abc import Collection, Set
 from dataclasses import dataclass, field
 from enum import IntEnum
+
 from typing import (
     Any,
     Callable,
@@ -86,6 +89,7 @@ from utils.tree_functionals import (
     postorder_map,
     preorder_map,
 )
+
 
 # Type variable for generic programming
 
@@ -157,6 +161,8 @@ class IndexValue(Primitive):
 @dataclass(frozen=True)
 class NoneValue(Primitive):
     """Represents a None."""
+
+    value: None = None
 
     def bit_length(self) -> int:
         return BitLength.NONE
@@ -358,24 +364,15 @@ class SumNode(CollectionNode[T]):
 
 
 @dataclass(frozen=True)
-class MetaNode(KNode[T], ABC):
-    """Wraps a single node with additional information. node allows None to handle edge cases for map functions"""
-
-    node: KNode[T]
-
-    def bit_length(self) -> int:
-        return super().bit_length() + self.node.bit_length()
-
-
-@dataclass(frozen=True)
-class RepeatNode(MetaNode[T]):
+class RepeatNode(KNode[T]):
     """Represents repetition of a node a specified number of times."""
 
+    node: KNode[T]
     count: CountValue | VariableNode  # Count can be fixed or parameterized
 
     def bit_length(self) -> int:
         count_len = self.count.bit_length()
-        return super().bit_length() + count_len
+        return super().bit_length() + self.node.bit_length() + count_len
 
     def __str__(self) -> str:
         return f"({str(self.node)})*{{{self.count}}}"
@@ -409,7 +406,7 @@ class NestedNode(KNode[T]):
         return super().bit_length() + index_len + terminal_node + count_len
 
     def __str__(self) -> str:
-        return f"Y_{{{self.count}}}(s_{self.index}, {self.node})"
+        return f"Y_{{{self.count}}}({self.index}, {self.node})"
 
 
 @dataclass(frozen=True)
@@ -428,7 +425,7 @@ class SymbolNode(KNode[T]):
             return (
                 f"s_{self.index}({', '.join(str(p) for p in self.parameters)})"
             )
-        return f"s_{self.index}"
+        return f"s_{self.index} "
 
 
 # Dirty hack for ARC
@@ -464,16 +461,19 @@ class RectNode(KNode):
 # In fact, it should become "MetadataNode", as it encapsulate data that's not in the
 # main target alphabet the "program" produces'
 @dataclass(frozen=True)
-class RootNode(MetaNode[T]):
+class RootNode(KNode[T]):
     """Root node: it wraps the program's node with its starting context."""
 
+    node: KNode[T] | NoneValue
     position: CoordValue | VariableNode  # Starting position
     colors: PaletteValue | VariableNode  # Colors used in the shape
 
     def bit_length(self) -> int:
         pos_len = self.position.bit_length()
         colors_len = self.colors.bit_length()
-        return super().bit_length() + pos_len + colors_len
+        return (
+            super().bit_length() + self.node.bit_length() + pos_len + colors_len
+        )
 
     def __str__(self) -> str:
         position = self.position
@@ -1034,7 +1034,7 @@ def construct_product_node(nodes: Iterable[KNode[T]]) -> ProductNode[T]:
 def iterable_to_product(iterable: Iterable[KNode[T]]) -> KNode[T]:
     nodes: list[KNode[T]] = list(iterable)
     if not nodes:
-        raise ValueError("Emprty iterable. Can't produce a product out of it")
+        raise ValueError("Empty iterable. Can't produce a product out of it")
     elif len(nodes) == 1:
         return nodes[0]
     else:
@@ -1042,14 +1042,18 @@ def iterable_to_product(iterable: Iterable[KNode[T]]) -> KNode[T]:
         return flatten_product(nnodes)
 
 
-def iterable_to_sum(iterable: Iterable[KNode[T]]) -> KNode[T] | None:
+def iterable_to_sum(
+    iterable: Iterable[KNode[T]], compress_iterator=False
+) -> KNode[T] | None:
     nodes: frozenset[KNode[T]] = frozenset(iterable)
     if not nodes:
         return None
     elif len(nodes) == 1:
         return next(iter(nodes))
-    else:
+    elif compress_iterator:
         return SumNode(get_iterator(nodes))
+    else:
+        return SumNode(nodes)
 
 
 def reconstruct_knode(
@@ -1072,6 +1076,8 @@ def reconstruct_knode(
         case NestedNode(index, _, count):
             return NestedNode(index, new_children[0], count)
         case RootNode(_, position, colors):
+            if not new_children:
+                return RootNode(NoneValue(), position, colors)
             return RootNode(new_children[0], position, colors)
         case SymbolNode(index, parameters):
             new_parameters = list(parameters)
@@ -1083,36 +1089,6 @@ def reconstruct_knode(
 
 
 # Traversal
-
-
-def children_deprecated(knode: KNode) -> Iterator[KNode]:
-    """Unified API to access children of standard KNodes nodes"""
-    match knode:
-        case CollectionNode(children):
-            return iter(children)
-        case RepeatNode(node, count):
-            children = [node]
-            if isinstance(count, VariableNode):
-                children.append(count)
-            return iter(children)
-        case NestedNode(_, node, count):
-            children = [node]
-            if isinstance(count, VariableNode):
-                children.append(count)
-            return iter(children)
-        case RootNode(node, position, colors):
-            children = [node]
-            if isinstance(position, VariableNode):
-                children.append(position)
-            if isinstance(colors, VariableNode):
-                children.append(colors)
-            return iter(children)
-        case SymbolNode(_, parameters):
-            return iter(
-                (param for param in parameters if isinstance(param, KNode))
-            )
-        case _:
-            return iter(())
 
 
 def get_subvalues(obj: BitLengthAware) -> Iterator[BitLengthAware]:
@@ -1131,12 +1107,8 @@ def get_subvalues(obj: BitLengthAware) -> Iterator[BitLengthAware]:
 
 def children(knode: KNode) -> Iterator[KNode]:
     """Unified API to access children of standard KNodes nodes"""
-
-    return (
-        subvalue
-        for subvalue in get_subvalues(knode)
-        if isinstance(subvalue, KNode)
-    )
+    subvalues = get_subvalues(knode)
+    return (sv for sv in subvalues if isinstance(sv, KNode))
 
 
 # Traversal functions
@@ -1205,7 +1177,11 @@ def reverse_node(knode: KNode[T]) -> KNode[T]:
             )
             return SymbolNode(index, reversed_params)
         case RootNode(node, position, colors):
-            nnode = reverse_node(node)
+            nnode = (
+                NoneValue()
+                if isinstance(node, NoneValue)
+                else reverse_node(node)
+            )
             return RootNode(nnode, position, colors)
         case _:
             return knode
@@ -1640,6 +1616,76 @@ def matches(pattern: KNode[T], subtree: KNode[T]) -> Bindings | None:
     return None
 
 
+def unify_sum_children(
+    p_idx: int, # Index of the current pattern child being matched
+    pattern_list: list[KNode[T]], # Sorted list of pattern children
+    subtree_list: list[KNode[T]], # Sorted list of subtree children
+    subtree_used: list[bool],     # Tracks which subtree children are already matched
+    bindings: Bindings
+) -> Bindings | None:
+    """
+    Helper function using backtracking on sorted lists to find a deterministic
+    unification mapping between SumNode children.
+
+    Args:
+        p_idx: Current index in pattern_list being processed.
+        pattern_list: Sorted list of pattern children.
+        subtree_list: Sorted list of subtree children.
+        subtree_used: Boolean mask indicating used subtree children.
+        bindings: Current accumulated bindings for this search path.
+
+    Returns:
+        Updated bindings if a valid matching is found, otherwise None.
+    """
+    # Base case: All pattern children have been successfully matched.
+    if p_idx == len(pattern_list):
+        return bindings
+
+    p_child = pattern_list[p_idx]
+
+    # Iterate through potential matches in the sorted subtree list
+    for s_idx in range(len(subtree_list)):
+        # Check if this subtree child is already used in the current mapping
+        if not subtree_used[s_idx]:
+            s_child = subtree_list[s_idx]
+
+            # Create a copy of bindings to explore this specific pair's unification
+            current_bindings = bindings.copy()
+
+            # Attempt to unify the chosen pair (p_child, s_child)
+            if unify(p_child, s_child, current_bindings):
+                # If the pair unifies successfully:
+                # 1. Mark the subtree child as used for this path
+                subtree_used[s_idx] = True
+
+                # 2. Recursively try to match the *next* pattern child (p_idx + 1)
+                result_bindings = unify_sum_children(
+                    p_idx + 1,
+                    pattern_list,
+                    subtree_list,
+                    subtree_used,
+                    current_bindings  # Pass the updated bindings
+                )
+
+                # 3. Check if the recursive call was successful
+                if result_bindings is not None:
+                    # Success! A complete valid matching was found. Return it.
+                    return result_bindings
+
+                # 4. Backtrack: If the recursive call failed, unmark the
+                #    subtree child so it can be tried with other pattern children
+                #    in alternative branches of the search.
+                subtree_used[s_idx] = False
+                # Continue the loop to try matching p_child with the next unused s_child
+
+
+    # If the loop completes without returning, it means p_child could not be
+    # successfully matched with any *available* s_child in a way that allowed the
+    # rest of the pattern children to be matched. Backtrack by returning None.
+    return None
+
+
+
 def unify(
     pattern: BitLengthAware, subtree: BitLengthAware, bindings: Bindings
 ) -> bool:
@@ -1666,9 +1712,44 @@ def unify(
 
     match pattern:
         case Primitive(value):
-            return isinstance(subtree, Primitive) and value == subtree.value
-        case CollectionNode(children):
-            subtree = cast(CollectionNode, subtree)
+            assert isinstance(subtree, Primitive)
+            return value == subtree.value
+            # Inside the unify function...
+        case SumNode(children):
+            assert isinstance(subtree, SumNode)
+            s_children = subtree.children
+            if len(children) != len(s_children):
+                return False
+            if not children:
+                return True
+
+            # 1. Create sorted lists based on a canonical key
+            # Sort using the  string representation
+            sorted_pattern_children = sorted(children, key=str)
+            sorted_subtree_children = sorted(s_children, key=str)
+            # 2. Initialize the tracking list for used subtree children
+            subtree_used = [False] * len(sorted_subtree_children)
+
+            # 3. Call the deterministic backtracking helper
+            initial_bindings = bindings.copy()
+            successful_bindings = unify_sum_children(
+                0, # Start matching the first pattern child (index 0)
+                sorted_pattern_children,
+                sorted_subtree_children,
+                subtree_used,
+                initial_bindings
+            )
+
+            if successful_bindings is not None:
+                # Update original bindings *in place*
+                bindings.clear()
+                bindings.update(successful_bindings)
+                return True
+            else:
+                return False
+
+        case ProductNode(children):
+            assert isinstance(subtree, ProductNode)
             s_children = subtree.children
             if len(children) != len(s_children):
                 return False
@@ -1740,18 +1821,16 @@ def abstract_node(
     If node matches the pattern, it replaces it by a SymbolNode with the right bindings.
     Else, it returns the node as is.
     """
-
     if pattern == node:
         return SymbolNode(index, ())
 
     bindings = matches(pattern, node)
 
     if bindings is not None:
-        # TODO
-        # Understrand why 'PrimitiveNode(MoveValue(0))' as a fallback
         params = tuple(
-            bindings.get(j, PrimitiveNode(MoveValue(0)))
+            binding
             for j in range(max(bindings.keys(), default=-1) + 1)
+            if (binding := bindings.get(j, None)) is not None
         )
         return SymbolNode(index, params)
 
@@ -1764,17 +1843,20 @@ def node_to_symbolized_node(
     return postmap(knode, lambda node: abstract_node(index, pattern, node))
 
 
-def substitute_variables(abstraction: KNode[T], params: Parameters) -> KNode[T]:
+def substitute_variables_deprecated(
+    abstraction: KNode[T], params: Parameters
+) -> KNode[T]:
     """
     Helper function to substitute variables, including those that are not traversed
     during a simple node traversal
     """
+    print(f"abstraction: {abstraction}, params: {params}")
     match abstraction:
         case VariableNode(index) if index.value < len(params):
             node = params[index.value]
             if not isinstance(node, KNode):
                 raise TypeError(
-                    f"Trying to substitute a non-node parameter to a variable encountered during node traversal: {node}"
+                    f"Trying to substitute a non-node parameter to a variable encountered during node traversal: {[node]}"
                 )
             return node
         case RepeatNode(node, VariableNode(index)) if index.value < len(params):
@@ -1857,6 +1939,48 @@ def substitute_variables(abstraction: KNode[T], params: Parameters) -> KNode[T]:
             return abstraction
 
 
+def variable_to_param(node: VariableNode, params: Parameters) -> BitLengthAware:
+    if node.index.value < len(params):
+        value = params[node.index.value]
+        return value
+    return node
+    # raise ValueError(f"Unknown variable {node.index.value} for {params}")
+
+
+def substitute_variables(knode: KNode[T], params: Parameters) -> KNode[T]:
+    # Avoid infinite recursion on VariableNodes by treating them immediately
+    # And returning directly
+    if isinstance(knode, VariableNode):
+        node = variable_to_param(knode, params)
+        if not isinstance(node, KNode):
+            raise TypeError(f"{node} is not a KNode")
+        return node
+
+    # Iterating over fields
+    nfields = {}
+    for field_name, value in vars(knode).items():
+        match value:
+            # Replace directly variables to avoid hitting the TypeError
+            case VariableNode():
+                nvalue = variable_to_param(value, params)
+            case frozenset():
+                nvalue = frozenset(
+                    {substitute_variables(node, params) for node in value}
+                )
+            case tuple():
+                nvalue = tuple(
+                    substitute_variables(node, params) for node in value
+                )
+            case KNode():
+                nvalue = substitute_variables(value, params)
+            case _:
+                nvalue = value
+
+        nfields[field_name] = nvalue
+
+    return type(knode)(**nfields)
+
+@functools.cache
 def reduce_abstraction(abstraction: KNode[T], params: Parameters) -> KNode[T]:
     """
     Substitutes variable placeholders in the template with the corresponding parameters.
@@ -1872,11 +1996,12 @@ def reduce_abstraction(abstraction: KNode[T], params: Parameters) -> KNode[T]:
     Returns:
         KNode: The abstraction with variables replaced by parameters.
     """
-    return premap(abstraction, lambda node: substitute_variables(node, params))
+    # return postmap(abstraction, lambda node: substitute_variables(node, params))
+    return substitute_variables(abstraction, params)
 
 
 @functools.cache
-def resolve_symbols(knode: KNode[T], symbols: tuple[KNode[T], ...]) -> KNode[T]:
+def resolve_symbols(knode: KNode[T], symbols: Sequence[KNode[T]]) -> KNode[T]:
     """
     Resolves symbolic references recursively using the symbol table.
 
@@ -1909,6 +2034,14 @@ def create_move_node(direction: int) -> PrimitiveNode:
     """Creates a node for a directional move."""
     return PrimitiveNode(MoveValue(direction))
 
+def create_variable_node(i: int) -> VariableNode:
+    """Creates a VariableNode(VariableValue)."""
+    # Assuming VariableValue is defined similarly to MoveValue
+    return VariableNode(VariableValue(i))
+
+def cv(r: int, c: int) -> CoordValue:
+     """ Creates a CoordValue. """
+     return CoordValue(Coord(c, r)) # Assuming Coord(col, row)
 
 def create_moves_sequence(directions: str) -> KNode | None:
     """Creates a sequence of moves from a direction string."""
@@ -2043,7 +2176,7 @@ def expand_all_nested_nodes(knode: KNode[T], symbol_table: Sequence[KNode[T]]):
 
 
 def find_symbol_candidates(
-    trees: tuple[KNode[T], ...],
+    trees: Sequence[KNode[T]],
     min_occurrences: int = 2,
     max_patterns: int = 10,
 ) -> list[KNode]:
@@ -2059,15 +2192,15 @@ def find_symbol_candidates(
     # Step 2: Count frequencies and track matches
     pattern_counter = Counter()
     pattern_matches = defaultdict(
-        set
+        list
     )  # Maps pattern to set of matched subtrees
 
     for subtree in all_subtrees:
         pattern_counter[subtree] += 1
-        pattern_matches[subtree].add(subtree)
+        pattern_matches[subtree].append(subtree)
         for abs_pattern, params in extract_template(subtree):
             pattern_counter[abs_pattern] += 1
-            pattern_matches[abs_pattern].add(subtree)
+            pattern_matches[abs_pattern].append(subtree)
 
     # Step 3: Filter patterns
     common_patterns = []
@@ -2110,9 +2243,12 @@ def find_symbol_candidates(
     # TO-DO: Currently repeats of simple moves by the same count of a move are not symbolized,
     # because the SymbolNode is heavier
     # so a lot of repeat by the same count won't be symbolize
-    common_patterns_test = [pat for pat in common_patterns]
+    """
+    common_patterns_test = [
+        pat for pat in common_patterns if bit_gain(pat) > 1000
+    ]
     for pat in common_patterns_test:
-        print(f"Pattern: {pat}")
+        print(f"\n\nPattern: {pat}")
         print(f"Bit gain: {bit_gain(pat)}")
         print(f"Count: {pattern_counter[pat]}")
         print(
@@ -2144,9 +2280,8 @@ def find_symbol_candidates(
         )
         symb_len = BitLength.NODE_TYPE + BitLength.INDEX + int(param_len)
         print(f"symb len: {symb_len}")
-        print(f"repeat len: {pat.bit_length()}")
+        print(f"pattern len: {pat.bit_length()}")
 
-    """
     # Might need
     # and pattern_counter[node] > tree_count (lattice_count)
     # You may want more than 1 per full tree ?
@@ -2157,8 +2292,8 @@ def find_symbol_candidates(
 
 
 def symbolize_pattern(
-    trees: tuple[KNode[T], ...],
-    symbols: tuple[KNode[T], ...],
+    trees: Sequence[KNode[T]],
+    symbols: Sequence[KNode[T]],
     new_symbol: KNode[T],
 ) -> tuple[tuple[KNode[T], ...], tuple[KNode[T], ...]]:
     index = IndexValue(len(symbols))
@@ -2201,11 +2336,10 @@ def symbolize(
             for c in find_symbol_candidates(trees + symbols)
             if not is_symbolized(c) and not isinstance(c, RootNode)
         ]
-        print(f"candidates len: {len(candidates)}")
+        # print(f"candidates len: {len(candidates)}")
         if not candidates:
             break
         trees, symbols = symbolize_pattern(trees, symbols, candidates[0])
-
         i += 1
 
     # # Phase 2: Symbolic patterns by depth
@@ -2226,6 +2360,7 @@ def symbolize(
         if not candidates:
             break
         trees, symbols = symbolize_pattern(trees, symbols, candidates[0])
+        i += 1
 
     # Phase 3: Include roots
     while True:
@@ -2456,7 +2591,8 @@ def unsymbolize(knode: KNode[T], symbol_table: Sequence[KNode[T]]) -> KNode[T]:
     """
     Completely unsymbolize a given node.
     If the symbol table contains all the referenced templates, the resulting node
-    should be free of any SymbolNodes or NestedNodes.
+    should be free of any SymbolNodes or NestedNodes
+    Second hypothesis: the symbol table has been completely resolved too.
 
     Args:
         knode: KNode containing NestedNodes and SymbolNodes.
@@ -2474,7 +2610,19 @@ def unsymbolize(knode: KNode[T], symbol_table: Sequence[KNode[T]]) -> KNode[T]:
 def unsymbolize_all(
     trees: Sequence[KNode[T]], symbol_table: Sequence[KNode[T]]
 ) -> tuple[KNode[T], ...]:
-    return tuple(unsymbolize(tree, symbol_table) for tree in trees)
+    """
+    Hypothesis: no loop in the symbol table, a symbol can only reference a symbol strictly after him
+    """
+    # Step 1: Resolve the symbol table
+    symbol_table = tuple(symbol_table)
+    nsymbol_table = []
+    for i, symb in enumerate(symbol_table):
+        nsymbol_table.append(resolve_symbols(symb, symbol_table))
+
+    nsymbol_table = tuple(nsymbol_table)
+
+    # Step 2: Unsymbolize all the nodes
+    return tuple(unsymbolize(tree, nsymbol_table) for tree in trees)
 
 
 def full_symbolization(
@@ -3412,6 +3560,67 @@ def test_extract_nested_product_template():
     print("Test extract_nested_product_template - Passed")
 
 
+def test_node_to_symbolize():
+    node = SumNode(
+        frozenset(
+            {
+                SymbolNode(IndexValue(4), ()),
+                RootNode(
+                    SymbolNode(IndexValue(0), ()),
+                    CoordValue(Coord(4, 4)),
+                    PaletteValue(frozenset({3})),
+                ),
+                SymbolNode(IndexValue(6), ()),
+                SymbolNode(
+                    IndexValue(3),
+                    (CoordValue(Coord(6, 0)),),
+                ),
+                SymbolNode(IndexValue(5), ()),
+            }
+        )
+    )
+    pattern = SumNode(
+        frozenset(
+            {
+                SymbolNode(IndexValue(4), ()),
+                SymbolNode(IndexValue(6), ()),
+                VariableNode(VariableValue(0)),
+                SymbolNode(
+                    IndexValue(3),
+                    (CoordValue(Coord(6, 0)),),
+                ),
+                SymbolNode(
+                    IndexValue(5),
+                    (
+                        # RootNode(
+                        #     SymbolNode(IndexValue(0), ()),
+                        #     CoordValue(Coord(4, 4)),
+                        #     PaletteValue(frozenset({3})),
+                        # ),
+                    ),
+                ),
+            }
+        )
+    )
+
+    symbolized = node_to_symbolized_node(IndexValue(6), pattern, node)
+    s2 = abstract_node(IndexValue(6), pattern, node)
+    print(f"s2: {s2}")
+
+    expected = SymbolNode(
+        IndexValue(6),
+        (
+            RootNode(
+                SymbolNode(IndexValue(0), ()),
+                CoordValue(Coord(4, 4)),
+                PaletteValue(frozenset({3})),
+            ),
+        ),
+    )
+
+    assert symbolized == expected, f"{symbolized} != {expected}"
+
+
 def test_nested_collection_to_nested_node():
     """
     Tests the `nested_collection_to_nested_node` function for capturing recursive patterns in SumNodes.
@@ -3647,7 +3856,7 @@ def test_resolve_symbols():
     expected = RepeatNode(PrimitiveNode(MoveValue(2)), param)
     result = resolve_symbols(node, symbols)
     assert result == expected, (
-        "Parameters should substitute into RepeatNode's count"
+        f"Parameters should substitute into RepeatNode's count: {expected}, {result}"
     )
 
     # Test Case 7: Test that a SymbolNode with an invalid index remains unchanged.
@@ -3701,8 +3910,8 @@ def test_find_symbol_candidates():
     candidates = find_symbol_candidates(
         trees, min_occurrences=2, max_patterns=5
     )
-    assert len(candidates) == 1, (
-        "Test Case 1 Failed: Should find exactly one candidate"
+    assert len(candidates) == 2, (
+        "Test Case 1 Failed: Should find exactly two candidate"
     )
     assert candidates[0] == RootNode(
         pattern, VariableNode(VariableValue(0)), VariableNode(VariableValue(1))
@@ -3985,6 +4194,131 @@ def test_matching():
             )
 
     print("Test matching - Passed")
+
+def test_unify_sum():
+    """
+    Tests the unify function specifically for the SumNode case,
+    focusing on correctness and deterministic binding.
+    """
+
+    # Test Case 1: Exact Match (No Variables), different frozenset order
+    pattern1 = SumNode(frozenset({create_move_node(1), create_move_node(2), create_move_node(3)}))
+    subtree1a = SumNode(frozenset({create_move_node(3), create_move_node(1), create_move_node(2)}))
+    subtree1b = SumNode(frozenset({create_move_node(1), create_move_node(2), create_move_node(3)}))
+    bindings1a: Bindings = {}
+    bindings1b: Bindings = {}
+    assert unify(pattern1, subtree1a, bindings1a)
+    assert bindings1a == {}, "Exact match should produce empty bindings"
+    assert unify(pattern1, subtree1b, bindings1b)
+    assert bindings1b == {}, "Exact match should produce empty bindings regardless of order"
+
+    # Test Case 2: Mismatch - Different Number of Children
+    pattern2 = SumNode(frozenset({create_move_node(1), create_move_node(2)}))
+    subtree2 = SumNode(frozenset({create_move_node(1), create_move_node(2), create_move_node(3)}))
+    bindings2: Bindings = {}
+    assert not unify(pattern2, subtree2, bindings2), "Should fail on different child count"
+    assert bindings2 == {}, "Bindings should be empty after failed unification"
+
+    # Test Case 3: Mismatch - Same Number, Different Content
+    pattern3 = SumNode(frozenset({create_move_node(1), create_move_node(4)})) # create_move_node(4) instead of create_move_node(2)
+    subtree3 = SumNode(frozenset({create_move_node(1), create_move_node(2)}))
+    bindings3: Bindings = {}
+    assert not unify(pattern3, subtree3, bindings3), "Should fail on different content"
+    assert bindings3 == {}, "Bindings should be empty after failed unification"
+
+    # Test Case 4: Single Variable - Successful Binding
+    pattern4 = SumNode(frozenset({create_variable_node(0), create_move_node(2)})) # Var(0) and create_move_node(2)
+    subtree4 = SumNode(frozenset({create_move_node(1), create_move_node(2)})) # Match create_move_node(2), Var(0) should bind to create_move_node(1)
+    bindings4: Bindings = {}
+    assert unify(pattern4, subtree4, bindings4), "Single variable unification should succeed"
+    # Deterministic check: create_move_node(2) matches create_move_node(2). create_variable_node(0) must match the remaining create_move_node(1).
+    assert bindings4 == {0: create_move_node(1)}, f"Expected Var(0) to bind to create_move_node(1), got {bindings4}"
+
+    # Test Case 5: Single Variable - Binding to a Complex Node
+    prod_node = ProductNode((create_move_node(3), create_move_node(4)))
+    pattern5 = SumNode(frozenset({create_move_node(1), create_variable_node(0)}))
+    subtree5 = SumNode(frozenset({create_move_node(1), prod_node}))
+    bindings5: Bindings = {}
+    assert unify(pattern5, subtree5, bindings5), "Variable binding to ProductNode should succeed"
+    # create_move_node(1) matches create_move_node(1). create_variable_node(0) must bind to the remaining prod_node.
+    assert bindings5 == {0: prod_node}, f"Expected Var(0) to bind to {prod_node}, got {bindings5}"
+
+    # Test Case 6: Multiple Variables - Successful Binding & Determinism
+    pattern6 = SumNode(frozenset({create_move_node(5), create_variable_node(1), create_variable_node(0)}))
+    subtree6a = SumNode(frozenset({create_move_node(3), create_move_node(5), create_move_node(4)})) # Deliberate order difference
+    subtree6b = SumNode(frozenset({create_move_node(4), create_move_node(3), create_move_node(5)})) # Another order
+    bindings6a: Bindings = {}
+    bindings6b: Bindings = {}
+
+    # Expected binding based on sorting by str:
+    # Pattern sorted: ['5', 'Var(0)', 'Var(1)']
+    # Subtree sorted: ['3', '4', '5']
+    # Match '5' -> '5'.
+    # Match 'Var(0)' -> '3'.
+    # Match 'Var(1)' -> '4'.
+    expected_bindings6 = {0: create_move_node(3), 1: create_move_node(4)}
+
+    assert unify(pattern6, subtree6a, bindings6a), "Multi-variable unification (a) should succeed"
+    assert bindings6a == expected_bindings6, f"Bindings (a) mismatch: Expected {expected_bindings6}, got {bindings6a}"
+
+    assert unify(pattern6, subtree6b, bindings6b), "Multi-variable unification (b) should succeed"
+    assert bindings6b == expected_bindings6, f"Bindings (b) mismatch: Expected {expected_bindings6}, got {bindings6b}"
+    assert bindings6a == bindings6b, "Bindings should be deterministic regardless of initial frozenset order"
+
+    # Test Case 7: Multiple Variables - Failure due to Content Mismatch
+    pattern7 = SumNode(frozenset({create_variable_node(0), create_move_node(2)}))
+    subtree7 = SumNode(frozenset({create_move_node(1), create_move_node(3)})) # No create_move_node(2) to match the concrete part
+    bindings7: Bindings = {}
+    assert not unify(pattern7, subtree7, bindings7), "Should fail if concrete parts don't match"
+    assert bindings7 == {}, "Bindings should be empty after failed unification"
+
+    # Test Case 8: Determinism Check with Swapped Variables in Pattern
+    pattern8a = SumNode(frozenset({create_variable_node(0), create_variable_node(1)})) # Var(0), Var(1)
+    pattern8b = SumNode(frozenset({create_variable_node(1), create_variable_node(0)})) # Var(1), Var(0) - same set
+    subtree8 = SumNode(frozenset({create_move_node(1), create_move_node(2)}))
+    bindings8a: Bindings = {}
+    bindings8b: Bindings = {}
+
+    # Expected binding based on sorting by str:
+    # Pattern sorted (both cases): ['Var(0)', 'Var(1)']
+    # Subtree sorted: ['1', '2']
+    # Match 'Var(0)' -> '1'.
+    # Match 'Var(1)' -> '2'.
+    expected_bindings8 = {0: create_move_node(1), 1: create_move_node(2)}
+
+    assert unify(pattern8a, subtree8, bindings8a)
+    assert bindings8a == expected_bindings8, f"Bindings (8a) mismatch: Expected {expected_bindings8}, got {bindings8a}"
+    # Even though pattern8b looks different, its frozenset is identical
+    assert unify(pattern8b, subtree8, bindings8b)
+    assert bindings8b == expected_bindings8, f"Bindings (8b) mismatch: Expected {expected_bindings8}, got {bindings8b}"
+
+    # Test Case 9: Nested SumNode Unification
+    inner_p9 = SumNode(frozenset({create_variable_node(1), create_move_node(6)}))
+    inner_s9 = SumNode(frozenset({create_move_node(4), create_move_node(6)}))
+    pattern9 = SumNode(frozenset({create_variable_node(0), inner_p9}))
+    subtree9 = SumNode(frozenset({create_move_node(3), inner_s9}))
+    bindings9: Bindings = {}
+
+    # Expected binding based on sorting by str:
+    # Pattern sorted: [str(inner_p9), 'Var(0)'] -> ['[6|Var(1)]', 'Var(0)']
+    # Subtree sorted: [str(create_move_node(3)), str(inner_s9)] -> ['3', '[4|6]']
+    # Match '[6|Var(1)]' -> '[4|6]' (requires inner unification)
+    #   Inner unification: p=['6', 'Var(1)'], s=['4', '6'] -> Match '6'->'6', Match 'Var(1)'->'4'. Bindings: {1: create_move_node(4)}
+    # Match 'Var(0)' -> '3'. Bindings: {0: create_move_node(3)}
+    # Combine bindings: {0: create_move_node(3), 1: create_move_node(4)}
+    expected_bindings9 = {0: create_move_node(3), 1: create_move_node(4)}
+
+    assert unify(pattern9, subtree9, bindings9), "Nested SumNode unification should succeed"
+    assert bindings9 == expected_bindings9, f"Bindings (9) mismatch: Expected {expected_bindings9}, got {bindings9}"
+
+    # Test Case 10: Variable bound to different type
+    pattern10 = SumNode(frozenset({create_variable_node(0), create_move_node(1)}))
+    subtree10 = SumNode(frozenset({RepeatNode(create_variable_node(0), CountValue(4)), create_move_node(1)})) # Bind Var(0) to a RepeatNode
+    bindings10: Bindings = {}
+    assert unify(pattern10, subtree10, bindings10), "Variable binding to CoordValue should succeed"
+    assert bindings10 == {0: RepeatNode(create_variable_node(0), CountValue(4))}, f"Expected Var(0) to bind to {RepeatNode(create_variable_node(0), CountValue(4))}, got {bindings10}"
+
+    print("\nAll test_unify_sum_deterministic tests passed!")
 
 
 def test_expand_nested_node():
@@ -4324,36 +4658,30 @@ def test_symbolize_together():
     trees = (tree1, tree2)
     symbol_tables = [(), ()]
     final_trees, final_symbols = symbolize_together(trees, symbol_tables)
-    expected_symbol = RootNode(
-        ProductNode(
-            (
-                PrimitiveNode(MoveValue(2)),
-                PrimitiveNode(MoveValue(3)),
-                PrimitiveNode(MoveValue(4)),
-                PrimitiveNode(MoveValue(4)),
-            )
-        ),
-        VariableNode(VariableValue(0)),
-        VariableNode(VariableValue(1)),
+    expected_symbol = ProductNode(
+        (
+            PrimitiveNode(MoveValue(2)),
+            PrimitiveNode(MoveValue(3)),
+            PrimitiveNode(MoveValue(4)),
+            PrimitiveNode(MoveValue(4)),
+        )
     )
     expected_trees = (
-        SymbolNode(
-            IndexValue(0),
-            (
-                CoordValue(Coord(0, 0)),
-                PaletteValue(value=frozenset({1})),
-            ),
+        RootNode(
+            SymbolNode(IndexValue(0), tuple()),
+            CoordValue(Coord(0, 0)),
+            PaletteValue(value=frozenset({1})),
         ),
-        SymbolNode(
-            IndexValue(0),
-            (
-                CoordValue(Coord(1, 1)),
-                PaletteValue(value=frozenset({2})),
-            ),
+        RootNode(
+            SymbolNode(IndexValue(0), tuple()),
+            CoordValue(Coord(1, 1)),
+            PaletteValue(value=frozenset({2})),
         ),
     )
     expected_symbols = (expected_symbol,)
-    assert final_trees == expected_trees, "Test Case 1 Failed: Trees incorrect"
+    assert final_trees == expected_trees, (
+        f"Test Case 1 Failed: Trees incorrect, got {final_trees}"
+    )
     assert final_symbols == expected_symbols, (
         "Test Case 1 Failed: Symbols incorrect"
     )
@@ -4492,7 +4820,9 @@ def run_tests():
     assert str(product) == "22", "ProductNode str should be '22'"
     assert str(sum_node) == "[2|3]", "SumNode str should be '[2|3]'"
     assert str(repeat) == "(2)*{3}", "RepeatNode str should be '(2)*{3}'"
-    assert str(symbol) == "s_0", "SymbolNode str should be 's_0'"
+    assert str(symbol).strip() == "s_0", (
+        f"SymbolNode str should be 's_0', got {str(symbol)}"
+    )
     assert str(root) == "Root(22, (0, 0), {1})", (
         f"RootNode str should be 'Root(22, (0, 0), {1})'. Got {str(root)} instead"
     )
@@ -4546,7 +4876,11 @@ def run_tests():
     test_resolve_symbols()
     test_find_symbol_candidates()
     test_matching()
+
+    test_unify_sum()
+
     test_extract_nested_sum_template()
+    test_node_to_symbolize()
     test_extract_nested_product_template()
     test_nested_collection_to_nested_node()
     test_expand_nested_node()
