@@ -8,10 +8,17 @@ organized by their primary use cases.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping, Set
 from dataclasses import dataclass
-from typing import Any, Iterable, ParamSpec, NamedTuple, TypeVar, TypedDict, cast
-
-from collections.abc import Set, Mapping
+from typing import (
+    Any,
+    Iterable,
+    NamedTuple,
+    ParamSpec,
+    TypedDict,
+    TypeVar,
+    cast,
+)
 
 # Basic type variables for generic operations
 T = TypeVar("T")
@@ -41,18 +48,22 @@ type ColorGrid = list[list[Color]]  # Functional: grid[row][col] -> color
 type Mask = list[list[bool]]  # Boolean mask: grid[row][col] -> is_selected
 type Grid = ColorGrid | Mask  # Generic grid type
 
+
 # Coordinate systems
 class Coord(NamedTuple):
     col: int
     row: int
 
-#type Coord = tuple[int, int]  # (col, row) coordinates
-type Coords = Set[Coord] # Set of coordinates
+
+# type Coord = tuple[int, int]  # (col, row) coordinates
+type Coords = Set[Coord]  # Set of coordinates
 type Box = tuple[Coord, Coord]  # (top_left, bottom_right) corners
+
 
 class Proportions(NamedTuple):
     width: int
     heigth: int
+
 
 # Point system (extended coordinates)
 # type Point = tuple[int, int, int]  # (col, row, color)
@@ -61,16 +72,21 @@ class Point(NamedTuple):
     row: int
     color: int
 
-type Points = Set[Point] # Set of colored points
+
+type Points = Set[Point]  # Set of colored points
 
 # Combined types
-type CoordsGeneralized = Points | Coords  # Either colored or uncolored coordinates
+type CoordsGeneralized = (
+    Points | Coords
+)  # Either colored or uncolored coordinates
 
 # Graph traversal
 type Trans = tuple[str, Coord]  # (direction, target_coordinate)
 
 # Category theory
-type Quotient[U, T] = Mapping[U, Set[T]]  # Maps representatives to their equivalence classes
+type Quotient[U, T] = Mapping[
+    U, Set[T]
+]  # Maps representatives to their equivalence classes
 
 # Type aliases for improving code readability
 Height = int
@@ -79,11 +95,14 @@ Row = int
 Col = int
 Direction = str
 
+
 @dataclass(frozen=True)
-class GridObject():
+class GridObject:
     """Class containing all informations to represent a connected component"""
+
     colors: Colors
     coords: Coords
+
 
 # Base interface for values with bit lengths
 @dataclass(frozen=True)
