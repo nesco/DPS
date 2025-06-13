@@ -11,7 +11,7 @@ from typing import TypeVar
 from arc_syntax_tree import decode_knode
 from edit import apply_transformation, extended_edit_distance
 from hierarchy import grid_to_syntax_trees
-from display import display_objects_syntax_trees
+from utils.display import display_objects_syntax_trees
 from kolmogorov_tree import (
     KNode,
     MoveValue,
@@ -613,8 +613,9 @@ def problem(task="2dc579da.json"):
             for element in sorted_clique_elements:
                 print(element)
                 ind, st = element
-                unsybolized = unsymbolize(st)
-                display_objects_syntax_trees(st, proportions)
+                unsymbolized = unsymbolize(st, symbol_table)
+                print(unsymbolized)
+                display_objects_syntax_trees([unsymbolized], GridOperations.proportions(grids[ind]))
 
             # TO - DO
 

@@ -374,6 +374,7 @@ class RepeatNode(KNode[T]):
 # [ ] Extraction
 # [ ] Decoding
 # [ ] Symbolization
+
 @dataclass(frozen=True)
 class NestedNode(KNode[T], Resolvable[KNode[T]]):
     """
@@ -405,7 +406,6 @@ class NestedNode(KNode[T], Resolvable[KNode[T]]):
 
     def __str__(self) -> str:
         return f"Y_{{{self.count}}}({self.index}, {self.node})"
-
 
 @dataclass(frozen=True)
 class SymbolNode(KNode[T], Resolvable[KNode[T]]):
@@ -2156,11 +2156,11 @@ def substitute_variables(knode: KNode[T], params: Parameters) -> KNode[T]:
                 nvalue = variable_to_param(value, params)
             case frozenset():
                 nvalue = frozenset(
-                    {substitute_variables(node, params) for node in value if isinstance(node, KNode)}
+                    {substitute_variables(el, params) if isinstance(el, KNode) else el for el in value}
                 )
             case tuple():
                 nvalue = tuple(
-                    substitute_variables(node, params) for node in value if isinstance(node, KNode)
+                    substitute_variables(el, params) if isinstance(el, KNode) else el for el in value
                 )
             case KNode():
                 nvalue = substitute_variables(value, params)
@@ -2218,7 +2218,16 @@ def resolve_symbols(knode: KNode[T], symbols: Sequence[KNode[T]]) -> KNode[T]:
             )
         return node
 
-    return premap(knode, resolve_f, factorize=False)
+
+    # A symbolic node can be resolved into another symbolic node
+    def resolve_until(node: KNode[T]) -> KNode[T]:
+        while isinstance(node, SymbolNode):
+            node = resolve_f(node)
+        return node
+
+    node = premap(knode, resolve_until, factorize=False)
+
+    return node
 
 
 # Factory functions for common patterns
@@ -2799,6 +2808,7 @@ def unsymbolize(knode: KNode[T], symbol_table: Sequence[KNode[T]]) -> KNode[T]:
 
     # Step 2: Then unsymbolize NestedNodes
     nnode = expand_all_nested_nodes(nnode, symbol_table)
+
     return nnode
 
 
@@ -2879,6 +2889,7 @@ def root_to_symbolize():
     # print(
     #     str(root_node)
     # )  # Should output: "Root(0[(0)*{4}|5[(1)*{4}|6[(2)*{4}|7(3)*{4}]]], (5, 5), {1})"
+
 
     return root_node
 
@@ -4755,6 +4766,59 @@ def test_factor_by_existing_symbols():
 
     print("Test factor_by_existing_symbols - Passed")
 
+def test_substitute():
+    # Invariant when non variables
+    template_1 = ProductNode(
+        children=(
+        SymbolNode(
+            index=IndexValue(16),
+            parameters=(CoordValue((5, 1)),),
+        ),
+        RootNode(
+            node=NoneValue(),
+            position=CoordValue((5,1)),
+            colors=PaletteValue(frozenset({1})),
+        ),
+    ))
+
+    result = substitute_variables(template_1, ())
+    assert (result == ProductNode(
+        children=(
+        SymbolNode(
+            index=IndexValue(16),
+            parameters=(CoordValue((5, 1)),),
+        ),
+        RootNode(
+            node=NoneValue(),
+            position=CoordValue((5,1)),
+            colors=PaletteValue(frozenset({1})),
+        ),
+    )))
+
+    template = RootNode(
+            node=PrimitiveNode(MoveValue(2)),
+            position=VariableNode(index=VariableValue(0)),
+            colors=PaletteValue(frozenset({4})),
+    )
+    params = (CoordValue((5, 1)),)
+    expanded = substitute_variables(template, params)
+
+    # --- assertions --------------------------------------------------------
+    # 1. The position attribute should now be a concrete coordinate
+    assert isinstance(expanded, RootNode)
+    assert isinstance(expanded.position, CoordValue)
+    assert expanded.position.value == (5, 1)
+
+    # 2. No VariableNode should survive anywhere in the subtree
+    def _contains_var(node):
+        if isinstance(node, VariableNode):
+            return True
+        return any(_contains_var(child) for child in getattr(node, "children", lambda: [])())
+
+    assert not _contains_var(expanded), "VariableNode leaked from substitution"
+
+
+
 
 def test_remap_symbol_indices():
     """Tests the remap_symbol_indices function for updating SymbolNode indices."""
@@ -5181,6 +5245,7 @@ def run_tests():
     test_extract_nested_product_template()
     test_nested_collection_to_nested_node()
     test_expand_nested_node()
+    test_substitute()
     test_factor_by_existing_symbols()
     test_symbolize_pattern()
     test_remap_symbol_indices()
