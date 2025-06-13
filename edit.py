@@ -22,6 +22,7 @@ from localtypes import (
     BitLengthAware,
     KeyValue,
     Primitive,
+    Resolvable,
     ensure_all_instances,
 )
 from utils.tree_functionals import (
@@ -35,7 +36,7 @@ T = TypeVar("T")
 type Operation = Add | Delete | Identity | Substitute | Inner
 
 type ExtendedOperation = (
-    Identity | Add | Delete | Substitute | Prune | Graft | Inner
+    Identity | Add | Delete | Substitute | Prune | Graft | Inner | Resolve
 )
 
 
@@ -114,11 +115,12 @@ class Substitute(BitLengthAware):
         #     return self.before.bit_length() + self.after.bit_length()
         return self.after.bit_length()
 
-        return 2
+        # return 2
 
     def __str__(self):
         # return f"Substitute: {self.before} |-> {self.after} on key: {self.key}"
         return f"Substitute: object |-> {self.after}"
+
 
 
 # Helpers
@@ -460,6 +462,20 @@ class Graft(BitLengthAware):
     def __str__(self):
         return f"Attaching element at: {self.parent}[{self.key if self.key else 'None'}]"
 
+@dataclass(frozen=True)
+class Resolve(BitLengthAware):
+    """
+    SymbolNode → concrete subtree.  Carries the inner edit script
+    computed on the resolved children so that callers can inspect it.
+    """
+    key: KeyValue
+    inner: "ExtendedOperation"          # May be Identity/Inner/…
+
+    def bit_length(self) -> int:
+        return self.inner.bit_length()
+
+    def __str__(self):
+        return f"Resolving the source"
 
 def collect_links(
     bla: BitLengthAware,
@@ -472,7 +488,7 @@ def collect_links(
     hash_to_object[bla_hash] = bla
 
     # Depth first propagation of the collection
-    if is_dataclass(bla):
+    if is_dataclass(bla) and not isinstance(bla, Primitive):
         for field in fields(bla):
             attr = getattr(bla, field.name)
             if isinstance(attr, BitLengthAware):
@@ -521,6 +537,7 @@ def compute_bit_length(obj: Any) -> int:
 def extended_edit_distance(
     source: BitLengthAware | None,
     target: BitLengthAware | None,
+    symbol_table: Sequence[BitLengthAware],
 ) -> tuple[int, ExtendedOperation | None]:
     """
     Computes the extended edit distance between two BitLengthAware tree-like objects.
@@ -570,7 +587,7 @@ def extended_edit_distance(
         target_obj = hash_to_object[target_node]
 
         min_distance, min_operation = recursive_edit_distance(
-            source_obj, target_obj
+            source_obj, target_obj, symbol_table
         )
 
         # Optimization idea:
@@ -626,18 +643,36 @@ def extended_edit_distance(
 
 @cache
 def recursive_edit_distance(
-    source: BitLengthAware, target: BitLengthAware, filter_identities=True
+    source: BitLengthAware, target: BitLengthAware, symbol_table: Sequence[BitLengthAware] = tuple(), filter_identities=True
 ) -> tuple[int, Operation]:
     """
     Args
         source: The source tree, a BitLengthAware object or None.
         target: The target tree, a BitLengthAware object or None.
+        symbol_table: A sequence of BitLengthAware objects representing the symbol table, only if source or target can contaons resolvables.
         filter_identites: Wether to simplify the operations structure by filtering away identities
 
     Returns:
         A tuple of (distance, operations), where distance is the minimal edit cost (in bits),
         and operations is a tuple of ExtendedOperation instances detailing the transformation.
     """
+
+    # Handle the case where the element to compare are reference to a lookup table, possibly with parameters
+    # You don't want to compare them literally if they don't point to the same element
+    # If both are references then you compute the distance of the resolution of the source to the resolution of the target
+    match source, target:
+        case Resolvable(), Resolvable() if source.eq_ref(target):
+            pass
+        case Resolvable(), Resolvable():
+            d, op = recursive_edit_distance(source.resolve(symbol_table), target.resolve(symbol_table), symbol_table, filter_identities)
+            return d, Resolve(None, op)
+        case Resolvable(), _:
+            return recursive_edit_distance(source.resolve(symbol_table), target, symbol_table, filter_identities)
+            return d, Resolve(None, op)
+        case _, Resolvable():
+            return recursive_edit_distance(source, target.resolve(symbol_table), symbol_table, filter_identities)
+        case _, _:
+            pass
 
     dp = {}
 
@@ -656,6 +691,7 @@ def recursive_edit_distance(
             not (is_dataclass(a) and is_dataclass(b))
             or isinstance(a, Primitive)
             or isinstance(b, Primitive)
+            or type(a) != type(b)
         ):
             cost = compute_bit_length(a) + compute_bit_length(b)
             result = (cost, Substitute(key, b))
@@ -666,8 +702,12 @@ def recursive_edit_distance(
             for field in sorted(
                 set(fields(a)) | set(fields(b)), key=lambda x: x.name
             ):
-                a_field = getattr(a, field.name)
-                b_field = getattr(b, field.name)
+                try:
+                    a_field = getattr(a, field.name)
+                    b_field = getattr(b, field.name)
+                except AttributeError as e:
+                    raise AttributeError(f"Field {field.name} not found in {a} or {b}") from e
+
                 if isinstance(a_field, tuple):
                     if not isinstance(b_field, tuple):
                         raise TypeError(

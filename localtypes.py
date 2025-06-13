@@ -8,15 +8,17 @@ organized by their primary use cases.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping, Set
+from collections.abc import Mapping, Set, Sequence
 from dataclasses import dataclass
 from typing import (
     Any,
     Iterable,
     NamedTuple,
     ParamSpec,
+    Protocol,
     TypedDict,
     TypeVar,
+    runtime_checkable,
     cast,
 )
 
@@ -129,7 +131,6 @@ class Primitive(BitLengthAware):
     def __str__(self) -> str:
         return str(self.value)
 
-
 @dataclass(frozen=True)
 class KeyValue(Primitive):
     """
@@ -143,10 +144,22 @@ class KeyValue(Primitive):
     def bit_length(self) -> int:
         return 0
 
+TNode = TypeVar("TNode", bound="BitLengthAware")
+
+@runtime_checkable
+class Resolvable(Protocol[TNode]):
+    """
+    An element that can be resolved to a concrete BitLengthAware
+    value given an external symbol table.
+    """
+    def resolve(self, symbol_table: Sequence[TNode]) -> TNode: ...
+
+    def eq_ref(self, other: Resolvable) -> bool: ...
+    """ Return True if both return to the same reference"""
 
 def ensure_all_instances(seq: Iterable[object], cls: type[T]) -> Iterable[T]:
     if not all(isinstance(item, cls) for item in seq):
-        raise TypeError(f"Not all items are instances of {cls}")
+        raise TypeError(f"Not all items are instances of {cls}: {seq}")
     return cast(Iterable[T], seq)
 
 

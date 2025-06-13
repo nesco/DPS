@@ -79,6 +79,7 @@ from localtypes import (
     Color,
     Coord,
     Primitive,
+    Resolvable,
     ensure_all_instances,
 )
 from utils.tree_functionals import (
@@ -143,7 +144,6 @@ class VariableValue(Primitive):
 
     def bit_length(self) -> int:
         return BitLength.VAR
-
 
 @dataclass(frozen=True)
 class IndexValue(Primitive):
@@ -375,7 +375,7 @@ class RepeatNode(KNode[T]):
 # [ ] Decoding
 # [ ] Symbolization
 @dataclass(frozen=True)
-class NestedNode(KNode[T]):
+class NestedNode(KNode[T], Resolvable[KNode[T]]):
     """
     Represents A finite equivalent of the fixed point combinator.
     The catch is it can only acts on possibly recursive properties.
@@ -397,12 +397,18 @@ class NestedNode(KNode[T]):
         count_len = self.count.bit_length()
         return super().bit_length() + index_len + terminal_node + count_len
 
+    def resolve(self, symbol_table: Sequence[KNode[T]]) -> KNode[T]:
+        return expand_nested_node(self, symbol_table)
+
+    def eq_ref(self, other: Resolvable[KNode[T]]) -> bool:
+        return isinstance(other, NestedNode) and self.index == other.index
+
     def __str__(self) -> str:
         return f"Y_{{{self.count}}}({self.index}, {self.node})"
 
 
 @dataclass(frozen=True)
-class SymbolNode(KNode[T]):
+class SymbolNode(KNode[T], Resolvable[KNode[T]]):
     """Represents an abstraction or reusable pattern."""
 
     index: IndexValue  # Index in the symbol table
@@ -412,12 +418,19 @@ class SymbolNode(KNode[T]):
         params_len = sum(param.bit_length() for param in self.parameters)
         return super().bit_length() + self.index.bit_length() + params_len
 
+    def resolve(self, symbol_table: Sequence[KNode[T]]) -> KNode[T]:
+        return reduce_abstraction(symbol_table[self.index.value], self.parameters)
+
+    def eq_ref(self, other: Resolvable[KNode[T]]) -> bool:
+        return isinstance(other, SymbolNode) and self.index == other.index
+
     def __str__(self) -> str:
         if self.parameters:
             return (
                 f"s_{self.index}({', '.join(str(p) for p in self.parameters)})"
             )
         return f"s_{self.index}()"
+
 
 
 # Dirty hack for ARC
@@ -2143,11 +2156,11 @@ def substitute_variables(knode: KNode[T], params: Parameters) -> KNode[T]:
                 nvalue = variable_to_param(value, params)
             case frozenset():
                 nvalue = frozenset(
-                    {substitute_variables(node, params) for node in value}
+                    {substitute_variables(node, params) for node in value if isinstance(node, KNode)}
                 )
             case tuple():
                 nvalue = tuple(
-                    substitute_variables(node, params) for node in value
+                    substitute_variables(node, params) for node in value if isinstance(node, KNode)
                 )
             case KNode():
                 nvalue = substitute_variables(value, params)
