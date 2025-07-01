@@ -401,8 +401,7 @@ def dag_to_syntax_trees(grid_object_dag: Mapping[GridObject, Set[GridObject]]):
             sum = iterable_to_sum(
                 syntax_trees
             )  # It should always be > 1 so no need for the iterable. Just in case one day
-            if not isinstance(sum, SumNode):
-                print(sum)
+            assert isinstance(sum, SumNode)
             syntax_tree_by_grid_object[object] = sum
             continue
 

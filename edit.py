@@ -122,7 +122,6 @@ class Substitute(BitLengthAware):
         return f"Substitute: object |-> {self.after}"
 
 
-
 # Helpers
 def identity_or_inner(
     source: BitLengthAware,
@@ -462,20 +461,23 @@ class Graft(BitLengthAware):
     def __str__(self):
         return f"Attaching element at: {self.parent}[{self.key if self.key else 'None'}]"
 
+
 @dataclass(frozen=True)
 class Resolve(BitLengthAware):
     """
     SymbolNode → concrete subtree.  Carries the inner edit script
     computed on the resolved children so that callers can inspect it.
     """
+
     key: KeyValue
-    inner: "ExtendedOperation"          # May be Identity/Inner/…
+    inner: "ExtendedOperation"  # May be Identity/Inner/…
 
     def bit_length(self) -> int:
         return self.inner.bit_length()
 
     def __str__(self):
-        return f"Resolving the source"
+        return "Resolving the source"
+
 
 def collect_links(
     bla: BitLengthAware,
@@ -643,7 +645,10 @@ def extended_edit_distance(
 
 @cache
 def recursive_edit_distance(
-    source: BitLengthAware, target: BitLengthAware, symbol_table: Sequence[BitLengthAware] = tuple(), filter_identities=True
+    source: BitLengthAware,
+    target: BitLengthAware,
+    symbol_table: Sequence[BitLengthAware] = tuple(),
+    filter_identities=True,
 ) -> tuple[int, Operation]:
     """
     Args
@@ -664,13 +669,28 @@ def recursive_edit_distance(
         case Resolvable(), Resolvable() if source.eq_ref(target):
             pass
         case Resolvable(), Resolvable():
-            d, op = recursive_edit_distance(source.resolve(symbol_table), target.resolve(symbol_table), symbol_table, filter_identities)
+            d, op = recursive_edit_distance(
+                source.resolve(symbol_table),
+                target.resolve(symbol_table),
+                symbol_table,
+                filter_identities,
+            )
             return d, Resolve(None, op)
         case Resolvable(), _:
-            return recursive_edit_distance(source.resolve(symbol_table), target, symbol_table, filter_identities)
+            return recursive_edit_distance(
+                source.resolve(symbol_table),
+                target,
+                symbol_table,
+                filter_identities,
+            )
             return d, Resolve(None, op)
         case _, Resolvable():
-            return recursive_edit_distance(source, target.resolve(symbol_table), symbol_table, filter_identities)
+            return recursive_edit_distance(
+                source,
+                target.resolve(symbol_table),
+                symbol_table,
+                filter_identities,
+            )
         case _, _:
             pass
 
@@ -691,7 +711,7 @@ def recursive_edit_distance(
             not (is_dataclass(a) and is_dataclass(b))
             or isinstance(a, Primitive)
             or isinstance(b, Primitive)
-            or type(a) != type(b)
+            or type(a) is not type(b)
         ):
             cost = compute_bit_length(a) + compute_bit_length(b)
             result = (cost, Substitute(key, b))
@@ -706,7 +726,9 @@ def recursive_edit_distance(
                     a_field = getattr(a, field.name)
                     b_field = getattr(b, field.name)
                 except AttributeError as e:
-                    raise AttributeError(f"Field {field.name} not found in {a} or {b}") from e
+                    raise AttributeError(
+                        f"Field {field.name} not found in {a} or {b}"
+                    ) from e
 
                 if isinstance(a_field, tuple):
                     if not isinstance(b_field, tuple):
@@ -1146,7 +1168,7 @@ def test_extended_edit_distance():
     # Test 1: Prune operation
     # Source: A -> (B, E), Target: B
     print("Testing Prune operation:")
-    distance, transformation = extended_edit_distance(node_A, node_B)
+    distance, transformation = extended_edit_distance(node_A, node_B, tuple())
     assert transformation is not None, "The trasnformation should not be None"
     print(f"Distance: {distance}")
     print(f"Transformation {transformation}:")
@@ -1160,7 +1182,7 @@ def test_extended_edit_distance():
     # Test 2: Graft operation
     # Source: B, Target: A -> (B, E)
     print("Testing Graft operation:")
-    distance, transformation = extended_edit_distance(node_B, node_A)
+    distance, transformation = extended_edit_distance(node_B, node_A, tuple())
     assert transformation is not None, "The trasnformation should not be None"
     print(f"Distance: {distance}")
     print(f"Transformation: {transformation}")
@@ -1234,7 +1256,7 @@ def test_apply_transformations():
     node_A = TreeNode(MockValue(1), (node_B, leaf_E))
     source_4 = node_A
     target_4 = node_B
-    _, transform_4 = extended_edit_distance(source_4, target_4)
+    _, transform_4 = extended_edit_distance(source_4, target_4, tuple())
     assert transform_4 is not None, "The trasnformation should not be None"
     result_4 = apply_transformation(source_4, transform_4)
     assert result_4 == target_4, f"Test 4 failed: {result_4} != {target_4}"
@@ -1243,7 +1265,7 @@ def test_apply_transformations():
     # **Test Case 5: Graft Operation**
     source_5 = node_B
     target_5 = node_A
-    _, transform_5 = extended_edit_distance(source_5, target_5)
+    _, transform_5 = extended_edit_distance(source_5, target_5, tuple())
     assert transform_5 is not None, "The trasnformation should not be None"
     result_5 = apply_transformation(source_5, transform_5)
     assert result_5 == target_5, f"Test 5 failed: {result_5} != {target_5}"
