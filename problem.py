@@ -611,8 +611,8 @@ def problem(task="2dc579da.json"):
                 list(clique_data), key=lambda x: x[0]
             )
             for element in sorted_clique_elements:
-                print(element)
                 ind, st = element
+                print(f"{ind}: {st}")
                 unsymbolized = unsymbolize(st, symbol_table)
                 print(unsymbolized)
                 display_objects_syntax_trees([unsymbolized], GridOperations.proportions(grids[ind]))

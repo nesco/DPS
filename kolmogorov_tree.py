@@ -145,6 +145,7 @@ class VariableValue(Primitive):
     def bit_length(self) -> int:
         return BitLength.VAR
 
+
 @dataclass(frozen=True)
 class IndexValue(Primitive):
     """Represents an index in the lookup table (0-127)."""
@@ -375,6 +376,7 @@ class RepeatNode(KNode[T]):
 # [ ] Decoding
 # [ ] Symbolization
 
+
 @dataclass(frozen=True)
 class NestedNode(KNode[T], Resolvable[KNode[T]]):
     """
@@ -407,6 +409,7 @@ class NestedNode(KNode[T], Resolvable[KNode[T]]):
     def __str__(self) -> str:
         return f"Y_{{{self.count}}}({self.index}, {self.node})"
 
+
 @dataclass(frozen=True)
 class SymbolNode(KNode[T], Resolvable[KNode[T]]):
     """Represents an abstraction or reusable pattern."""
@@ -419,7 +422,9 @@ class SymbolNode(KNode[T], Resolvable[KNode[T]]):
         return super().bit_length() + self.index.bit_length() + params_len
 
     def resolve(self, symbol_table: Sequence[KNode[T]]) -> KNode[T]:
-        return reduce_abstraction(symbol_table[self.index.value], self.parameters)
+        return reduce_abstraction(
+            symbol_table[self.index.value], self.parameters
+        )
 
     def eq_ref(self, other: Resolvable[KNode[T]]) -> bool:
         return isinstance(other, SymbolNode) and self.index == other.index
@@ -430,7 +435,6 @@ class SymbolNode(KNode[T], Resolvable[KNode[T]]):
                 f"s_{self.index}({', '.join(str(p) for p in self.parameters)})"
             )
         return f"s_{self.index}()"
-
 
 
 # Dirty hack for ARC
@@ -529,7 +533,9 @@ def extract_template(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
                 child_set,
                 key=lambda x: x.bit_length() * child_counter[x],
                 reverse=True,
-            )[:2]
+            )[
+                :2
+            ]  # I don't know why it works better when it's 4 here instead of 2
 
             # Abstract the most frequent/largest child
             nodes1 = tuple(
@@ -1104,7 +1110,7 @@ def split_top_level_arguments(s: str) -> list[str]:
 
     OPENING_BRACKETS = ["(", "[", "{", "<"]
     CLOSING_BRACKETS = [")", "]", "}", ">"]
-    DELIMITERS = [",", "|", ",", "."]
+    # DELIMITERS = [",", "|", ",", "."]
 
     for char in s:
         if char in OPENING_BRACKETS:
@@ -2156,11 +2162,19 @@ def substitute_variables(knode: KNode[T], params: Parameters) -> KNode[T]:
                 nvalue = variable_to_param(value, params)
             case frozenset():
                 nvalue = frozenset(
-                    {substitute_variables(el, params) if isinstance(el, KNode) else el for el in value}
+                    {
+                        substitute_variables(el, params)
+                        if isinstance(el, KNode)
+                        else el
+                        for el in value
+                    }
                 )
             case tuple():
                 nvalue = tuple(
-                    substitute_variables(el, params) if isinstance(el, KNode) else el for el in value
+                    substitute_variables(el, params)
+                    if isinstance(el, KNode)
+                    else el
+                    for el in value
                 )
             case KNode():
                 nvalue = substitute_variables(value, params)
@@ -2218,10 +2232,9 @@ def resolve_symbols(knode: KNode[T], symbols: Sequence[KNode[T]]) -> KNode[T]:
             )
         return node
 
-
     # A symbolic node can be resolved into another symbolic node
     def resolve_until(node: KNode[T]) -> KNode[T]:
-        while isinstance(node, SymbolNode):
+        while isinstance(node, SymbolNode) and node.index.value < len(symbols):
             node = resolve_f(node)
         return node
 
@@ -2889,7 +2902,6 @@ def root_to_symbolize():
     # print(
     #     str(root_node)
     # )  # Should output: "Root(0[(0)*{4}|5[(1)*{4}|6[(2)*{4}|7(3)*{4}]]], (5, 5), {1})"
-
 
     return root_node
 
@@ -4766,41 +4778,44 @@ def test_factor_by_existing_symbols():
 
     print("Test factor_by_existing_symbols - Passed")
 
+
 def test_substitute():
     # Invariant when non variables
     template_1 = ProductNode(
         children=(
-        SymbolNode(
-            index=IndexValue(16),
-            parameters=(CoordValue((5, 1)),),
-        ),
-        RootNode(
-            node=NoneValue(),
-            position=CoordValue((5,1)),
-            colors=PaletteValue(frozenset({1})),
-        ),
-    ))
+            SymbolNode(
+                index=IndexValue(16),
+                parameters=(CoordValue(Coord(5, 1)),),
+            ),
+            RootNode(
+                node=NoneValue(),
+                position=CoordValue(Coord(5, 1)),
+                colors=PaletteValue(frozenset({1})),
+            ),
+        )
+    )
 
     result = substitute_variables(template_1, ())
-    assert (result == ProductNode(
+    assert result == ProductNode(
         children=(
-        SymbolNode(
-            index=IndexValue(16),
-            parameters=(CoordValue((5, 1)),),
-        ),
-        RootNode(
-            node=NoneValue(),
-            position=CoordValue((5,1)),
-            colors=PaletteValue(frozenset({1})),
-        ),
-    )))
+            SymbolNode(
+                index=IndexValue(16),
+                parameters=(CoordValue(Coord(5, 1)),),
+            ),
+            RootNode(
+                node=NoneValue(),
+                position=CoordValue(Coord(5, 1)),
+                colors=PaletteValue(frozenset({1})),
+            ),
+        )
+    )
 
     template = RootNode(
-            node=PrimitiveNode(MoveValue(2)),
-            position=VariableNode(index=VariableValue(0)),
-            colors=PaletteValue(frozenset({4})),
+        node=PrimitiveNode(MoveValue(2)),
+        position=VariableNode(index=VariableValue(0)),
+        colors=PaletteValue(frozenset({4})),
     )
-    params = (CoordValue((5, 1)),)
+    params = (CoordValue(Coord(5, 1)),)
     expanded = substitute_variables(template, params)
 
     # --- assertions --------------------------------------------------------
@@ -4813,11 +4828,12 @@ def test_substitute():
     def _contains_var(node):
         if isinstance(node, VariableNode):
             return True
-        return any(_contains_var(child) for child in getattr(node, "children", lambda: [])())
+        return any(
+            _contains_var(child)
+            for child in getattr(node, "children", lambda: [])()
+        )
 
     assert not _contains_var(expanded), "VariableNode leaked from substitution"
-
-
 
 
 def test_remap_symbol_indices():
