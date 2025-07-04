@@ -2,161 +2,46 @@
 Solve ARC-AGI Problems here
 """
 
+# TODO: Solve the mapping issue
+# Bug: Distance is not symmetric, I have a 10 between s_22 and s_34 sometimes
+
 import sys
 from collections import defaultdict
-from collections.abc import Callable, Sequence, Set
+from collections.abc import Callable, Set
 from itertools import combinations
 from typing import TypeVar
 
 from arc_syntax_tree import decode_knode
-from edit import apply_transformation, extended_edit_distance
+from edit import (
+    apply_transformation,
+    extended_edit_distance,
+)
 from hierarchy import grid_to_syntax_trees
-from utils.display import display_objects_syntax_trees
 from kolmogorov_tree import (
+    Coord,
+    CoordValue,
+    CountValue,
     KNode,
     MoveValue,
-    SymbolNode,
+    NoneValue,
+    PaletteValue,
+    PrimitiveNode,
+    ProductNode,
+    RepeatNode,
+    RootNode,
+    SumNode,
     full_symbolization,
-    reduce_abstraction,
     unsymbolize,
 )
+from utils.display import display_objects_syntax_trees
 from utils.grid import GridOperations, PointsOperations
 from utils.loader import train_task_to_grids
 
-sys.setrecursionlimit(10**6)
+sys.setrecursionlimit(10**9)
 
 
 T = TypeVar("T")
 type IndexedElement[T] = tuple[int, T]
-
-
-def find_cliques2(
-    sets: Sequence[Set[T]], distance_func: Callable[[T, T], float]
-) -> list[set[IndexedElement[T]]]:
-    """
-    Finds stable cliques among k sets based on a distance function.
-
-    A stable clique is a set of k elements {e_0, e_1, ..., e_{k-1}},
-    where e_i is from sets[i], such that for any pair (e_i, e_j) in the clique:
-    1. e_j is the closest element in sets[j] to e_i.
-    2. e_i is the closest element in sets[i] to e_j.
-
-    This also satisfies an associativity-like property: if (a from A, b from B, c from C)
-    form part of a clique, and a is closest to b (in B) and a is closest to c (in C),
-    then b will be closest to c (in C) (and all other pairwise mutual closeness
-    conditions within {a,b,c} will hold).
-
-    Args:
-        sets: A list of k sets. sets[i] is the i-th set.
-        distance_func: A function distance_func(el1, el2) that returns a float
-                       representing the distance between el1 and el2.
-
-    Returns:
-        A list of cliques. Each clique is a set of tuples (set_index, element).
-        Example: [{(0, a1), (1, b1)}, {(0, a2), (1, b2)}]
-    """
-
-    num_sets = len(sets)
-    if num_sets == 0:
-        return []
-
-    if num_sets == 1:
-        # For a single set, each element is a clique of its own.
-        return [{(0, elem)} for elem in sets[0]]
-
-    # Step 1: Compute all-pairs best choices and their distances.
-    # best_choice_from_s_to_t[i][j][elem_from_i] = (best_elem_in_j, dist)
-    # Stores the best choice in set j for an element from set i.
-    best_choice_from_s_to_t: list[list[dict[T, tuple[T | None, float]]]] = [
-        [
-            defaultdict(lambda: (None, float("inf"))) for _ in range(num_sets)
-        ]  # Corrected defaultdict
-        for _ in range(num_sets)
-    ]
-
-    for i in range(num_sets):
-        if not sets[i]:  # Skip if the source set is empty
-            continue
-
-        for elem_i in sets[i]:
-            for j in range(num_sets):
-                if i == j:
-                    continue
-                if not sets[j]:  # Skip if the target set is empty
-                    best_choice_from_s_to_t[i][j][elem_i] = (None, float("inf"))
-                    continue
-
-                min_dist_val = float("inf")
-                current_best_elem_j = None
-
-                # Find the element in sets[j] closest to elem_i
-                for elem_j in sets[j]:
-                    dist = distance_func(elem_i, elem_j)
-                    if dist < min_dist_val:
-                        min_dist_val = dist
-                        current_best_elem_j = elem_j
-                    # Optional: handle ties in distance. Currently, first one found is kept.
-
-                if current_best_elem_j is not None:
-                    best_choice_from_s_to_t[i][j][elem_i] = (
-                        current_best_elem_j,
-                        min_dist_val,
-                    )
-                else:  # Should not happen if sets[j] is not empty
-                    best_choice_from_s_to_t[i][j][elem_i] = (None, float("inf"))
-
-    print(best_choice_from_s_to_t)
-
-    found_cliques: list[set[tuple[int, T]]] = []
-
-    # Step 2: Recursive function to find cliques
-    # partial_clique_elements stores elements [e_0, e_1, ..., e_{current_set_index-1}]
-    def find_cliques_recursive(
-        current_set_idx: int, partial_clique_elements: list[T]
-    ):
-        print(f"Partial clique elements: {partial_clique_elements}")
-        if current_set_idx == num_sets:
-            # Found a full clique
-            clique_representation = set()
-            for idx, elem in enumerate(partial_clique_elements):
-                clique_representation.add((idx, elem))
-            found_cliques.append(clique_representation)
-            return
-
-        # Iterate through elements of the current set to extend the clique
-        for elem_candidate in sets[current_set_idx]:
-            is_compatible = True
-            # Check if elem_candidate is mutually closest with all elements already in partial_clique_elements
-            for existing_elem_set_idx in range(len(partial_clique_elements)):
-                existing_elem = partial_clique_elements[existing_elem_set_idx]
-
-                # Check 1: Is existing_elem the best choice for elem_candidate in sets[existing_elem_set_idx]?
-                # best_choice_from_s_to_t[current_set_idx][existing_elem_set_idx][elem_candidate]
-                choice_info1 = best_choice_from_s_to_t[current_set_idx][
-                    existing_elem_set_idx
-                ][elem_candidate]
-                if not choice_info1 or choice_info1[0] != existing_elem:
-                    is_compatible = False
-                    break
-
-                # Check 2: Is elem_candidate the best choice for existing_elem in sets[current_set_idx]?
-                # best_choice_from_s_to_t[existing_elem_set_idx][current_set_idx][existing_elem]
-                choice_info2 = best_choice_from_s_to_t[existing_elem_set_idx][
-                    current_set_idx
-                ][existing_elem]
-                if not choice_info2 or choice_info2[0] != elem_candidate:
-                    is_compatible = False
-                    break
-
-            if is_compatible:
-                partial_clique_elements.append(elem_candidate)
-                find_cliques_recursive(
-                    current_set_idx + 1, partial_clique_elements
-                )
-                partial_clique_elements.pop()  # Backtrack
-
-    find_cliques_recursive(0, [])
-    return found_cliques
 
 
 def find_cliques1(
@@ -280,6 +165,10 @@ def get_pairings(
 ) -> dict[tuple[int, int], list[tuple[T, T]]]:
     pairings: dict[tuple[int, int], list[tuple[T, T]]] = dict()
 
+    print("Distance tensor:")
+    for i, j, st1, st2 in distance_tensor:
+        print(f"{i}, {j} - {st1} ° {st2} = {distance_tensor[(i, j, st1, st2)]}")
+
     for i, set1 in enumerate(sets):
         for j, set2 in enumerate(sets):
             # Step 1: Compute the minimum distance for each elements
@@ -296,7 +185,7 @@ def get_pairings(
                 for b in set2:
                     if (j, b) in taken_elements:
                         continue
-                    dist = distance_tensor[i, j, a, b]
+                    dist = distance_tensor[(i, j, a, b)]
                     if dist < min_dist:
                         mins, min_dist = set([b]), dist
                     elif dist == min_dist and mins:
@@ -314,7 +203,7 @@ def get_pairings(
                 for a in set1:
                     if (i, a) in taken_elements:
                         continue
-                    dist = distance_tensor[i, j, a, b]
+                    dist = distance_tensor[(i, j, a, b)]
                     if dist < min_dist:
                         mins, min_dist = set([a]), dist
                     elif dist == min_dist and mins:
@@ -326,6 +215,7 @@ def get_pairings(
 
             # Step 2: Create possible pairings if reciprocity is satisfied
             pairings[i, j] = []
+            print("taken: ", taken_elements)
             for a in set1:
                 if (i, a) in taken_elements:
                     continue
@@ -333,7 +223,10 @@ def get_pairings(
                     if (j, b) in taken_elements:
                         continue
                     if a in min_to_2[b] and b in min_to_1[a]:
-                        print(f"  ↔ pairing ({i},{a!r}) ↔ ({j},{b!r})")
+                        print(f"Min {b}: {min_to_2[b]} and {a} : {min_to_1[a]}")
+                        print(
+                            f" pairing ({i},{a!r}) ↔ ({j},{b!r}) distance {distance_tensor[(i, j, a, b)]} == {distance_tensor[(j, i, b, a)]}"
+                        )
                         pairings[i, j].append((a, b))
 
     return pairings
@@ -357,14 +250,12 @@ def find_potential_cliques(
                 if (i, element) not in taken_elements
             )
             for j in range(i):
-                pairings_j_i = pairings[j, i]
-                if not pairings_j_i:
-                    valid_elements = set()
-                    continue
-                allowed = {b for a, b in pairings_j_i if a == clique[j]}
+                if not valid_elements:  # loop is doomed
+                    break
+                allowed = {b for a, b in pairings[j, i] if a == clique[j]}
                 valid_elements &= allowed
             if not valid_elements:
-                break
+                continue
             for element in valid_elements:
                 ncliques.append(clique + (element,))
         cliques = ncliques
@@ -392,6 +283,7 @@ def find_cliques(
     # take the one with the lowest total distance and marks it's elements as taken
     # then recompute potential cliques
     while True:
+        print("in find_cliques\n\n")
         potential_cliques = find_potential_cliques(
             sets, distance_tensor, taken_elements
         )
@@ -521,7 +413,7 @@ def problem1(task="2dc579da.json"):
             print(f"st: {st}")
 
     d, op = extended_edit_distance(
-        abstracted_sts[-2][-1], abstracted_sts[-1][-1]
+        abstracted_sts[-2][-1], abstracted_sts[-1][-1], tuple()
     )
     print(f"d: {d}, op: {op}")
     print(f"Initial: {abstracted_sts[-2][-1]}")
@@ -553,11 +445,19 @@ def problem(task="2dc579da.json"):
     # Reconstruct each list of components for each grid
     abstracted_sts: list[tuple[KNode[MoveValue], ...]] = []
     offset = 0
-    for st_by_go, go_sorted in objects_and_syntax_trees:
+    for i, (st_by_go, go_sorted) in enumerate(objects_and_syntax_trees):
         abstracted_sts.append(symbolized[offset : offset + len(go_sorted)])
-        offset += len(go_sorted)
-        for st in symbolized[offset : offset + len(go_sorted)]:
+        n = len(go_sorted)
+        print(f"Program n°{i}")
+
+        for st in symbolized[offset : offset + n]:
             print(f"st: {st}")
+            unsymbolized = unsymbolize(st, symbol_table)
+            display_objects_syntax_trees(
+                [unsymbolized], GridOperations.proportions(grids[i])
+            )
+
+        offset += n
 
     d, op = extended_edit_distance(
         abstracted_sts[-2][-1], abstracted_sts[-1][-1], symbol_table
@@ -567,11 +467,11 @@ def problem(task="2dc579da.json"):
     abstracted_sets = [set(syntax_trees) for syntax_trees in abstracted_sts]
 
     def distance_f(a: KNode[MoveValue] | None, b: KNode[MoveValue] | None):
+        """
         symbolic_distance = extended_edit_distance(a, b, symbol_table)[0]
         shallow_literal_a = a
         shallow_literal_b = b
         compute_literal = False
-        """
         if isinstance(a, SymbolNode):
             shallow_literal_a = reduce_abstraction(
                 symbol_table[a.index.value], a.parameters
@@ -594,8 +494,11 @@ def problem(task="2dc579da.json"):
                 )
             )
         """
-            # Regularize by the unsymbolized version, should not change anything if both contains no symbol
-        return float(extended_edit_distance(a, b, symbol_table)[0])
+        # Regularize by the unsymbolized version, should not change anything if both contains no symbols
+        c = unsymbolize(a, symbol_table)
+        d = unsymbolize(b, symbol_table)
+
+        return float(extended_edit_distance(c, d, symbol_table)[0])
 
     # Input cliques
     cliques = find_cliques(abstracted_sets[:3], distance_f)
@@ -610,17 +513,102 @@ def problem(task="2dc579da.json"):
             sorted_clique_elements = sorted(
                 list(clique_data), key=lambda x: x[0]
             )
-            for element in sorted_clique_elements:
+            for i, element in enumerate(sorted_clique_elements):
                 ind, st = element
                 print(f"{ind}: {st}")
                 unsymbolized = unsymbolize(st, symbol_table)
                 print(unsymbolized)
-                display_objects_syntax_trees([unsymbolized], GridOperations.proportions(grids[ind]))
+                for j in range(i):
+                    ind2, st2 = sorted_clique_elements[j]
+                    dist, ops = extended_edit_distance(
+                        unsymbolized,
+                        unsymbolize(st2, symbol_table),
+                        symbol_table,
+                    )
+                    print(
+                        f"Distance between {ind}: {i, st}={unsymbolized} and {ind2}: {j, st2}={unsymbolize(st2, symbol_table)}: {float(dist)}\n",
+                        f"Operations: {ops}",
+                    )
+                display_objects_syntax_trees(
+                    [unsymbolized], GridOperations.proportions(grids[ind])
+                )
 
             # TO - DO
 
     return symbol_table
 
 
+def test_distance_symmetrical():
+    # Regression issue
+    node_6 = SumNode(
+        children=frozenset(
+            [
+                RepeatNode(
+                    node=PrimitiveNode(value=MoveValue(0)), count=CountValue(8)
+                )
+            ]
+        )
+    )
+
+    node_17 = RootNode(
+        node=node_6,
+        position=CoordValue(Coord(5, 1)),
+        colors=PaletteValue(frozenset({4})),
+    )
+
+    node_22 = ProductNode(
+        children=(
+            node_17,
+            RootNode(
+                node=NoneValue(None),
+                position=CoordValue(Coord(5, 1)),
+                colors=PaletteValue(frozenset({1})),
+            ),
+        )
+    )
+
+    node_34 = RootNode(
+        node = NoneValue(None),
+        position = CoordValue(Coord(1, 2)),
+        colors = PaletteValue(frozenset({8})),
+    )
+
+    print(node_22, node_34)
+    d_1, ops_1 = extended_edit_distance(node_22, node_34, tuple())
+    d_2, ops_2 = extended_edit_distance(node_34, node_22, tuple())
+    print(f"d_1: {d_1}, ops_1: {ops_1}")
+    print(f"d_2: {d_2}, ops_2: {ops_2}")
+
+    # Test 2
+    node_19 = RootNode(
+        node = SumNode(
+            children=frozenset(
+                [
+                    RepeatNode(
+                        node=RepeatNode(node=PrimitiveNode(value=MoveValue(0)), count=CountValue(3)), count=CountValue(4)
+                    )
+                ]
+            )
+        ),
+        position = CoordValue(Coord(3, 3)),
+        colors = PaletteValue(frozenset({2})),
+    )
+
+    node_9 = RootNode(
+        node = ProductNode(children=(
+            PrimitiveNode(value=MoveValue(0)),
+            PrimitiveNode(value=MoveValue(6)),
+        )),
+        position = CoordValue(Coord(1, 3)),
+        colors = PaletteValue(frozenset({8})),
+    )
+
+    print(node_19, node_9)
+    d_1, ops_1 = extended_edit_distance(node_19, node_9, tuple())
+    d_2, ops_2 = extended_edit_distance(node_9, node_19, tuple())
+    print(f"d_1: {d_1}, ops_1: {ops_1}")
+    print(f"d_2: {d_2}, ops_2: {ops_2}")
+
 if __name__ == "__main__":
     sym = problem()
+    # test_distance_symmetrical()

@@ -57,6 +57,8 @@ Non-trial combinations:
 import functools
 import math
 import re
+import copy
+
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict, deque
 from collections.abc import Collection
@@ -887,7 +889,7 @@ def get_iterator_old(knodes: Collection[KNode[T]]) -> frozenset[KNode[T]]:
     if all(
         isinstance(n, PrimitiveNode) and isinstance(n.value, MoveValue)
         for n in nodes
-    ):
+    ) or all(isinstance(n, RepeatNode) for n in nodes):
         for start_node in nodes:
             for step in [1, -1]:
                 expected = {
@@ -912,11 +914,24 @@ def get_iterator(knodes: Collection[KNode[T]]) -> frozenset[KNode[T]]:
     nodes = frozenset(knodes)
     if len(nodes) < 2:
         return frozenset(nodes)
-    if all(
-        isinstance(n, PrimitiveNode) and isinstance(n.value, MoveValue)
-        for n in nodes
-    ) or all(isinstance(n, RepeatNode) for n in nodes):
-        for start_node in nodes:
+    if (
+        all(
+            isinstance(n, PrimitiveNode) and isinstance(n.value, MoveValue)
+            for n in nodes
+        )
+        or all(isinstance(n, RepeatNode) for n in nodes)
+        or all(
+            isinstance(n, ProductNode)
+            and all(
+                isinstance(p, PrimitiveNode) and isinstance(p.value, MoveValue)
+                for p in n.children
+            )
+            for n in nodes
+        )
+    ):
+        # Guarantee a fixed order
+        n_list = sorted(list(nodes), key=lambda x: str(x))
+        for start_node in n_list:
             for step in [1, -1]:
                 expected = {
                     shift(start_node, step * k) for k in range(len(nodes))
@@ -2815,7 +2830,7 @@ def unsymbolize(knode: KNode[T], symbol_table: Sequence[KNode[T]]) -> KNode[T]:
         knode: KNode containing NestedNodes and SymbolNodes.
         symbol_table: Symbol table containing all the templates referenced by NestedNodes and SymbolNodes
     """
-    nnode = knode
+    nnode = copy.deepcopy(knode)
     # Step 1: First unsymbolize SymbolNode
     nnode = resolve_symbols(nnode, symbol_table)
 

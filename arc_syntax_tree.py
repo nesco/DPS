@@ -161,7 +161,11 @@ def freeman_node_to_root_node(
             CoordValue(start_position),
             PaletteValue(frozenset(colors)),
         )
-    program = encode_freeman_to_knode(freeman_node)
+    program = (
+        prog
+        if (prog := encode_freeman_to_knode(freeman_node)) != None
+        else NoneValue(None)
+    )
     return RootNode(
         program, CoordValue(start_position), PaletteValue(frozenset(colors))
     )

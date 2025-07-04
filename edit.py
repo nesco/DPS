@@ -28,8 +28,10 @@ from localtypes import (
 from utils.tree_functionals import (
     RoseNode,
     breadth_first_preorder_bitlengthaware,
-    cached_hash,
+    # cached_hash,
 )
+
+cached_hash = hash
 
 T = TypeVar("T")
 
@@ -97,7 +99,7 @@ class Delete(BitLengthAware):
         return self.value.bit_length()
 
     def __str__(self):
-        return f"Delete {self.value} from a collection"
+        return f"Delete {self.value} {(f' ON key: {self.key}') if self.key is not None else ''}"
 
 
 @dataclass(frozen=True)
@@ -119,7 +121,9 @@ class Substitute(BitLengthAware):
 
     def __str__(self):
         # return f"Substitute: {self.before} |-> {self.after} on key: {self.key}"
-        return f"Substitute: object |-> {self.after}"
+        return f"Substitute: object |-> {self.after}" + (
+            f" On key: {self.key}" if self.key is not None else ""
+        )
 
 
 # Helpers
@@ -437,8 +441,8 @@ class Prune(BitLengthAware):
     def __str__(self):
         if isinstance(self.key.value, tuple):
             field, index = self.key.value
-            return f"Keeping element at key {field}[{index}]"
-        return f"Keeping element at key {self.key}"
+            return f"Keeping element at key {field}[{index}] \n next: {self.then}"
+        return f"Keeping element at key {self.key}\n next: {self.then}"
 
 
 @dataclass(frozen=True)
@@ -459,7 +463,7 @@ class Graft(BitLengthAware):
         )
 
     def __str__(self):
-        return f"Attaching element at: {self.parent}[{self.key if self.key else 'None'}]"
+        return f"Attaching element at: {self.parent}[{self.key if self.key else 'None'}]\n Element: {self.first}"
 
 
 @dataclass(frozen=True)
@@ -476,7 +480,7 @@ class Resolve(BitLengthAware):
         return self.inner.bit_length()
 
     def __str__(self):
-        return "Resolving the source"
+        return f"Resolving to {self.inner}"
 
 
 def collect_links(
@@ -536,6 +540,7 @@ def compute_bit_length(obj: Any) -> int:
         return 1
 
 
+# TO-DO: Find a way to allow several Prune operations without complexity explosion?
 def extended_edit_distance(
     source: BitLengthAware | None,
     target: BitLengthAware | None,
@@ -559,6 +564,34 @@ def extended_edit_distance(
         and operations is a tuple of ExtendedOperation instances detailing the transformation.
 
     """
+
+    # TO-DO: Move this in helper, same for recursive_edit_distance
+    match source, target:
+        case Resolvable(), Resolvable() if source.eq_ref(target):
+            pass
+        case Resolvable(), Resolvable():
+            d, op = extended_edit_distance(
+                source.resolve(symbol_table),
+                target.resolve(symbol_table),
+                symbol_table,
+            )
+            return d, Resolve(None, op)
+        case Resolvable(), _:
+            return extended_edit_distance(
+                source.resolve(symbol_table),
+                target,
+                symbol_table,
+            )
+            return d, Resolve(None, op)
+        case _, Resolvable():
+            return extended_edit_distance(
+                source,
+                target.resolve(symbol_table),
+                symbol_table,
+            )
+        case _, _:
+            pass
+
     if source is None and target is None:
         return 0, None  # Maybe Identity(tuple())?
 
@@ -591,7 +624,6 @@ def extended_edit_distance(
         min_distance, min_operation = recursive_edit_distance(
             source_obj, target_obj, symbol_table
         )
-
         # Optimization idea:
         # compute the depth and only evaluate the smallest against the childs of the other?
 
@@ -602,7 +634,12 @@ def extended_edit_distance(
             #    KeyValue(parent_field[child]), source_obj, hash_to_object[child]
             # )
             # Computing the distance to the child
-            child_distance, child_operation = helper(child, target_node)
+            # Only allow one Prune operation
+            # child_distance, child_operation = helper(child, target_node)
+            child_distance, child_operation = recursive_edit_distance(
+                hash_to_object[child], hash_to_object[target_node], symbol_table
+            )
+
             operation = Prune(parent_field[child], child_operation)
             # Trimming then transforming
             distance = (
@@ -622,7 +659,11 @@ def extended_edit_distance(
             #     KeyValue(parent_field[child]), target_obj, hash_to_object[child]
             # )
             # Computing the distance to the child
-            child_distance, child_operation = helper(source_node, child)
+            # child_distance, child_operation = helper(source_node, child)
+            # Only allow one Graft operation
+            child_distance, child_operation = recursive_edit_distance(
+                hash_to_object[source_node], hash_to_object[child], symbol_table
+            )
             operation = Graft(
                 parent_field[child], target_obj, child_operation
             )  # transformaing then attaching
@@ -665,6 +706,7 @@ def recursive_edit_distance(
     # Handle the case where the element to compare are reference to a lookup table, possibly with parameters
     # You don't want to compare them literally if they don't point to the same element
     # If both are references then you compute the distance of the resolution of the source to the resolution of the target
+    # TO-DO: Move this in helper, same for extended_edit_distance
     match source, target:
         case Resolvable(), Resolvable() if source.eq_ref(target):
             pass

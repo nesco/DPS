@@ -19,12 +19,12 @@ from kolmogorov_tree import (
     unsymbolize_all,
 )
 from localtypes import Colors, Coord, Coords, Proportions
+from utils.display import display_objects_syntax_trees
 from utils.grid import (
     PointsOperations,
     coords_to_points,
     points_to_coords,
 )
-from utils.display import display_objects_syntax_trees
 from utils.loader import train_task_to_grids
 
 
@@ -226,4 +226,7 @@ if __name__ == "__main__":
     )
     syntax_by_object, sorted_grid_object = dag_to_syntax_trees(grid_object_dag)
 
-    display_objects_syntax_trees([syntax_by_object[obj] for obj in sorted_grid_object], Proportions(11, 11))
+    display_objects_syntax_trees(
+        [syntax_by_object[obj] for obj in sorted_grid_object],
+        Proportions(11, 11),
+    )
