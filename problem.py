@@ -43,121 +43,6 @@ sys.setrecursionlimit(10**9)
 T = TypeVar("T")
 type IndexedElement[T] = tuple[int, T]
 
-
-def find_cliques1(
-    sets: list[set[T]], distance: Callable[[T | None, T | None], float]
-) -> list[set[IndexedElement[T]]]:
-    # Step 1: Try to make associations through pairwise comparisons
-    associations = defaultdict(lambda: defaultdict(set))
-    for (i, variant_i), (j, variant_j) in combinations(enumerate(sets), 2):
-        if not variant_i or not variant_j:
-            continue  # No variants to match
-
-        edit_matrix = [
-            [(distance(a, b), a, b) for b in variant_j] for a in variant_i
-        ]
-
-        while edit_matrix and any(edit_matrix):
-            # min_dist, a, b = max(
-            #    (item for row in edit_matrix for item in row if item),
-            #        key=lambda x: distance(None, x[1]) + distance(None, x[2]) - x[0]
-            #    )
-            min_dist, a, b = min(
-                (item for row in edit_matrix for item in row if item),
-                key=lambda x: x[0],
-            )
-
-            # If adding the association reduces the total cost, add it
-            if min_dist < distance(None, a) + distance(None, b):
-                associations[i][a].add((j, b))
-                associations[j][b].add((i, a))
-
-            # Remove processed items
-            edit_matrix = [
-                [item for item in row if item[1] != a and item[2] != b]
-                for row in edit_matrix
-                if any(item[1] != a for item in row)
-            ]
-
-    # Step 2: Remove associations that violates transitivity
-    # You want to only retains cliques / complete subgraphes
-    changed = True
-    while changed:
-        changed = False
-        # For every sets, for each of it's elements
-        # Go to the elements it's associated with and check
-        # their are only associated with elements its associated with
-        for i in associations:
-            for a in list(associations[i].keys()):
-                for j, b in list(associations[i][a]):
-                    for k, c in list(associations[j][b]):
-                        # (i, a) is not in itself as the identity transition is not saved
-                        if (k, c) not in associations[i][a] and (k, c) != (
-                            i,
-                            a,
-                        ):
-                            # Transitivity violation found, remove the weakest link
-                            links = [
-                                (
-                                    distance(None, a)
-                                    + distance(None, b)
-                                    - distance(a, b),
-                                    (i, a),
-                                    (j, b),
-                                ),
-                                (
-                                    distance(None, b)
-                                    + distance(None, c)
-                                    - distance(b, c),
-                                    (j, b),
-                                    (k, c),
-                                ),
-                                (
-                                    distance(None, a)
-                                    + distance(None, c)
-                                    - distance(a, c),
-                                    (i, a),
-                                    (k, c),
-                                ),
-                            ]
-                            _, (x, y), (z, w) = min(links, key=lambda x: x[0])
-                            associations[x][y].discard((z, w))
-                            associations[z][w].discard((x, y))
-                            changed = True
-
-                            # If an association becomes empty, remove it
-                            if not associations[x][y]:
-                                del associations[x][y]
-                            if not associations[z][w]:
-                                del associations[z][w]
-
-    # Step 3: Cluster the clique elements into equivalence classes
-
-    cliques = []
-    processed = set()
-    for i in associations:
-        for a in associations[i]:
-            if (i, a) not in processed:
-                clique = {(i, a)}
-                to_process = [(i, a)]
-                while to_process:
-                    current = to_process.pop()
-                    for associated in associations[current[0]][current[1]]:
-                        if associated not in clique:
-                            clique.add(associated)
-                            to_process.append(associated)
-
-                # Only keep clusters with one element from each set
-                if len(clique) == len(sets) and len(
-                    set(i for i, _ in clique)
-                ) == len(sets):
-                    cliques.append(clique)
-
-                processed.update(clique)
-
-    return cliques
-
-
 def get_pairings(
     sets: list[set[T]],
     distance_tensor: dict[tuple[int, int, T, T], float],
@@ -223,7 +108,6 @@ def get_pairings(
                     if (j, b) in taken_elements:
                         continue
                     if a in min_to_2[b] and b in min_to_1[a]:
-                        print(f"Min {b}: {min_to_2[b]} and {a} : {min_to_1[a]}")
                         print(
                             f" pairing ({i},{a!r}) ↔ ({j},{b!r}) distance {distance_tensor[(i, j, a, b)]} == {distance_tensor[(j, i, b, a)]}"
                         )
