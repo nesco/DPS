@@ -13,7 +13,7 @@ Operations occurs on four main data format: Grid, Mask, Points, and Coords
 
 from collections.abc import Callable, Mapping
 
-from constants import COLORS
+from constants import COLORS, BG_COLOR
 from localtypes import (
     Box,
     Color,
@@ -78,6 +78,10 @@ class GridOperations:
     """Basic grid operations and constructors"""
 
     # Constructors
+    @staticmethod
+    def negative_ones(height: int, width: int) -> ColorGrid:
+        return [[-1 for _ in range(width)] for _ in range(height)]
+
     @staticmethod
     def zeros(height: int, width: int) -> ColorGrid:
         return [[0 for _ in range(width)] for _ in range(height)]
@@ -149,7 +153,7 @@ class GridOperations:
                 f"Given height: {final_height} is too small, it should be at least: {nheight}"
             )
         # Constructing the scaffold, and filling it with the extracted points
-        grid = GridOperations.zeros(final_height, final_width)
+        grid = GridOperations.negative_ones(final_height, final_width)
         GridOperations.populate(grid, points)
 
         return grid
@@ -181,21 +185,62 @@ class GridOperations:
             )
 
     @staticmethod
-    def print(grid: ColorGrid):
+    def print_old(grid: ColorGrid):
         height = len(grid)
         width = len(grid[0])
 
-        print(f"{COLORS[5]}   " * (width + 2), "\033[0m")
+        print(f"{BG_COLOR}   " * (width + 2), "\033[0m")
 
         for row in range(height):
-            print(f"{COLORS[5]}   ", end="")
+            print(f"{BG_COLOR}   ", end="")
             for col in range(width):
                 # Print with the selected color
                 print(f"{COLORS[grid[row][col]]}   ", end="")
             # Reset color and move to next line
-            print(f"{COLORS[5]}   ", "\033[0m")
+            print(f"{BG_COLOR}   ", "\033[0m")
 
-        print(f"{COLORS[5]}   " * (width + 2), "\033[0m")
+        print(f"{BG_COLOR}   " * (width + 2), "\033[0m")
+
+    @staticmethod
+    def print(grid: ColorGrid):
+        RESET     = "\033[0m"
+        FG_BORDER = "\033[90m"    # bright-black (grey)
+        BG_BORDER = BG_COLOR    # black background for all grid-lines
+
+        height = len(grid)
+        width  = len(grid[0])
+        cell_w = 4
+        blank  = " " * cell_w
+
+        # pre-build the three border templates
+        hline = "─" * cell_w
+        top   = f"{BG_BORDER}{FG_BORDER}┌" + "┬".join([hline]*width) + "┐"
+        mid   = f"{BG_BORDER}{FG_BORDER}├" + "┼".join([hline]*width) + "┤"
+        bot   = f"{BG_BORDER}{FG_BORDER}└" + "┴".join([hline]*width) + "┘"
+
+        # top border
+        print(top + RESET)
+
+        for r in range(height):
+            # left border
+            print(f"{BG_BORDER}{FG_BORDER}│", end="")
+
+            for c in range(width):
+                # the colored cell
+                print(f"{COLORS[grid[r][c]]}{blank}{RESET}", end="")
+                # vertical grid-line with its own BG
+                print(f"{BG_BORDER}{FG_BORDER}│", end="")
+
+            # finish the row
+            print(RESET)
+
+            # middle border (if not last row)
+            if r < height - 1:
+                print(mid + RESET)
+
+        # bottom border
+        print(bot + RESET)
+
 
 
 class MaskOperations:

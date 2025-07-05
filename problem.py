@@ -6,7 +6,9 @@ Solve ARC-AGI Problems here
 # Bug: Distance is not symmetric, I have a 10 between s_22 and s_34 sometimes
 
 import sys
-from collections import defaultdict
+import random
+
+from collections import defaultdict, Counter
 from collections.abc import Callable, Set
 from itertools import combinations
 from typing import TypeVar
@@ -49,10 +51,6 @@ def get_pairings(
     taken_elements: set[IndexedElement[T]] = set(),
 ) -> dict[tuple[int, int], list[tuple[T, T]]]:
     pairings: dict[tuple[int, int], list[tuple[T, T]]] = dict()
-
-    print("Distance tensor:")
-    for i, j, st1, st2 in distance_tensor:
-        print(f"{i}, {j} - {st1} ° {st2} = {distance_tensor[(i, j, st1, st2)]}")
 
     for i, set1 in enumerate(sets):
         for j, set2 in enumerate(sets):
@@ -148,6 +146,47 @@ def find_potential_cliques(
     return [set(enumerate(clique)) for clique in cliques]
 
 
+def find_cliques1(
+    sets: list[set[T]], distance: Callable[[T | None, T | None], float]
+) -> list[set[IndexedElement[T]]]:
+    cliques: list[set[IndexedElement[T]]] = []
+    # Step 1: Compute the distance tensor
+    distance_tensor: dict[tuple[int, int, T, T], float] = dict()
+    for i, set1 in enumerate(sets):
+        for j, set2 in enumerate(sets):
+            if i == j:
+                continue
+            for a in set1:
+                for b in set2:
+                    distance_tensor[i, j, a, b] = distance(a, b)
+
+    print("Distance tensor:")
+    for i, j, st1, st2 in distance_tensor:
+        print(f"{i}, {j} - {st1} ° {st2} = {distance_tensor[(i, j, st1, st2)]}")
+
+    taken_elements: set[IndexedElement[T]] = set()
+    # Step 2: Compute potential cliques, while there is a potential clique
+    # take the one with the lowest total distance and marks it's elements as taken
+    # then recompute potential cliques
+    while True:
+        potential_cliques = find_potential_cliques(
+            sets, distance_tensor, taken_elements
+        )
+        if not potential_cliques:
+            break
+
+        # pick the clique of minimal total distance
+        clique = min(
+            potential_cliques, key=lambda c: total_distance(c, distance)
+        )
+        cliques.append(clique)
+
+        # mark its members as taken
+        taken_elements.update(clique)
+        print(f"taken_elements now = {taken_elements}")
+        print(f"clique now = {clique}")
+    return cliques
+
 def find_cliques(
     sets: list[set[T]], distance: Callable[[T | None, T | None], float]
 ) -> list[set[IndexedElement[T]]]:
@@ -162,22 +201,48 @@ def find_cliques(
                 for b in set2:
                     distance_tensor[i, j, a, b] = distance(a, b)
 
+    # print("Distance tensor:")
+    # for i, j, st1, st2 in distance_tensor:
+    #     print(f"{i}, {j} - {st1} ° {st2} = {distance_tensor[(i, j, st1, st2)]}")
+
     taken_elements: set[IndexedElement[T]] = set()
     # Step 2: Compute potential cliques, while there is a potential clique
     # take the one with the lowest total distance and marks it's elements as taken
     # then recompute potential cliques
     while True:
-        print("in find_cliques\n\n")
         potential_cliques = find_potential_cliques(
             sets, distance_tensor, taken_elements
         )
         if not potential_cliques:
             break
 
-        # pick the clique of minimal total distance
-        clique = min(
-            potential_cliques, key=lambda c: total_distance(c, distance)
-        )
+        # -------- 1️⃣  original criterion: minimal total distance
+        # min_dist = min(total_distance(c, distance) for c in potential_cliques)
+        # best_by_dist = [
+        #     c for c in potential_cliques
+        #     if total_distance(c, distance) == min_dist
+        # ]
+        best_by_dist = potential_cliques
+
+        # -------- 2️⃣  tie-breaker: edge-rarity (variant #3)
+        if len(best_by_dist) == 1:
+                clique = best_by_dist[0]
+        else:
+            pair_freq = Counter()
+            for C in best_by_dist:
+                for u, v in combinations(C, 2):
+                    pair_freq[(u, v)] += 1
+
+            def rarity_score(C, *, eps=1e-9):
+                # smaller is better
+                base = sum(1.0 / pair_freq[(u, v)] for u, v in combinations(C, 2))
+                return base + random.random() * eps   # tiny ε to break exact ties
+
+            print(f"\nsorted cliques = {sorted(best_by_dist, key=rarity_score)}\n")
+            clique = min(best_by_dist, key=rarity_score)
+
+
+
         cliques.append(clique)
 
         # mark its members as taken
