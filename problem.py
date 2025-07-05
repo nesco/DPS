@@ -18,7 +18,7 @@ from edit import (
     apply_transformation,
     extended_edit_distance,
 )
-from hierarchy import grid_to_syntax_trees
+from hierarchy import grid_to_syntax_trees, grid_to_components_by_colors, component_to_distribution, components_by_colors_to_grid_object_dag
 from kolmogorov_tree import (
     Coord,
     CoordValue,
@@ -35,8 +35,8 @@ from kolmogorov_tree import (
     full_symbolization,
     unsymbolize,
 )
-from utils.display import display_objects_syntax_trees
-from utils.grid import GridOperations, PointsOperations
+from utils.display import display_objects_syntax_trees, display_components
+from utils.grid import GridOperations, PointsOperations, CoordsOperations
 from utils.loader import train_task_to_grids
 
 sys.setrecursionlimit(10**9)
@@ -375,6 +375,10 @@ def problem1(task="2dc579da.json"):
 def problem(task="2dc579da.json"):
     inputs, outputs, input_test, output_test = train_task_to_grids(task)
     grids = inputs + outputs + [input_test]
+
+    # In a grid some element is ill transcribed in syntax tree
+    # The issue either come of how the inclusion is computed in the DAG
+    # or during the multicolor transcription
 
     objects_and_syntax_trees = [grid_to_syntax_trees(grid) for grid in grids]
 

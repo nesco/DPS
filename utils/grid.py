@@ -301,7 +301,6 @@ class MaskOperations:
             [f(mask[row][col]) for col in range(width)] for row in range(height)
         ]
 
-
 class PointsOperations:
     """Operations for point-based grid representation"""
 

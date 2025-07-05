@@ -344,10 +344,11 @@ def dag_to_syntax_trees(grid_object_dag: Mapping[GridObject, Set[GridObject]]):
         GridObject,
         ProductNode[MoveValue] | SumNode[MoveValue] | RootNode[MoveValue],
     ] = dict()
-    # track replaced syntax trees, as they can be part of several objectq
-    replaced = set()
+    # track replaced syntax trees, as they can be part of several objects
+    # replaced = set() # The issue is there, it can lead to vanishing objects
 
     for object in sorted_grid_objects:
+        replaced = set() # TODO: Test this extensively
         # Get dependencies
         dependencies = grid_object_dag[object]
         current_root = root_by_grid_object[object]
@@ -695,7 +696,6 @@ def grid_to_syntax_trees(
     grid_object_dag = components_by_colors_to_grid_object_dag(
         components_by_colors
     )
-
     # Step 3: Convert the DAG to syntax trees
     syntax_trees, sorted_grid_objects = dag_to_syntax_trees(grid_object_dag)
 
