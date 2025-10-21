@@ -45,7 +45,8 @@ sys.setrecursionlimit(10**9)
 T = TypeVar("T")
 type IndexedElement[T] = tuple[int, T]
 
-def get_pairings(
+# Ideas: not only the minimum but the two-minimuma so it blocks less?
+def get_pairings_old(
     sets: list[set[T]],
     distance_tensor: dict[tuple[int, int, T, T], float],
     taken_elements: set[IndexedElement[T]] = set(),
@@ -107,18 +108,86 @@ def get_pairings(
                         continue
                     if a in min_to_2[b] and b in min_to_1[a]:
                         print(
-                            f" pairing ({i},{a!r}) ↔ ({j},{b!r}) distance {distance_tensor[(i, j, a, b)]} == {distance_tensor[(j, i, b, a)]}"
+                            f" pairing ({i},{a!r}) ↔ ({j},{b!r}) "
                         )
                         pairings[i, j].append((a, b))
 
     return pairings
 
+def get_pairings(
+    sets: list[Set[T]],
+    distance_tensor: dict[tuple[int, int, T, T], float],
+    taken_elements: Set[tuple[int, T]] = set(),
+    *,                                 # ← keyword-only from here on
+    k: int = 1,              # k-reciprocal nearest neighbours
+) -> dict[tuple[int, int], list[tuple[T, T]]]:
+    """
+    Return, for every unordered pair of distinct sets (i,j)  with i < j,
+    a list of element pairs (a∈sets[i],  b∈sets[j]) such that
+
+        • b is among the k closest *remaining* elements to a in set-j, and
+        • a is among the k closest *remaining* elements to b in set-i.
+
+    If k is None or k <= 0 the whole other set is considered
+    (“reciprocal *any* neighbour”).
+    """
+    pairings: dict[tuple[int, int], list[tuple[T, T]]] = {}
+
+    # -----------------------------------------------------------------
+    # helper: k-nearest (with tie inclusion) from src_set to dst_set
+    # -----------------------------------------------------------------
+    def knearest(src_id: int, dst_id: int,
+                 src_set: Set[T], dst_set: Set[T]) -> dict[T, Set[T]]:
+        res: dict[T, Set[T]] = {}
+        for a in src_set:
+            if (src_id, a) in taken_elements:
+                continue
+
+            # build & sort the distance list once
+            dlist = [
+                (distance_tensor[(src_id, dst_id, a, b)], b)
+                for b in dst_set
+                if (dst_id, b) not in taken_elements
+            ]
+            if not dlist:
+                continue
+            dlist.sort(key=lambda x: x[0])  # ascending by distance
+
+            if k <= 0 or k >= len(dlist):
+                cutoff = dlist[-1][0]        # keep them all
+            else:
+                cutoff = dlist[k - 1][0]      # distance of the k-th element
+
+            res[a] = {b for dist, b in dlist if dist <= cutoff}
+        return res
+
+    # -----------------------------------------------------------------
+    # main double loop over unordered pairs of the input sets
+    # -----------------------------------------------------------------
+    nsets = len(sets)
+    for i in range(nsets):
+        set_i = sets[i]
+        for j in range(i + 1, nsets):
+            set_j = sets[j]
+
+            # k-NN maps (a → {b₁,b₂,…}) and (b → {a₁,a₂,…})
+            nn_i = knearest(i, j, set_i, set_j)
+            nn_j = knearest(j, i, set_j, set_i)
+
+            # reciprocal test
+            pij: list[tuple[T, T]] = []
+            for a, bs in nn_i.items():
+                for b in bs:
+                    if a in nn_j.get(b, ()):
+                        pij.append((a, b))
+            pairings[(i, j)] = pij
+    return pairings
 
 def find_potential_cliques(
     sets, distance_tensor, taken_elements
 ) -> list[set[IndexedElement[T]]]:
     # Step 1: Compute the pairings
-    pairings = get_pairings(sets, distance_tensor, taken_elements)
+    pairings = get_pairings(sets, distance_tensor, taken_elements, k=2)
 
     # Step 2: Find cliques under transitivity
     cliques: list[tuple[T, ...]] = pairings[0, 1]
@@ -146,7 +215,7 @@ def find_potential_cliques(
     return [set(enumerate(clique)) for clique in cliques]
 
 
-def find_cliques1(
+def find_cliques(
     sets: list[set[T]], distance: Callable[[T | None, T | None], float]
 ) -> list[set[IndexedElement[T]]]:
     cliques: list[set[IndexedElement[T]]] = []
@@ -187,7 +256,7 @@ def find_cliques1(
         print(f"clique now = {clique}")
     return cliques
 
-def find_cliques(
+def find_cliques1(
     sets: list[set[T]], distance: Callable[[T | None, T | None], float]
 ) -> list[set[IndexedElement[T]]]:
     cliques: list[set[IndexedElement[T]]] = []
@@ -217,11 +286,11 @@ def find_cliques(
             break
 
         # -------- 1️⃣  original criterion: minimal total distance
-        # min_dist = min(total_distance(c, distance) for c in potential_cliques)
-        # best_by_dist = [
-        #     c for c in potential_cliques
-        #     if total_distance(c, distance) == min_dist
-        # ]
+        min_dist = min(total_distance(c, distance) for c in potential_cliques)
+        best_by_dist = [
+            c for c in potential_cliques
+            if total_distance(c, distance) == min_dist
+        ]
         best_by_dist = potential_cliques
 
         # -------- 2️⃣  tie-breaker: edge-rarity (variant #3)
@@ -250,7 +319,6 @@ def find_cliques(
         print(f"taken_elements now = {taken_elements}")
         print(f"clique now = {clique}")
     return cliques
-
 
 def total_distance(
     elements: Set[IndexedElement[T]], distance: Callable[[T, T], float]
@@ -372,6 +440,9 @@ def problem1(task="2dc579da.json"):
     return symbol_table
 
 
+# TODO: Debug differences
+# PYTHONHASHSEED=0  python3 problem.py
+# PYTHONHASHSEED=2  python3 problem.py
 def problem(task="2dc579da.json"):
     inputs, outputs, input_test, output_test = train_task_to_grids(task)
     grids = inputs + outputs + [input_test]
@@ -406,9 +477,9 @@ def problem(task="2dc579da.json"):
         for st in symbolized[offset : offset + n]:
             print(f"st: {st}")
             unsymbolized = unsymbolize(st, symbol_table)
-            display_objects_syntax_trees(
-                [unsymbolized], GridOperations.proportions(grids[i])
-            )
+            # display_objects_syntax_trees(
+            #     [unsymbolized], GridOperations.proportions(grids[i])
+            # )
 
         offset += n
 
@@ -480,7 +551,7 @@ def problem(task="2dc579da.json"):
                     )
                     print(
                         f"Distance between {ind}: {i, st}={unsymbolized} and {ind2}: {j, st2}={unsymbolize(st2, symbol_table)}: {float(dist)}\n",
-                        f"Operations: {ops}",
+                        # f"Operations: {ops}",
                     )
                 display_objects_syntax_trees(
                     [unsymbolized], GridOperations.proportions(grids[ind])

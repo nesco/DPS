@@ -13,6 +13,8 @@ Operations occurs on four main data format: Grid, Mask, Points, and Coords
 
 from collections.abc import Callable, Mapping
 
+import networkx as nx
+
 from constants import COLORS, BG_COLOR
 from localtypes import (
     Box,
@@ -185,7 +187,7 @@ class GridOperations:
             )
 
     @staticmethod
-    def print_old(grid: ColorGrid):
+    def print(grid: ColorGrid):
         height = len(grid)
         width = len(grid[0])
 
@@ -202,7 +204,7 @@ class GridOperations:
         print(f"{BG_COLOR}   " * (width + 2), "\033[0m")
 
     @staticmethod
-    def print(grid: ColorGrid):
+    def pretty_print(grid: ColorGrid):
         RESET     = "\033[0m"
         FG_BORDER = "\033[90m"    # bright-black (grey)
         BG_BORDER = BG_COLOR    # black background for all grid-lines
