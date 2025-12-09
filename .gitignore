@@ -9,3 +9,4 @@ __pycache__
 
 # Everything containting "tmp"
 *tmp*
+.serena
