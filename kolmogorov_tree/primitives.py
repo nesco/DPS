@@ -1,12 +1,20 @@
 """
-Primitive types for the Kolmogorov Tree.
+Primitive value types for the Kolmogorov Tree.
 
-This module defines:
-- Bit length enums (BitLength, ARCBitLength)
-- Value types (CountValue, VariableValue, IndexValue, NoneValue)
-- ARC-specific types (MoveValue, PaletteValue, CoordValue)
-- The Alphabet base class for shiftable types
-- The T TypeVar bound to Alphabet
+Types:
+    Generic:
+        CountValue    - Repeat count (5 bits, 0-31)
+        VariableValue - Lambda variable index (1 bit, 0-1)
+        IndexValue    - Symbol table index (7 bits, 0-127)
+        NoneValue     - Null placeholder
+
+    ARC-specific:
+        MoveValue     - 8-directional move (3 bits, 0-7)
+        PaletteValue  - Color set
+        CoordValue    - 2D grid coordinate
+
+    Abstract:
+        Alphabet      - Base for shiftable output types (bound to TypeVar T)
 """
 
 from abc import abstractmethod
@@ -17,45 +25,42 @@ from typing import Self, TypeVar
 from localtypes import Color, Coord, Primitive
 
 
-# Bit length definitions
 class BitLength(IntEnum):
-    """Defines bit lengths for generic components in the Kolmogorov Tree."""
+    """Bit widths for generic tree components."""
 
-    COUNT = (
-        5  # 5 bits for repeat counts (0-31), specific value suitable for ARC grid sizes
-    )
-    NODE_TYPE = 4  # 4 bits for up to 16 node types
-    INDEX = 7  # 7 bits for symbol indices (up to 128 symbols)
-    VAR = 1  # 2 bits for variable indices (up to 2 variables per symbol)
+    COUNT = 5
+    NODE_TYPE = 4
+    INDEX = 7
+    VAR = 1
     NONE = 0
 
 
 class ARCBitLength(IntEnum):
-    """Defines bit lengths for components tailored for ARC AGI."""
+    """Bit widths for ARC-AGI specific components."""
 
-    COORD = 10  # 10 bits for coordinates (5 bits per x/y, for 0-31)
-    COLORS = 4  # 4 bits for primitives (0-9)
-    DIRECTIONS = 3  # 3 bits for primitives (directions 0-7)
+    COORD = 10
+    COLORS = 4
+    DIRECTIONS = 3
 
 
 @dataclass(frozen=True)
 class Alphabet(Primitive):
-    """Base class for all types which are program outputs. The generic type 'T' is bound to it. It offers a shifting operation"""
+    """Base class for shiftable program output types (e.g., moves, colors)."""
 
     @abstractmethod
     def shift(self, k: int) -> Self:
-        """Shifts the primitive value by k steps."""
+        """Returns value shifted by k steps (with wraparound)."""
         pass
 
     @staticmethod
     def size() -> int:
-        """Size of the alphabet"""
+        """Returns the alphabet cardinality."""
         return 0
 
 
 @dataclass(frozen=True)
 class CountValue(Primitive):
-    """Represent a 5-bit int"""
+    """Repetition count (5-bit unsigned integer, 0-31)."""
 
     value: int
 
@@ -65,7 +70,7 @@ class CountValue(Primitive):
 
 @dataclass(frozen=True)
 class VariableValue(Primitive):
-    """Represents a variable as an index (0-3)."""
+    """Lambda variable index (1-bit, 0-1)."""
 
     value: int
 
@@ -75,17 +80,17 @@ class VariableValue(Primitive):
 
 @dataclass(frozen=True)
 class IndexValue(Primitive):
-    """Represents an index in the lookup table (0-127)."""
+    """Symbol table index (7-bit, 0-127)."""
 
     value: int
 
     def bit_length(self) -> int:
-        return BitLength.INDEX  # 7 bits
+        return BitLength.INDEX
 
 
 @dataclass(frozen=True)
 class NoneValue(Primitive):
-    """Represents a None."""
+    """Null/empty placeholder."""
 
     value: None = None
 
@@ -93,45 +98,44 @@ class NoneValue(Primitive):
         return BitLength.NONE
 
 
-# ARC Specific primitives
 @dataclass(frozen=True)
 class MoveValue(Alphabet):
-    """Represents a single directional move (0-7 for 8-connectivity)."""
+    """8-directional grid move (0-7, where 0=right, 2=down, etc.)."""
 
     value: int
 
     def bit_length(self) -> int:
-        return ARCBitLength.DIRECTIONS  # 4 bits
+        return ARCBitLength.DIRECTIONS
 
     def shift(self, k: int) -> "MoveValue":
         return MoveValue((self.value + k) % 8)
 
     @staticmethod
-    def size():
+    def size() -> int:
         return 8
 
 
 @dataclass(frozen=True)
 class PaletteValue(Primitive):
-    """Represents a color value (0-9 in ARC AGI)."""
+    """Set of ARC colors (0-9)."""
 
     value: frozenset[Color]
 
     def bit_length(self) -> int:
-        return ARCBitLength.COLORS * len(self.value)  # 4 bits
+        return ARCBitLength.COLORS * len(self.value)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"set{set(self.value)}"
 
 
 @dataclass(frozen=True)
 class CoordValue(Primitive):
-    """Represents a 2D coordinate pair."""
+    """2D grid coordinate (5 bits per axis, 0-31 each)."""
 
     value: Coord
 
     def bit_length(self) -> int:
-        return ARCBitLength.COORD  # 10 bits (5 per coordinate)
+        return ARCBitLength.COORD
 
     def __str__(self) -> str:
         return str(tuple(self.value))
@@ -139,7 +143,6 @@ class CoordValue(Primitive):
 
 T = TypeVar("T", bound=Alphabet)
 
-# Re-export BitLengthAware for convenience
 __all__ = [
     "BitLength",
     "ARCBitLength",

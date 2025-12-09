@@ -1,11 +1,11 @@
 """
-Predicate and inspection utilities for the Kolmogorov Tree.
+Predicate functions for Kolmogorov Tree inspection.
 
-This module provides functions to inspect and query KNodes:
-- is_symbolized: Check if a node contains any SymbolNodes
-- is_abstraction: Check if a node contains any VariableNodes
-- contained_symbols: Get all symbol indices in a node
-- arity: Get the arity (max variable index + 1) of an abstraction
+Functions:
+    is_symbolized(node)      - True if node contains SymbolNodes
+    is_abstraction(node)     - True if node contains VariableNodes
+    contained_symbols(node)  - All symbol indices in subtree
+    arity(node)              - Max variable index + 1 (abstraction arity)
 """
 
 from __future__ import annotations
@@ -20,13 +20,13 @@ from kolmogorov_tree.traversal import (
 
 
 def is_symbolized(node: KNode) -> bool:
-    """Return True if and only if node contains at least one SymbolNode in its subnodes."""
+    """True if node or any descendant is a SymbolNode."""
     subnodes = breadth_first_preorder_knode(node)
     return any(isinstance(n, SymbolNode) for n in subnodes)
 
 
 def is_abstraction(node: KNode) -> bool:
-    """Return True if and only if node contains at least one VariableNode in its subvalues."""
+    """True if node or any subvalue is a VariableNode."""
     sub_values = get_subvalues(node)
     return any(
         isinstance(value, VariableNode) or isinstance(value, VariableValue)
@@ -35,19 +35,19 @@ def is_abstraction(node: KNode) -> bool:
 
 
 def contained_symbols(knode: KNode) -> tuple[IndexValue, ...]:
-    """Get all symbol indices contained in a KNode."""
+    """Returns all symbol table indices referenced in the subtree."""
     subnodes = breadth_first_preorder_knode(knode)
     return tuple(node.index for node in subnodes if isinstance(node, SymbolNode))
 
 
 def arity(node: KNode) -> int:
-    """Return the max index of the node variable, which is the arity of an abstraction."""
+    """Returns max variable index + 1 (number of parameters for an abstraction)."""
     subvalues = depth_first_preorder_bitlengthaware(node)
-    variable_numbers = [
+    variable_indices = [
         value.value for value in subvalues if isinstance(value, VariableValue)
     ]
-    if variable_numbers:
-        return max(variable_numbers) + 1
+    if variable_indices:
+        return max(variable_indices) + 1
     return 0
 
 

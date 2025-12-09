@@ -68,7 +68,6 @@ from kolmogorov_tree.traversal import (
     depth_first_preorder_bitlengthaware,
     get_subvalues,
     next_layer,
-    preorder_knode,
 )
 
 # Factory functions for creating nodes

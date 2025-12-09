@@ -1,8 +1,14 @@
 """
-Pattern matching and unification utilities for Kolmogorov Tree.
+Pattern matching and unification for Kolmogorov Tree.
 
-This module provides functions for pattern matching and unification between
-KNodes, enabling symbolic abstraction through variable binding and substitution.
+Functions:
+    matches(pattern, subtree)      - Check if pattern matches, return bindings
+    unify(pattern, subtree, bindings) - Recursive unification with binding updates
+    abstract_node(index, pattern, node) - Replace matching node with SymbolNode
+    node_to_symbolized_node(index, pattern, tree) - Symbolize all matches in tree
+
+Types:
+    Bindings = dict[int, BitLengthAware]  - Variable index -> bound value
 """
 
 from typing import cast
@@ -27,16 +33,7 @@ Bindings = dict[int, BitLengthAware]
 
 
 def matches(pattern: KNode[T], subtree: KNode[T]) -> Bindings | None:
-    """
-    Determines if a pattern matches a subtree, returning variable bindings if successful.
-
-    Args:
-        pattern: The pattern to match, which may contain variables.
-        subtree: The concrete subtree to match against.
-
-    Returns:
-        Bindings | None: A dictionary of variable bindings if the match succeeds, or None if it fails.
-    """
+    """Returns variable bindings if pattern matches subtree, None otherwise."""
     if not isinstance(pattern, KNode) or not isinstance(subtree, KNode):
         raise TypeError("Both pattern and subtree must be KNode instances.")
     bindings: Bindings = {}
@@ -45,85 +42,68 @@ def matches(pattern: KNode[T], subtree: KNode[T]) -> Bindings | None:
     return None
 
 
+def _can_potentially_unify(pattern: KNode[T], subtree: KNode[T]) -> bool:
+    """Quick type check for early pruning. VariableNodes can match anything."""
+    if isinstance(pattern, VariableNode):
+        return True
+    return isinstance(subtree, type(pattern))
+
+
 def unify_sum_children(
-    p_idx: int,  # Index of the current pattern child being matched
-    pattern_list: list[KNode[T]],  # Sorted list of pattern children
-    subtree_list: list[KNode[T]],  # Sorted list of subtree children
-    subtree_used: list[bool],  # Tracks which subtree children are already matched
+    p_idx: int,
+    pattern_list: list[KNode[T]],
+    subtree_list: list[KNode[T]],
+    subtree_used: list[bool],
     bindings: Bindings,
+    compatibility: list[list[bool]] | None = None,
 ) -> Bindings | None:
     """
-    Helper function using backtracking on sorted lists to find a deterministic
-    unification mapping between SumNode children.
+    Backtracking search for bijective matching between SumNode children.
 
-    Args:
-        p_idx: Current index in pattern_list being processed.
-        pattern_list: Sorted list of pattern children.
-        subtree_list: Sorted list of subtree children.
-        subtree_used: Boolean mask indicating used subtree children.
-        bindings: Current accumulated bindings for this search path.
-
-    Returns:
-        Updated bindings if a valid matching is found, otherwise None.
+    Uses pre-computed compatibility matrix for early pruning.
+    Returns bindings if complete matching found, None otherwise.
     """
-    # Base case: All pattern children have been successfully matched.
     if p_idx == len(pattern_list):
         return bindings
 
     p_child = pattern_list[p_idx]
 
-    # Iterate through potential matches in the sorted subtree list
     for s_idx in range(len(subtree_list)):
-        # Check if this subtree child is already used in the current mapping
-        if not subtree_used[s_idx]:
-            s_child = subtree_list[s_idx]
+        if subtree_used[s_idx]:
+            continue
 
-            # Create a copy of bindings to explore this specific pair's unification
-            current_bindings = bindings.copy()
+        if compatibility is not None and not compatibility[p_idx][s_idx]:
+            continue
 
-            # Attempt to unify the chosen pair (p_child, s_child)
-            if unify(p_child, s_child, current_bindings):
-                # If the pair unifies successfully:
-                # 1. Mark the subtree child as used for this path
-                subtree_used[s_idx] = True
+        s_child = subtree_list[s_idx]
+        current_bindings = bindings.copy()
 
-                # 2. Recursively try to match the *next* pattern child (p_idx + 1)
-                result_bindings = unify_sum_children(
-                    p_idx + 1,
-                    pattern_list,
-                    subtree_list,
-                    subtree_used,
-                    current_bindings,  # Pass the updated bindings
-                )
+        if unify(p_child, s_child, current_bindings):
+            subtree_used[s_idx] = True
 
-                # 3. Check if the recursive call was successful
-                if result_bindings is not None:
-                    # Success! A complete valid matching was found. Return it.
-                    return result_bindings
+            result = unify_sum_children(
+                p_idx + 1,
+                pattern_list,
+                subtree_list,
+                subtree_used,
+                current_bindings,
+                compatibility,
+            )
 
-                # 4. Backtrack: If the recursive call failed, unmark the
-                #    subtree child so it can be tried with other pattern children
-                #    in alternative branches of the search.
-                subtree_used[s_idx] = False
-                # Continue the loop to try matching p_child with the next unused s_child
+            if result is not None:
+                return result
 
-    # If the loop completes without returning, it means p_child could not be
-    # successfully matched with any *available* s_child in a way that allowed the
-    # rest of the pattern children to be matched. Backtrack by returning None.
+            subtree_used[s_idx] = False
+
     return None
 
 
 def unify(pattern: BitLengthAware, subtree: BitLengthAware, bindings: Bindings) -> bool:
     """
-    Recursively unifies a pattern with a subtree, updating bindings in place.
+    Unifies pattern with subtree, updating bindings in place.
 
-    Args:
-        pattern: The pattern to match, which may contain variables.
-        subtree: The concrete subtree or primitive to match against.
-        bindings: Current bindings of variables to subtrees or primitives, modified in place.
-
-    Returns:
-        bool: True if unification succeeds, False if it fails.
+    Handles VariableNode binding, structural matching for all node types,
+    and recursive descent through children.
     """
     if isinstance(pattern, VariableNode):
         index = pattern.index.value
@@ -139,8 +119,8 @@ def unify(pattern: BitLengthAware, subtree: BitLengthAware, bindings: Bindings) 
         case Primitive(value):
             assert isinstance(subtree, Primitive)
             return value == subtree.value
-            # Inside the unify function...
-        case SumNode(children):  # noqa: F811
+
+        case SumNode(children):
             assert isinstance(subtree, SumNode)
             s_children = subtree.children
             if len(children) != len(s_children):
@@ -148,30 +128,26 @@ def unify(pattern: BitLengthAware, subtree: BitLengthAware, bindings: Bindings) 
             if not children:
                 return True
 
-            # 1. Create sorted lists based on a canonical key
-            # Sort using the  string representation
-            sorted_pattern_children = sorted(children, key=str)
-            sorted_subtree_children = sorted(s_children, key=str)
-            # 2. Initialize the tracking list for used subtree children
-            subtree_used = [False] * len(sorted_subtree_children)
+            sorted_pattern = sorted(children, key=str)
+            sorted_subtree = sorted(s_children, key=str)
+            subtree_used = [False] * len(sorted_subtree)
 
-            # 3. Call the deterministic backtracking helper
+            compatibility = [
+                [_can_potentially_unify(p, s) for s in sorted_subtree]
+                for p in sorted_pattern
+            ]
+
             initial_bindings = bindings.copy()
-            successful_bindings = unify_sum_children(
-                0,  # Start matching the first pattern child (index 0)
-                sorted_pattern_children,
-                sorted_subtree_children,
-                subtree_used,
-                initial_bindings,
+            result = unify_sum_children(
+                0, sorted_pattern, sorted_subtree, subtree_used,
+                initial_bindings, compatibility,
             )
 
-            if successful_bindings is not None:
-                # Update original bindings *in place*
+            if result is not None:
                 bindings.clear()
-                bindings.update(successful_bindings)
+                bindings.update(result)
                 return True
-            else:
-                return False
+            return False
 
         case ProductNode(children):
             assert isinstance(subtree, ProductNode)
@@ -182,34 +158,32 @@ def unify(pattern: BitLengthAware, subtree: BitLengthAware, bindings: Bindings) 
                 if not unify(p_child, s_child, bindings):
                     return False
             return True
+
         case RepeatNode(node, count):
             subtree = cast(RepeatNode, subtree)
-            s_node = subtree.node
-            s_count = subtree.count
             if isinstance(count, VariableNode):
                 index = count.index.value
                 if index in bindings:
-                    if bindings[index] != s_count:
+                    if bindings[index] != subtree.count:
                         return False
                 else:
-                    bindings[index] = s_count
-            elif count != s_count:
+                    bindings[index] = subtree.count
+            elif count != subtree.count:
                 return False
-            return unify(node, s_node, bindings)
+            return unify(node, subtree.node, bindings)
+
         case NestedNode(index, node, count):
             subtree = cast(NestedNode, subtree)
-            s_node = subtree.node
-            s_count = subtree.count
             if isinstance(count, VariableNode):
-                index = count.index.value
-                if index in bindings:
-                    if bindings[index] != s_count:
+                var_index = count.index.value
+                if var_index in bindings:
+                    if bindings[var_index] != subtree.count:
                         return False
                 else:
-                    bindings[index] = s_count
-            elif count != s_count:
+                    bindings[var_index] = subtree.count
+            elif count != subtree.count:
                 return False
-            return unify(node, s_node, bindings)
+            return unify(node, subtree.node, bindings)
 
         case RootNode(node, position, colors):
             subtree = cast(RootNode, subtree)
@@ -218,6 +192,7 @@ def unify(pattern: BitLengthAware, subtree: BitLengthAware, bindings: Bindings) 
             if not unify(colors, subtree.colors, bindings):
                 return False
             return unify(node, subtree.node, bindings)
+
         case SymbolNode(index, parameters):
             subtree = cast(SymbolNode, subtree)
             if index != subtree.index or len(parameters) != len(subtree.parameters):
@@ -226,27 +201,23 @@ def unify(pattern: BitLengthAware, subtree: BitLengthAware, bindings: Bindings) 
                 if not unify(param, s_param, bindings):
                     return False
             return True
+
         case RectNode(height, width):
             subtree = cast(RectNode, subtree)
             if not unify(height, subtree.height, bindings):
                 return False
-            if not unify(width, subtree.width, bindings):
-                return False
-            return True
+            return unify(width, subtree.width, bindings)
+
         case _:
             return pattern == subtree
 
 
 def abstract_node(index: IndexValue, pattern: KNode[T], node: KNode[T]) -> KNode[T]:
-    """
-    If node matches the pattern, it replaces it by a SymbolNode with the right bindings.
-    Else, it returns the node as is.
-    """
+    """Replaces node with SymbolNode if it matches pattern, else returns unchanged."""
     if pattern == node:
         return SymbolNode(index, ())
 
     bindings = matches(pattern, node)
-
     if bindings is not None:
         params = tuple(
             binding
@@ -261,9 +232,7 @@ def abstract_node(index: IndexValue, pattern: KNode[T], node: KNode[T]) -> KNode
 def node_to_symbolized_node(
     index: IndexValue, pattern: KNode[T], knode: KNode[T]
 ) -> KNode[T]:
-    """
-    Transform a KNode by replacing all occurrences of the pattern with SymbolNodes.
-    """
+    """Replaces all occurrences of pattern in knode with SymbolNodes."""
     return postmap(knode, lambda node: abstract_node(index, pattern, node))
 
 

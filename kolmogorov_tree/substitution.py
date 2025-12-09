@@ -1,8 +1,15 @@
 """
-Variable substitution and symbol resolution utilities for Kolmogorov Tree.
+Variable substitution and symbol resolution for Kolmogorov Tree.
 
-This module provides functions for substituting variables in KNodes,
-reducing abstractions, and resolving symbolic references.
+Functions:
+    substitute_variables(node, params) - Replace VariableNodes with concrete values
+    reduce_abstraction(abstraction, params) - Apply parameters to an abstraction
+    resolve_symbols(node, symbols)     - Expand SymbolNodes using symbol table
+
+    Nesting:
+        extract_nested_patterns(table, tree) - Find recursive patterns, create NestedNodes
+        expand_nested_node(node, table)      - Expand single NestedNode
+        expand_all_nested_nodes(node, table) - Expand all NestedNodes in tree
 """
 
 import functools
@@ -39,11 +46,9 @@ def substitute_variables_deprecated(
     abstraction: KNode[T], params: Parameters
 ) -> KNode[T]:
     """
-    Helper function to substitute variables, including those that are not traversed
-    during a simple node traversal.
+    Substitutes variables including those in non-traversed positions.
 
-    .. deprecated::
-        Use :func:`substitute_variables` instead.
+    .. deprecated:: Use substitute_variables instead.
     """
     match abstraction:
         case VariableNode(index) if index.value < len(params):
@@ -130,37 +135,33 @@ def substitute_variables_deprecated(
 
 
 def variable_to_param(node: VariableNode, params: Parameters) -> BitLengthAware:
+    """Looks up variable value in params, returns node unchanged if index out of range."""
     if node.index.value < len(params):
-        value = params[node.index.value]
-        return value
+        return params[node.index.value]
     return node
-    # raise ValueError(f"Unknown variable {node.index.value} for {params}")
 
 
 def substitute_variables(knode: KNode[T], params: Parameters) -> KNode[T]:
-    # Avoid infinite recursion on VariableNodes by treating them immediately
-    # And returning directly
+    """
+    Recursively substitutes VariableNodes with values from params.
+
+    Handles all field types: single values, tuples, and frozensets.
+    """
     if isinstance(knode, VariableNode):
         node = variable_to_param(knode, params)
         if not isinstance(node, KNode):
             raise TypeError(f"{node} is not a KNode")
         return node
 
-    # Iterating over fields
     nfields = {}
     for field_name, value in vars(knode).items():
         match value:
-            # Replace directly variables to avoid hitting the TypeError
             case VariableNode():
                 nvalue = variable_to_param(value, params)
             case frozenset():
                 nvalue = frozenset(
-                    {
-                        substitute_variables(el, params)
-                        if isinstance(el, KNode)
-                        else el
-                        for el in value
-                    }
+                    substitute_variables(el, params) if isinstance(el, KNode) else el
+                    for el in value
                 )
             case tuple():
                 nvalue = tuple(
@@ -179,39 +180,16 @@ def substitute_variables(knode: KNode[T], params: Parameters) -> KNode[T]:
 
 @functools.cache
 def reduce_abstraction(abstraction: KNode[T], params: Parameters) -> KNode[T]:
-    """
-    Substitutes variable placeholders in the template with the corresponding parameters.
-
-    This function recursively traverses the template node and replaces VariableNodes
-    with the provided parameters. It also handles composite nodes by substituting variables
-    in their children or attributes.
-
-    Args:
-        abstraction (KNode): The abstract node to process.
-        params (tuple[Any, ...]): The parameters to substitute for variables.
-
-    Returns:
-        KNode: The abstraction with variables replaced by parameters.
-    """
-    # return postmap(abstraction, lambda node: substitute_variables(node, params))
+    """Applies parameters to an abstraction (cached for repeated calls)."""
     return substitute_variables(abstraction, params)
 
 
 @functools.cache
 def resolve_symbols(knode: KNode[T], symbols: Sequence[KNode[T]]) -> KNode[T]:
     """
-    Resolves symbolic references recursively using the symbol table.
+    Expands all SymbolNodes using the symbol table.
 
-    This function traverses the Kolmogorov Tree and replaces SymbolNodes with their
-    definitions from the symbol table, handling parameter substitution. It recursively
-    resolves all sub-nodes for composite node types.
-
-    Args:
-        node (KNode): The node to resolve.
-        symbols (list[KNode]): The list of symbol definitions.
-
-    Returns:
-        KNode: The resolved node with symbols expanded.
+    Handles nested symbol references by resolving until no SymbolNodes remain.
     """
 
     def resolve_f(node: KNode[T]) -> KNode[T]:
@@ -219,15 +197,12 @@ def resolve_symbols(knode: KNode[T], symbols: Sequence[KNode[T]]) -> KNode[T]:
             return reduce_abstraction(symbols[node.index.value], node.parameters)
         return node
 
-    # A symbolic node can be resolved into another symbolic node
     def resolve_until(node: KNode[T]) -> KNode[T]:
         while isinstance(node, SymbolNode) and node.index.value < len(symbols):
             node = resolve_f(node)
         return node
 
-    node = premap(knode, resolve_until, factorize=False)
-
-    return node
+    return premap(knode, resolve_until, factorize=False)
 
 
 def extract_nested_patterns(
@@ -235,63 +210,35 @@ def extract_nested_patterns(
     tree: KNode[T],
 ) -> KNode[T]:
     """
-    Traverses a Kolmogorov Tree to identify and replace nested patterns with NestedNodes,
-    extracting their templates into a symbol table.
+    Finds recursive collection patterns and replaces them with NestedNodes.
 
-    Args:
-        tree: The input Kolmogorov Tree (KNode[T]).
-
-    Returns:
-        KNode[T]: The transformed tree with NestedNodes replacing nested patterns.
-
-    Edge-Effects:
-        Fill the given symbol table with templates extracted from the nested patterns.
+    Mutates symbol_table by appending extracted templates.
+    Only creates NestedNode if it reduces total bit length.
     """
 
     def mapping_function(node: KNode[T]) -> KNode[T]:
-        """
-        Mapping function for postmap to detect nested patterns and replace them with NestedNodes.
-
-        Args:
-            node: The current node being processed.
-
-        Returns:
-            KNode[T]: The transformed node (either a NestedNode or the original node).
-        """
-        # Only process SumNode or ProductNode for nested patterns
         if isinstance(node, (SumNode, ProductNode)):
             result = nested_collection_to_nested_node(node)
             if result is not None:
                 nested_node, template = result
-                # Greedy test, it might be better because the template might be shared with others
-                if (
-                    nested_node.bit_length() + template.bit_length()
-                    <= node.bit_length()
-                ):
-                    # Add the template to the symbol table and get its index
+                if nested_node.bit_length() + template.bit_length() <= node.bit_length():
                     if template in symbol_table:
                         index = symbol_table.index(template)
                     else:
                         index = len(symbol_table)
                         symbol_table.append(template)
-                    # Create a new NestedNode with the correct index
-                    # Since NestedNode is frozen, instantiate a new one
-                    new_nested_node = NestedNode(
+                    return NestedNode(
                         IndexValue(index), nested_node.node, nested_node.count
                     )
-                    return new_nested_node
-        # Return the node unchanged if no pattern is detected
         return node
 
-    # Apply postmap to transform the tree
-    new_tree = premap(tree, mapping_function)
-    return new_tree
+    return premap(tree, mapping_function)
 
 
 def expand_nested_node(
     nested_node: NestedNode[T], symbol_table: Sequence[KNode[T]]
 ) -> KNode[T]:
-    """Expands a NestedNode using its template from the symbol table."""
+    """Expands a single NestedNode by applying its template count times."""
     template = symbol_table[nested_node.index.value]
     current = nested_node.node
 
@@ -306,15 +253,7 @@ def expand_nested_node(
 
 
 def expand_all_nested_nodes(knode: KNode[T], symbol_table: Sequence[KNode[T]]):
-    """
-    Expand all the inner NestedNodes of a given node.
-
-    Args:
-        knode: KNode possibly containing nested nodes
-        symbol_table: Symbol Table containing all the template referenced by NestedNode. It will fail otherwise.
-    Returns:
-        KNode[T]: node free of NestedNodes
-    """
+    """Expands all NestedNodes in a tree using the symbol table."""
 
     def expand_f(node: KNode[T]) -> KNode[T]:
         if isinstance(node, NestedNode):

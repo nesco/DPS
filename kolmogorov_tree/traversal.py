@@ -1,13 +1,11 @@
 """
-Traversal utilities for the Kolmogorov Tree.
+Tree traversal utilities for KNode structures.
 
-This module provides:
-- get_subvalues: Get all BitLengthAware subvalues of a dataclass
-- children: Get child KNodes of a node
-- depth_first_preorder_bitlengthaware: DFS traversal for BitLengthAware
-- preorder_knode: DFS preorder traversal for KNodes
-- next_layer: Get next layer of children (for BFS-like traversal)
-- depth: Calculate tree depth
+Functions:
+    children(node)      - Direct KNode children of a node
+    preorder_knode(node) - DFS preorder iterator over all descendant KNodes
+    next_layer(nodes)   - All children of a node collection (for BFS)
+    depth(node)         - Maximum depth of a tree
 """
 
 from __future__ import annotations
@@ -24,58 +22,46 @@ if TYPE_CHECKING:
 
 
 def get_subvalues(obj: BitLengthAware) -> Iterator[BitLengthAware]:
-    """
-    Yields all BitLengthAware subvalues of a BitLengthAware object, assuming it's a dataclass.
-    For tuple or list fields, yields each BitLengthAware element.
-
-    Args:
-        obj: A BitLengthAware object (e.g., KNode, Primitive, MoveValue).
-
-    Yields:
-        BitLengthAware: Subvalues that are instances of BitLengthAware.
-    """
+    """Yields all BitLengthAware field values from a dataclass instance."""
     return dataclass_subvalues(obj)
 
 
 def children(knode: "KNode") -> "Iterator[KNode]":
-    """Unified API to access children of standard KNodes nodes"""
-    # Deferred import to avoid circular dependency
+    """Yields direct KNode children of a node."""
     from kolmogorov_tree.nodes import KNode
 
-    subvalues = get_subvalues(knode)
-    return (sv for sv in subvalues if isinstance(sv, KNode))
+    return (sv for sv in get_subvalues(knode) if isinstance(sv, KNode))
 
 
 def depth_first_preorder_bitlengthaware(
     root: BitLengthAware,
 ) -> Iterator[BitLengthAware]:
-    """Depth-first preorder traversal for BitLengthAware objects."""
+    """DFS preorder traversal over all BitLengthAware descendants."""
     return depth_first_preorder(get_subvalues, root)
 
 
 def preorder_knode(node: "KNode[T] | None") -> "Iterator[KNode[T]]":
-    """Depth-first preorder traversal for KNode objects."""
+    """DFS preorder traversal over all KNode descendants."""
     return depth_first_preorder(children, node)
 
 
-# Backwards compatibility alias (deprecated)
+# Deprecated alias
 breadth_first_preorder_knode = preorder_knode
 
 
 def next_layer(layer: "Iterable[KNode]") -> "tuple[KNode, ...]":
-    """Used for BFS-like traversal of a K-Tree. It's basically `children` for iterable"""
+    """Returns all children of nodes in the given layer (for BFS traversal)."""
     return tuple(child for node in layer for child in children(node))
 
 
 def depth(node: "KNode") -> int:
-    """Returns the depth of a Kolmogorov tree"""
-    max_depth = 0
+    """Returns the maximum depth of a tree (root = depth 1)."""
+    current_depth = 0
     layer: tuple[KNode, ...] = (node,)
     while layer:
-        max_depth += 1
+        current_depth += 1
         layer = next_layer(layer)
-
-    return max_depth
+    return current_depth
 
 
 __all__ = [
@@ -83,7 +69,7 @@ __all__ = [
     "children",
     "depth_first_preorder_bitlengthaware",
     "preorder_knode",
-    "breadth_first_preorder_knode",  # Deprecated alias
+    "breadth_first_preorder_knode",
     "next_layer",
     "depth",
 ]
