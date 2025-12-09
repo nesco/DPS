@@ -1,11 +1,13 @@
 """
 Functions for working with sets.
 """
+
 import itertools
 from collections.abc import Set
 from typing import TypeVar, Callable
 
-T = TypeVar('T')
+T = TypeVar("T")
+
 
 def set_product(*sets: Set[T]) -> frozenset[tuple[T, ...]]:
     """

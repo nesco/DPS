@@ -1,7 +1,7 @@
 from arc_syntax_tree import (
     component_to_distribution,
     component_to_raw_syntax_tree_distribution,
-    decode_knode
+    decode_knode,
 )
 from hierarchy import grid_to_components_by_colors
 from kolmogorov_tree import MoveValue, ProductNode, RootNode, SumNode
@@ -10,6 +10,7 @@ from utils.grid import GridOperations, PointsOperations, coords_to_points
 from utils.loader import train_task_to_grids
 
 from collections.abc import Sequence
+
 
 def display_training_task(name: str = "2dc579da.json", include_output=False):
     inputs, outputs, input_test, output_test = train_task_to_grids(name)
@@ -43,9 +44,7 @@ def display_components(grid: ColorGrid):
 
 
 def display_raw_distribution(component: Coords, colors: Colors):
-    raw_distribution = component_to_raw_syntax_tree_distribution(
-        component, colors
-    )
+    raw_distribution = component_to_raw_syntax_tree_distribution(component, colors)
 
     for st in raw_distribution:
         print(f"\nSyntax tree: {st}, length: {st.bit_length()}")
@@ -62,6 +61,12 @@ def display_distribution(component: Coords, colors: Colors):
     for i, st in enumerate(symbol_table):
         print(f"Symbol n°{i}: {st}")
 
-def display_objects_syntax_trees(objects_st: Sequence[ProductNode[MoveValue] | SumNode[MoveValue] | RootNode[MoveValue]], proportions: Proportions):
+
+def display_objects_syntax_trees(
+    objects_st: Sequence[
+        ProductNode[MoveValue] | SumNode[MoveValue] | RootNode[MoveValue]
+    ],
+    proportions: Proportions,
+):
     for st in objects_st:
         PointsOperations.print(decode_knode(st), proportions)

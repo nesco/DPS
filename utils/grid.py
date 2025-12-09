@@ -60,14 +60,10 @@ def unpack_coords(coords: CoordsGeneralized) -> tuple[list[int], list[int]]:
     return (list(cols), list(rows))
 
 
-def proportions_to_box(
-    prop: Proportions, corner_top_right: Coord = Coord(0, 0)
-) -> Box:
+def proportions_to_box(prop: Proportions, corner_top_right: Coord = Coord(0, 0)) -> Box:
     col_min, row_min = corner_top_right
     width, height = prop
-    return Coord(col_min, row_min), Coord(
-        col_min + width - 1, row_min + height - 1
-    )
+    return Coord(col_min, row_min), Coord(col_min + width - 1, row_min + height - 1)
 
 
 def box_to_proportions(box: Box) -> Proportions:
@@ -95,16 +91,13 @@ class GridOperations:
     @staticmethod
     def identity(height: int, width: int) -> ColorGrid:
         return [
-            [1 if col == row else 0 for col in range(width)]
-            for row in range(height)
+            [1 if col == row else 0 for col in range(width)] for row in range(height)
         ]
 
     @staticmethod
     def copy(grid: Grid) -> Grid:
         width, height = GridOperations.proportions(grid)
-        return [
-            [grid[row][col] for col in range(width)] for row in range(height)
-        ]
+        return [[grid[row][col] for col in range(width)] for row in range(height)]
 
     @staticmethod
     def from_mask(mask: Mask, color_map: tuple[Color, Color] = (1, 0)) -> Grid:
@@ -113,10 +106,7 @@ class GridOperations:
         """
         width, height = MaskOperations.proportions(mask)
         return [
-            [
-                color_map[0] if mask[row][col] else color_map[1]
-                for col in range(width)
-            ]
+            [color_map[0] if mask[row][col] else color_map[1] for col in range(width)]
             for row in range(height)
         ]
 
@@ -134,9 +124,7 @@ class GridOperations:
             raise ValueError("Some points have negative rows or cols")
 
         if not all(0 <= val < 9 for val in vals):
-            raise ValueError(
-                "Some points have a color outside the [0, 9] range"
-            )
+            raise ValueError("Some points have a color outside the [0, 9] range")
 
         # Get the proportions of the grid, beware of the off-by-one error
         nheight = max(rows) + 1
@@ -172,9 +160,7 @@ class GridOperations:
     @staticmethod
     def map(grid: ColorGrid, f: Callable[[int], int]) -> ColorGrid:
         width, height = GridOperations.proportions(grid)
-        return [
-            [f(grid[row][col]) for col in range(width)] for row in range(height)
-        ]
+        return [[f(grid[row][col]) for col in range(width)] for row in range(height)]
 
     @staticmethod
     def populate(grid: ColorGrid, points: Points) -> None:
@@ -182,9 +168,7 @@ class GridOperations:
             for col, row, val in points:
                 grid[row][col] = val
         except IndexError:
-            raise ValueError(
-                "The given list of points do not fit within the grid"
-            )
+            raise ValueError("The given list of points do not fit within the grid")
 
     @staticmethod
     def print(grid: ColorGrid):
@@ -205,20 +189,20 @@ class GridOperations:
 
     @staticmethod
     def pretty_print(grid: ColorGrid):
-        RESET     = "\033[0m"
-        FG_BORDER = "\033[90m"    # bright-black (grey)
-        BG_BORDER = BG_COLOR    # black background for all grid-lines
+        RESET = "\033[0m"
+        FG_BORDER = "\033[90m"  # bright-black (grey)
+        BG_BORDER = BG_COLOR  # black background for all grid-lines
 
         height = len(grid)
-        width  = len(grid[0])
+        width = len(grid[0])
         cell_w = 4
-        blank  = " " * cell_w
+        blank = " " * cell_w
 
         # pre-build the three border templates
         hline = "─" * cell_w
-        top   = f"{BG_BORDER}{FG_BORDER}┌" + "┬".join([hline]*width) + "┐"
-        mid   = f"{BG_BORDER}{FG_BORDER}├" + "┼".join([hline]*width) + "┤"
-        bot   = f"{BG_BORDER}{FG_BORDER}└" + "┴".join([hline]*width) + "┘"
+        top = f"{BG_BORDER}{FG_BORDER}┌" + "┬".join([hline] * width) + "┐"
+        mid = f"{BG_BORDER}{FG_BORDER}├" + "┼".join([hline] * width) + "┤"
+        bot = f"{BG_BORDER}{FG_BORDER}└" + "┴".join([hline] * width) + "┘"
 
         # top border
         print(top + RESET)
@@ -242,7 +226,6 @@ class GridOperations:
 
         # bottom border
         print(bot + RESET)
-
 
 
 class MaskOperations:
@@ -292,16 +275,13 @@ class MaskOperations:
             for col, row in coords:
                 mask[row][col] = True
         except IndexError:
-            raise ValueError(
-                "The given list of points do not fit within the grid"
-            )
+            raise ValueError("The given list of points do not fit within the grid")
 
     @staticmethod
     def map_mask(mask: Mask, f: Callable[[bool], bool]) -> Mask:
         width, height = MaskOperations.proportions(mask)
-        return [
-            [f(mask[row][col]) for col in range(width)] for row in range(height)
-        ]
+        return [[f(mask[row][col]) for col in range(width)] for row in range(height)]
+
 
 class PointsOperations:
     """Operations for point-based grid representation"""
@@ -351,9 +331,7 @@ class CoordsOperations:
     @staticmethod
     def from_grid(grid: ColorGrid) -> dict[Color, Coords]:
         width, height = GridOperations.proportions(grid)
-        colors = set(
-            grid[row][col] for row in range(height) for col in range(width)
-        )
+        colors = set(grid[row][col] for row in range(height) for col in range(width))
         color_dict = {}
         for color in colors:
             color_coords = set(
@@ -386,9 +364,7 @@ class CoordsOperations:
         colors = set(color for col, row, color in points)
         coords_dict = {
             color_key: set(
-                Coord(col, row)
-                for col, row, color in points
-                if color == color_key
+                Coord(col, row) for col, row, color in points if color == color_key
             )
             for color_key in colors
         }

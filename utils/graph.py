@@ -7,9 +7,12 @@ from typing import Callable, Sequence, TypeVar
 
 from collections.abc import Set
 
-T = TypeVar('T')
+T = TypeVar("T")
 
-def nodes_to_connected_components(nodes: Set[T], node_to_neighbours: Callable[[T],  Set[T]]) -> frozenset[frozenset[T]]:
+
+def nodes_to_connected_components(
+    nodes: Set[T], node_to_neighbours: Callable[[T], Set[T]]
+) -> frozenset[frozenset[T]]:
     """
     Extract connected components from an undirected graph structure.
 
@@ -23,7 +26,6 @@ def nodes_to_connected_components(nodes: Set[T], node_to_neighbours: Callable[[T
 
     seen = set()
     components = set()
-
 
     # Guarantees all the nodes are at least visited once
     for node in nodes:

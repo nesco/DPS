@@ -1,11 +1,29 @@
 """
-Functionals for tree structures. It would work for graphs, if adapted by using `seen = set()`construct to avoid cycles
-Note: For a bitlengthaware dataclass, an object is considered a leaf if and only if it inherits from Primitive
+Tree traversal and transformation utilities.
+
+Traversals:
+    breadth_first_preorder(after, root)  - BFS yielding nodes level by level
+    breadth_first_postorder(after, root) - BFS yielding deepest levels first
+    depth_first_preorder(after, root)    - DFS yielding parent before children
+    depth_first_postorder(after, root)   - DFS yielding children before parent
+
+Mappings:
+    postorder_map(node, f, after, reconstruct) - Transform tree bottom-up
+    preorder_map(node, f, after, reconstruct)  - Transform tree top-down
+
+Dataclass Utilities:
+    dataclass_subvalues(obj) - Yield all field values (flattening collections)
+    breadth_first_preorder_bitlengthaware(root) - BFS for BitLengthAware trees
+
+Hashing:
+    cached_hash(obj)         - Hash with id-based caching
+    build_hash_hierarchy(obj) - Map each subtree hash to its children's hashes
+
+Note: For graphs with cycles, add `seen = set()` to avoid infinite loops.
 """
 
 from collections import deque
 from dataclasses import dataclass, field, fields, is_dataclass
-from functools import cache
 from typing import Callable, Generic, Iterator, Sequence, TypeVar
 
 from collections.abc import Hashable
@@ -15,34 +33,35 @@ from localtypes import BitLengthAware
 T = TypeVar("T")
 
 
-# Test class for a rose tree
+# =============================================================================
+# Test Data Structure
+# =============================================================================
+
+
 @dataclass(frozen=True)
 class RoseNode(Generic[T]):
+    """Generic tree node for testing. Each node has a value and children."""
+
     value: T
     children: "tuple[RoseNode[T], ...]" = field(default_factory=tuple)
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, self.__class__):
             return False
         return self.__dict__ == other.__dict__
 
 
+# =============================================================================
 # Traversals
+# =============================================================================
+
+
 def breadth_first_preorder(
     after: Callable[[T], Iterator[T]], root: T | None
 ) -> Iterator[T]:
-    """
-    Performs a breadth-first preorder traversal of an object, yielding all instances level by level.
-
-    Args:
-        after: The function which returns the children of the current object
-        root: The root object to traverse.
-
-    Yields:
-        T: Each instance in breadth-first preorder.
-    """
+    """Yields nodes level by level, root first."""
     if root is None:
-        return iter(())
+        return
     queue = deque([root])
     while queue:
         current = queue.popleft()
@@ -54,89 +73,51 @@ def breadth_first_preorder(
 def breadth_first_postorder(
     after: Callable[[T], Iterator[T]], root: T | None
 ) -> Iterator[T]:
-    """
-    Performs a breadth-first postorder traversal of an object, yielding children before their parents, level by level.
-
-    Args:
-        after: The function which returns the children of the current object
-        root: The root object to traverse.
-    Yields:
-        T: Each instance in breadth-first postorder.
-    """
+    """Yields nodes level by level, deepest level first."""
     if root is None:
-        return iter(())
+        return
 
-    # Track nodes by level
-    level_map = {}  # Maps level -> nodes at that level
-    parent_map = {}  # Maps node id -> parent node
+    levels: dict[int, list[T]] = {}
+    queue: deque[tuple[T, int]] = deque([(root, 0)])
+    seen: set[int] = {id(root)}
 
-    # Initialize with root at level 0
-    queue = deque([(root, 0)])  # (node, level)
-    seen = set([id(root)])
-
-    # Build level map in breadth-first order
     while queue:
         node, level = queue.popleft()
-
-        if level not in level_map:
-            level_map[level] = []
-        level_map[level].append(node)
+        if level not in levels:
+            levels[level] = []
+        levels[level].append(node)
 
         for child in after(node):
-            if id(child) not in seen:
-                seen.add(id(child))
+            child_id = id(child)
+            if child_id not in seen:
+                seen.add(child_id)
                 queue.append((child, level + 1))
-                parent_map[id(child)] = node
 
-    # Process levels in reverse order (deepest first)
-    for level in sorted(level_map.keys(), reverse=True):
-        for node in level_map[level]:
-            yield node
+    for level in sorted(levels.keys(), reverse=True):
+        yield from levels[level]
 
 
 def depth_first_preorder(
     after: Callable[[T], Iterator[T]], root: T | None
 ) -> Iterator[T]:
-    """
-    Performs a depth-first preorder traversal of an object, yielding the
-    current object before its children.
-
-    Args:
-        after: The function which returns the children of the current object
-        root: The root object to traverse.
-
-    Yields:
-        T: Each instance in depth-first preorder.
-    """
+    """Yields parent before children, depth-first."""
     if root is None:
-        return iter(())
+        return
     stack = [root]
     while stack:
         current = stack.pop()
         yield current
-        # Push subvalues in reverse to process left-to-right
         children = list(after(current))
-        for value in reversed(children):
-            stack.append(value)
+        stack.extend(reversed(children))
 
 
 def depth_first_postorder(
     after: Callable[[T], Iterator[T]], root: T | None
 ) -> Iterator[T]:
-    """
-    Performs a depth-first postorder traversal of an object, yielding
-    children before the current object.
-
-    Args:
-        after: The function which returns the children of the current object
-        root: The root object to traverse.
-
-    Yields:
-        T: Each instance in depth-first postorder.
-    """
+    """Yields children before parent, depth-first."""
     if root is None:
-        return iter(())
-    stack = [(root, False)]
+        return
+    stack: list[tuple[T, bool]] = [(root, False)]
     while stack:
         current, visited = stack.pop()
         if visited:
@@ -144,36 +125,34 @@ def depth_first_postorder(
         else:
             stack.append((current, True))
             children = list(after(current))
-            for value in reversed(children):
-                stack.append((value, False))
+            for child in reversed(children):
+                stack.append((child, False))
 
 
+# =============================================================================
 # Mappings
+# =============================================================================
 
 
 def postorder_map(
     node: T,
     f: Callable[[T], T],
     after: Callable[[T], Iterator[T]],
-    reconstuct: Callable[[T, Sequence[T]], T],
+    reconstruct: Callable[[T, Sequence[T]], T],
 ) -> T:
     """
-    Applies a function to each node in a tree in post-order, reconstructing the tree.
+    Transforms tree bottom-up: children processed before parent.
 
     Args:
-        node: The root node of the tree.
-        f: Function to transform each node after processing children.
-        after: Returns an iterator of a node's children.
-        reconstruct: Reconstructs a node with its original data and new children.
-
-    Returns:
-        The transformed tree.
+        node: Root of the tree
+        f: Transform function applied after children are processed
+        after: Returns iterator of node's children
+        reconstruct: Rebuilds node with new children
     """
-
     new_children = tuple(
-        postorder_map(child, f, after, reconstuct) for child in after(node)
+        postorder_map(child, f, after, reconstruct) for child in after(node)
     )
-    new_node = reconstuct(node, new_children)
+    new_node = reconstruct(node, new_children)
     return f(new_node)
 
 
@@ -181,97 +160,64 @@ def preorder_map(
     node: T,
     f: Callable[[T], T],
     after: Callable[[T], Iterator[T]],
-    reconstructor: Callable[[T, list[T]], T],
+    reconstruct: Callable[[T, Sequence[T]], T],
 ) -> T:
     """
-    Applies a function to each node in a tree in pre-order, reconstructing the tree.
+    Transforms tree top-down: parent processed before children.
 
     Args:
-        node: The root node of the tree.
-        f: Function to transform each node before processing children.
-        children_func: Returns an iterator of a node's children.
-        reconstructor: Reconstructs a node with its transformed data and new children.
-
-    Returns:
-        The transformed tree.
+        node: Root of the tree
+        f: Transform function applied before children are processed
+        after: Returns iterator of node's children
+        reconstruct: Rebuilds node with new children
     """
-
-    transformed_node = f(node)
+    transformed = f(node)
     new_children = [
-        preorder_map(child, f, after, reconstructor)
-        for child in after(transformed_node)
+        preorder_map(child, f, after, reconstruct) for child in after(transformed)
     ]
-    new_node = reconstructor(transformed_node, new_children)
-    return new_node
+    return reconstruct(transformed, new_children)
 
 
-# Dataclass based tree
+# =============================================================================
+# Dataclass Utilities
+# =============================================================================
 
 
-def dataclass_subvalues(obj: T) -> Iterator[T]:
+def dataclass_subvalues(obj: object) -> Iterator[BitLengthAware]:
     """
-    Yields all BitLengthAware subvalues of a dataclass object, assuming it's a dataclass.
-    For tuple or list fields, yields each BitLengthAware element.
+    Yields all field values from a dataclass, flattening collections.
 
-    Args:
-        obj: A dataclass object.
-
-    Yields:
-        T: Subvalues that are instances of the same class.
+    For tuple/list/set/frozenset fields, yields each element individually.
     """
     if not is_dataclass(obj):
-        return  # Yield nothing if not a dataclass
+        return
     for f in fields(obj):
         value = getattr(obj, f.name)
         if isinstance(value, (tuple, list, set, frozenset)):
-            for elem in value:
-                yield elem
+            yield from value
         else:
             yield value
 
 
-# bitlength aware
 def breadth_first_preorder_bitlengthaware(
     root: BitLengthAware,
 ) -> Iterator[BitLengthAware]:
+    """BFS traversal for BitLengthAware dataclass trees."""
     return breadth_first_preorder(dataclass_subvalues, root)
 
 
-# Cached because it's called very often
-# plus functions can both call deep_hash and build_hash_hierarchy
-# without bothering too much with using the hierarchy to not downgrade the perfs'
-@cache
-def deep_hash_deprecated(obj: object) -> int:
-    """Recursively compute a hash for a subtree defined using dataclasses and collections."""
-    if not is_dataclass(obj):
-        if isinstance(obj, tuple):
-            return hash(tuple(deep_hash_deprecated(elem) for elem in obj))
-        elif isinstance(obj, frozenset):
-            return hash(
-                tuple(sorted(deep_hash_deprecated(elem) for elem in obj))
-            )
-        else:
-            return hash(obj)
-    else:
-        field_hashes = tuple(
-            (field.name, cached_hash(getattr(obj, field.name)))
-            for field in fields(obj)
-        )
-        return hash(
-            (
-                type(obj).__name__,
-                tuple(sorted(field_hashes, key=lambda x: x[0])),
-            )
-        )
+# =============================================================================
+# Hashing
+# =============================================================================
 
-
-_hash_cache = {}
+_hash_cache: dict[int, int] = {}
 
 
 def cached_hash(obj: Hashable) -> int:
     """
-    Use object ids to cache expensive hash computations on objects
-    if hashes are called many time during thosed objects lifetimes
+    Returns hash with id-based caching.
+
+    Useful when hashing the same objects repeatedly during their lifetime.
     """
     obj_id = id(obj)
     if obj_id not in _hash_cache:
@@ -279,48 +225,27 @@ def cached_hash(obj: Hashable) -> int:
     return _hash_cache[obj_id]
 
 
-def cached_hash_placebo(obj: Hashable) -> int:
-    return hash(obj)
-
-
 def build_hash_hierarchy(obj: object) -> dict[int, frozenset[int]]:
     """
-    Create a map where each key is the hash of a subtree and each value is the set of hashes
-    of its immediate children, for a tree made of dataclasses and basic collections.
+    Maps each subtree's hash to the hashes of its immediate children.
 
-    Args:
-        obj: The root of the tree (a dataclass instance, list, tuple, set, or basic object).
-
-    Returns:
-        A dictionary mapping each subtree's hash to the set of hashes of its immediate children.
+    Traverses a tree of dataclasses and collections, building a hash hierarchy
+    useful for structural comparisons.
     """
     hash_map: dict[int, frozenset[int]] = {}
 
     def traverse(node: object) -> None:
-        """Recursively traverse the tree, populating hash_map with subtree relationships."""
         if not is_dataclass(node):
             if isinstance(node, (tuple, frozenset)):
-                # Get hashes of immediate children
-                # child_hashes = [cached_hash(elem) for elem in node if elem()]
-                # Compute hash of current node
-                # own_hash = cached_hash(node)
-                # Map this node's hash to its children's hashes
-                # hash_map[own_hash] = frozenset(child_hashes)
-                # Recurse into children
                 for elem in node:
                     traverse(elem)
             else:
-                # Leaf node: no children
-                own_hash = cached_hash(node)
-                hash_map[own_hash] = frozenset()
+                hash_map[cached_hash(node)] = frozenset()
         else:
-            # Dataclass: process fields as children
             child_hashes = [
                 cached_hash(getattr(node, field.name)) for field in fields(node)
             ]
-            own_hash = cached_hash(node)
-            hash_map[own_hash] = frozenset(child_hashes)
-            # Recurse into field values
+            hash_map[cached_hash(node)] = frozenset(child_hashes)
             for field in fields(node):
                 traverse(getattr(node, field.name))
 
@@ -328,338 +253,16 @@ def build_hash_hierarchy(obj: object) -> dict[int, frozenset[int]]:
     return hash_map
 
 
-# Tests
-
-
-def test_traversals():
-    def after(node):
-        return node.children
-
-    # Test 1: None root
-    assert list(breadth_first_preorder(after, None)) == [], (
-        "BF Preorder failed with None root"
-    )
-    assert list(breadth_first_postorder(after, None)) == [], (
-        "BF Postorder failed with None root"
-    )
-    assert list(depth_first_preorder(after, None)) == [], (
-        "DF Preorder failed with None root"
-    )
-    assert list(depth_first_postorder(after, None)) == [], (
-        "DF Postorder failed with None root"
-    )
-
-    # Test 2: Single node
-    single_node = RoseNode("A")
-    assert [
-        node.value for node in breadth_first_preorder(after, single_node)
-    ] == ["A"], "BF Preorder failed with single node"
-    assert [
-        node.value for node in breadth_first_postorder(after, single_node)
-    ] == ["A"], "BF Postorder failed with single node"
-    assert [
-        node.value for node in depth_first_preorder(after, single_node)
-    ] == ["A"], "DF Preorder failed with single node"
-    assert [
-        node.value for node in depth_first_postorder(after, single_node)
-    ] == ["A"], "DF Postorder failed with single node"
-
-    # Test 3: Multi-level tree
-    # Construct the tree:
-    #       A
-    #      / \
-    #     B   C
-    #    / \   \
-    #   D   E   F
-    F = RoseNode("F")
-    E = RoseNode("E")
-    D = RoseNode("D")
-    C = RoseNode("C", (F,))
-    B = RoseNode("B", (D, E))
-    A = RoseNode("A", (B, C))
-
-    # Define expected orders based on traversal definitions
-    expected_bf_pre = ["A", "B", "C", "D", "E", "F"]  # Level by level from root
-    expected_bf_post = [
-        "D",
-        "E",
-        "F",
-        "B",
-        "C",
-        "A",
-    ]  # Level by level from leaves to root
-    expected_df_pre = [
-        "A",
-        "B",
-        "D",
-        "E",
-        "C",
-        "F",
-    ]  # Node before children, depth-first
-    expected_df_post = [
-        "D",
-        "E",
-        "B",
-        "F",
-        "C",
-        "A",
-    ]  # Children before node, depth-first
-
-    # Perform assertions
-    assert [
-        node.value for node in breadth_first_preorder(after, A)
-    ] == expected_bf_pre, "BF Preorder failed with sample tree"
-    assert [
-        node.value for node in breadth_first_postorder(after, A)
-    ] == expected_bf_post, "BF Postorder failed with sample tree"
-    assert [
-        node.value for node in depth_first_preorder(after, A)
-    ] == expected_df_pre, "DF Preorder failed with sample tree"
-    assert [
-        node.value for node in depth_first_postorder(after, A)
-    ] == expected_df_post, "DF Postorder failed with sample tree"
-
-
-# Test function for preorder_map and postorder_map
-def test_mappings():
-    # Construct the sample tree:
-    #       A
-    #      / \
-    #     B   C
-    #    / \   \
-    #   D   E   F
-    F = RoseNode("F")
-    E = RoseNode("E")
-    D = RoseNode("D")
-    C = RoseNode("C", (F,))
-    B = RoseNode("B", (D, E))
-    A = RoseNode("A", (B, C))
-
-    # Define helper functions
-    def after(node: RoseNode[T]) -> Iterator[RoseNode[T]]:
-        """Returns an iterator over the node's children."""
-        return iter(node.children)
-
-    def reconstruct(
-        node: "RoseNode[T]", new_children: Sequence["RoseNode[T]"]
-    ) -> "RoseNode[T]":
-        """
-        Reconstructs a node with its value and new children.
-
-        Args:
-            node: Original node providing the value.
-            new_children: New list of child nodes.
-
-        Returns:
-            RoseNode: New node with node's value and new_children.
-        """
-        new_node = RoseNode(node.value, tuple(new_children))
-        return new_node
-
-    # Test Case 1: Transformation appending "_transformed"
-    def f_transform(node: RoseNode[str]) -> RoseNode[str]:
-        """Transforms node by appending '_transformed' to its value."""
-        new_node = RoseNode(node.value + "_transformed", node.children)
-        return new_node
-
-    # Expected tree after transformation
-    F_trans = RoseNode("F_transformed")
-    E_trans = RoseNode("E_transformed")
-    D_trans = RoseNode("D_transformed")
-    C_trans = RoseNode("C_transformed", (F_trans,))
-    B_trans = RoseNode("B_transformed", (D_trans, E_trans))
-    expected_transform = RoseNode("A_transformed", (B_trans, C_trans))
-
-    # Apply preorder_map
-    preorder_result_transform = preorder_map(A, f_transform, after, reconstruct)
-    assert preorder_result_transform == expected_transform, (
-        "preorder_map with transformation failed"
-    )
-
-    # Apply postorder_map
-    postorder_result_transform = postorder_map(
-        A, f_transform, after, reconstruct
-    )
-    assert postorder_result_transform == expected_transform, (
-        "postorder_map with transformation failed"
-    )
-
-    # Test Case 2: Identity transformation
-    def f_identity(node: RoseNode[T]) -> RoseNode[T]:
-        """Returns the node unchanged."""
-        return node
-
-    # Apply preorder_map with identity
-    preorder_result_identity = preorder_map(A, f_identity, after, reconstruct)
-    assert preorder_result_identity == A, "preorder_map with identity failed"
-
-    # Apply postorder_map with identity
-    postorder_result_identity = postorder_map(A, f_identity, after, reconstruct)
-    assert postorder_result_identity == A, "postorder_map with identity failed"
-
-
-def test_hash_hierarchy():
-    # Original tree test (without shared subtrees)
-    F = RoseNode("F")
-    E = RoseNode("E")
-    D = RoseNode("D")
-    C = RoseNode("C", (F,))
-    B = RoseNode("B", (D, E))
-    A = RoseNode("A", (B, C))
-
-    # Compute hashes for the original tree
-    hash_A = cached_hash(A)
-    hash_B = cached_hash(B)
-    hash_C = cached_hash(C)
-    hash_D = cached_hash(D)
-    hash_E = cached_hash(E)
-    hash_F = cached_hash(F)
-
-    hash_str_A = cached_hash("A")
-    hash_str_B = cached_hash("B")
-    hash_str_C = cached_hash("C")
-    hash_str_D = cached_hash("D")
-    hash_str_E = cached_hash("E")
-    hash_str_F = cached_hash("F")
-
-    # Build the hash hierarchy for the original tree
-    hash_map = build_hash_hierarchy(A)
-
-    # Verify mappings for the original tree
-    assert hash_map[hash_A] == frozenset(
-        [hash_str_A, cached_hash(A.children)]
-    ), "A mapping incorrect"
-    assert hash_map[hash_B] == frozenset(
-        [hash_str_B, cached_hash(B.children)]
-    ), "B mapping incorrect"
-    assert hash_map[hash_C] == frozenset(
-        [hash_str_C, cached_hash(C.children)]
-    ), "C mapping incorrect"
-    assert hash_map[hash_D] == frozenset(
-        [hash_str_D, cached_hash(D.children)]
-    ), "D mapping incorrect"
-    assert hash_map[hash_E] == frozenset(
-        [hash_str_E, cached_hash(E.children)]
-    ), "E mapping incorrect"
-    assert hash_map[hash_F] == frozenset(
-        [hash_str_F, cached_hash(F.children)]
-    ), "F mapping incorrect"
-
-    assert hash_map[hash_str_A] == frozenset(), "String 'A' mapping incorrect"
-    assert hash_map[hash_str_B] == frozenset(), "String 'B' mapping incorrect"
-    assert hash_map[hash_str_C] == frozenset(), "String 'C' mapping incorrect"
-    assert hash_map[hash_str_D] == frozenset(), "String 'D' mapping incorrect"
-    assert hash_map[hash_str_E] == frozenset(), "String 'E' mapping incorrect"
-    assert hash_map[hash_str_F] == frozenset(), "String 'F' mapping incorrect"
-
-    # Verify no extra or missing keys in the original tree
-    expected_keys = {
-        hash_A,
-        hash_B,
-        hash_C,
-        hash_D,
-        hash_E,
-        hash_F,
-        hash_str_A,
-        hash_str_B,
-        hash_str_C,
-        hash_str_D,
-        hash_str_E,
-        hash_str_F,
-    }
-    assert set(hash_map.keys()) == expected_keys, (
-        "Extra or missing keys in hash_map"
-    )
-
-    # New test case with shared subtrees
-    G = RoseNode("G")
-    # Reuse existing D, E, F, and create new B and C with G as a shared child
-    B_shared = RoseNode("B", (D, E, G))
-    C_shared = RoseNode("C", (F, G))
-    A_shared = RoseNode("A", (B_shared, C_shared))
-
-    # Compute hashes for the tree with shared subtrees
-    hash_A_shared = cached_hash(A_shared)
-    hash_B_shared = cached_hash(B_shared)
-    hash_C_shared = cached_hash(C_shared)
-    hash_G = cached_hash(G)
-
-    hash_str_G = cached_hash("G")
-
-    # Build the hash hierarchy for the tree with shared subtrees
-    hash_map_shared = build_hash_hierarchy(A_shared)
-
-    # Verify mappings for the tree with shared subtrees
-    assert hash_map_shared[hash_A_shared] == frozenset(
-        [hash_str_A, cached_hash(A_shared.children)]
-    ), "A_shared mapping incorrect"
-    assert hash_map_shared[hash_B_shared] == frozenset(
-        [hash_str_B, cached_hash(B_shared.children)]
-    ), "B_shared mapping incorrect"
-    assert hash_map_shared[hash_C_shared] == frozenset(
-        [hash_str_C, cached_hash(C_shared.children)]
-    ), "C_shared mapping incorrect"
-    assert hash_map_shared[hash_D] == frozenset(
-        [hash_str_D, cached_hash(D.children)]
-    ), "D mapping incorrect in shared tree"
-    assert hash_map_shared[hash_E] == frozenset(
-        [hash_str_E, cached_hash(E.children)]
-    ), "E mapping incorrect in shared tree"
-    assert hash_map_shared[hash_F] == frozenset(
-        [hash_str_F, cached_hash(F.children)]
-    ), "F mapping incorrect in shared tree"
-    assert hash_map_shared[hash_G] == frozenset(
-        [hash_str_G, cached_hash(G.children)]
-    ), "G mapping incorrect"
-
-    assert hash_map_shared[hash_str_A] == frozenset(), (
-        "String 'A' mapping incorrect in shared tree"
-    )
-    assert hash_map_shared[hash_str_B] == frozenset(), (
-        "String 'B' mapping incorrect in shared tree"
-    )
-    assert hash_map_shared[hash_str_C] == frozenset(), (
-        "String 'C' mapping incorrect in shared tree"
-    )
-    assert hash_map_shared[hash_str_D] == frozenset(), (
-        "String 'D' mapping incorrect in shared tree"
-    )
-    assert hash_map_shared[hash_str_E] == frozenset(), (
-        "String 'E' mapping incorrect in shared tree"
-    )
-    assert hash_map_shared[hash_str_F] == frozenset(), (
-        "String 'F' mapping incorrect in shared tree"
-    )
-    assert hash_map_shared[hash_str_G] == frozenset(), (
-        "String 'G' mapping incorrect"
-    )
-
-    # Verify no extra or missing keys in the shared tree
-    expected_keys_shared = {
-        hash_A_shared,
-        hash_B_shared,
-        hash_C_shared,
-        hash_D,
-        hash_E,
-        hash_F,
-        hash_G,
-        hash_str_A,
-        hash_str_B,
-        hash_str_C,
-        hash_str_D,
-        hash_str_E,
-        hash_str_F,
-        hash_str_G,
-    }
-    assert set(hash_map_shared.keys()) == expected_keys_shared, (
-        "Extra or missing keys in hash_map_shared"
-    )
-
-    print("All tests for hash hierarchy passed successfully!")
-
-
-if __name__ == "__main__":
-    test_traversals()
-    test_mappings()
-    test_hash_hierarchy()
-    print("All tests passed successfully!")
+__all__ = [
+    "RoseNode",
+    "breadth_first_preorder",
+    "breadth_first_postorder",
+    "depth_first_preorder",
+    "depth_first_postorder",
+    "postorder_map",
+    "preorder_map",
+    "dataclass_subvalues",
+    "breadth_first_preorder_bitlengthaware",
+    "cached_hash",
+    "build_hash_hierarchy",
+]
