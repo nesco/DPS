@@ -19,8 +19,8 @@ from edit import (
     extended_edit_distance,
 )
 from hierarchy import grid_to_syntax_trees, grid_to_components_by_colors, component_to_distribution, components_by_colors_to_grid_object_dag
+from localtypes import Coord
 from kolmogorov_tree import (
-    Coord,
     CoordValue,
     CountValue,
     KNode,

@@ -21,7 +21,9 @@ from localtypes import Color, Coord, Primitive
 class BitLength(IntEnum):
     """Defines bit lengths for generic components in the Kolmogorov Tree."""
 
-    COUNT = 5  # 5 bits for repeat counts (0-31), specific value suitable for ARC grid sizes
+    COUNT = (
+        5  # 5 bits for repeat counts (0-31), specific value suitable for ARC grid sizes
+    )
     NODE_TYPE = 4  # 4 bits for up to 16 node types
     INDEX = 7  # 7 bits for symbol indices (up to 128 symbols)
     VAR = 1  # 2 bits for variable indices (up to 2 variables per symbol)

@@ -123,9 +123,9 @@ def str_to_repr(s: str) -> str:
             node_repr = str_to_repr(args[0])
             pos_repr = str_to_repr(args[1])
             colors_repr = str_to_repr(args[2])
-            return f"RootNode(node={node_repr}, position={pos_repr}, colors={colors_repr})"
-        else:
-            print(f"{s}, args={args}")
+            return (
+                f"RootNode(node={node_repr}, position={pos_repr}, colors={colors_repr})"
+            )
 
     if s.startswith("Rect(") and s.endswith(")"):
         content_str = s[5:-1]
@@ -153,7 +153,9 @@ def str_to_repr(s: str) -> str:
             if index_repr.isdigit():
                 index_repr = f"IndexValue(value={index_repr})"
             node_repr = str_to_repr(node_str)
-            return f"NestedNode(index={index_repr}, node={node_repr}, count={count_repr})"
+            return (
+                f"NestedNode(index={index_repr}, node={node_repr}, count={count_repr})"
+            )
 
     if s.startswith("Var(") and s.endswith(")"):
         index_str = s[4:-1]

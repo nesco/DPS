@@ -10,9 +10,7 @@ This module provides functions to inspect and query KNodes:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-from kolmogorov_tree.nodes import SymbolNode, VariableNode
+from kolmogorov_tree.nodes import KNode, SymbolNode, VariableNode
 from kolmogorov_tree.primitives import IndexValue, VariableValue
 from kolmogorov_tree.traversal import (
     breadth_first_preorder_knode,
@@ -20,17 +18,14 @@ from kolmogorov_tree.traversal import (
     get_subvalues,
 )
 
-if TYPE_CHECKING:
-    from kolmogorov_tree.nodes import KNode
 
-
-def is_symbolized(node: "KNode") -> bool:
+def is_symbolized(node: KNode) -> bool:
     """Return True if and only if node contains at least one SymbolNode in its subnodes."""
     subnodes = breadth_first_preorder_knode(node)
     return any(isinstance(n, SymbolNode) for n in subnodes)
 
 
-def is_abstraction(node: "KNode") -> bool:
+def is_abstraction(node: KNode) -> bool:
     """Return True if and only if node contains at least one VariableNode in its subvalues."""
     sub_values = get_subvalues(node)
     return any(
@@ -39,13 +34,13 @@ def is_abstraction(node: "KNode") -> bool:
     )
 
 
-def contained_symbols(knode: "KNode") -> tuple[IndexValue, ...]:
+def contained_symbols(knode: KNode) -> tuple[IndexValue, ...]:
     """Get all symbol indices contained in a KNode."""
     subnodes = breadth_first_preorder_knode(knode)
     return tuple(node.index for node in subnodes if isinstance(node, SymbolNode))
 
 
-def arity(node: "KNode") -> int:
+def arity(node: KNode) -> int:
     """Return the max index of the node variable, which is the arity of an abstraction."""
     subvalues = depth_first_preorder_bitlengthaware(node)
     variable_numbers = [

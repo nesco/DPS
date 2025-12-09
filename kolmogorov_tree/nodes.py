@@ -21,9 +21,9 @@ import math
 from abc import ABC
 from collections.abc import Collection
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Generic, Sequence
+from typing import Any, Generic
 
-from localtypes import BitLengthAware, Resolvable
+from localtypes import BitLengthAware
 
 from kolmogorov_tree.primitives import (
     BitLength,
@@ -35,10 +35,6 @@ from kolmogorov_tree.primitives import (
     T,
     VariableValue,
 )
-
-if TYPE_CHECKING:
-    # These are only needed for type hints, avoid circular import at runtime
-    pass
 
 
 # Base node class
@@ -55,7 +51,7 @@ class KNode(Generic[T], BitLengthAware, ABC):
     def bit_length(self) -> int:
         return BitLength.NODE_TYPE
 
-    def __or__(self, other: "KNode[T]") -> "SumNode[T]":
+    def __or__(self, other: KNode[T]) -> SumNode[T]:
         """Overloads | for alternatives, unpacking SumNodes."""
         if not isinstance(other, KNode):
             raise TypeError("Operand must be a KNode")
@@ -70,7 +66,7 @@ class KNode(Generic[T], BitLengthAware, ABC):
             children.append(other)
         return SumNode(frozenset(children))
 
-    def __and__(self, other: "KNode[T]") -> "ProductNode[T]":
+    def __and__(self, other: KNode[T]) -> ProductNode[T]:
         """Overloads & for sequences, unpacking ProductNodes."""
         if not isinstance(other, KNode):
             raise TypeError("Operand must be a KNode")
@@ -85,11 +81,11 @@ class KNode(Generic[T], BitLengthAware, ABC):
             children.append(other)
         return ProductNode(tuple(children))
 
-    def __add__(self, other: "KNode[T]") -> "ProductNode[T]":
+    def __add__(self, other: KNode[T]) -> ProductNode[T]:
         """Overloads + for concatenation, unpacking ProductNodes."""
         return self.__and__(other)  # Same behavior as &
 
-    def __mul__(self, count: int) -> "RepeatNode[T]":
+    def __mul__(self, count: int) -> RepeatNode[T]:
         """Overloads * for repetition, multiplying count if already a RepeatNode."""
         if not isinstance(count, int):
             raise TypeError("Count must be an integer")
@@ -205,7 +201,7 @@ class RepeatNode(KNode[T]):
 
 
 @dataclass(frozen=True)
-class NestedNode(KNode[T], Resolvable[KNode[T]]):
+class NestedNode(KNode[T]):
     """
     Represents A finite equivalent of the fixed point combinator.
     The catch is it can only acts on possibly recursive properties.
@@ -215,6 +211,8 @@ class NestedNode(KNode[T], Resolvable[KNode[T]]):
 
     Y_0(i, node) = node
     Y_c(i, node) ~ "s_i((Y_c-1(i, node),))"
+
+    Note: Use `resolve()` from `kolmogorov_tree.resolution` to expand this node.
     """
 
     index: IndexValue
@@ -227,22 +225,17 @@ class NestedNode(KNode[T], Resolvable[KNode[T]]):
         count_len = self.count.bit_length()
         return super().bit_length() + index_len + terminal_node + count_len
 
-    def resolve(self, symbol_table: Sequence[KNode[T]]) -> KNode[T]:
-        # Deferred import to avoid circular dependency
-        from kolmogorov_tree_legacy import expand_nested_node
-
-        return expand_nested_node(self, symbol_table)  # type: ignore[return-value]
-
-    def eq_ref(self, other: Resolvable[KNode[T]]) -> bool:
-        return isinstance(other, NestedNode) and self.index == other.index
-
     def __str__(self) -> str:
         return f"Y_{{{self.count}}}({self.index}, {self.node})"
 
 
 @dataclass(frozen=True)
-class SymbolNode(KNode[T], Resolvable[KNode[T]]):
-    """Represents an abstraction or reusable pattern."""
+class SymbolNode(KNode[T]):
+    """
+    Represents an abstraction or reusable pattern.
+
+    Note: Use `resolve()` from `kolmogorov_tree.resolution` to expand this node.
+    """
 
     index: IndexValue  # Index in the symbol table
     parameters: tuple[BitLengthAware, ...] = field(default_factory=tuple)
@@ -250,15 +243,6 @@ class SymbolNode(KNode[T], Resolvable[KNode[T]]):
     def bit_length(self) -> int:
         params_len = sum(param.bit_length() for param in self.parameters)
         return super().bit_length() + self.index.bit_length() + params_len
-
-    def resolve(self, symbol_table: Sequence[KNode[T]]) -> KNode[T]:
-        # Deferred import to avoid circular dependency
-        from kolmogorov_tree_legacy import reduce_abstraction
-
-        return reduce_abstraction(symbol_table[self.index.value], self.parameters)  # type: ignore[return-value]
-
-    def eq_ref(self, other: Resolvable[KNode[T]]) -> bool:
-        return isinstance(other, SymbolNode) and self.index == other.index
 
     def __str__(self) -> str:
         if self.parameters:
@@ -305,9 +289,7 @@ class RootNode(KNode[T]):
     def bit_length(self) -> int:
         pos_len = self.position.bit_length()
         colors_len = self.colors.bit_length()
-        return (
-            super().bit_length() + self.node.bit_length() + pos_len + colors_len
-        )
+        return super().bit_length() + self.node.bit_length() + pos_len + colors_len
 
     def __str__(self) -> str:
         position = self.position
@@ -318,9 +300,7 @@ class RootNode(KNode[T]):
 
 
 # Type aliases
-Unsymbolized = (
-    PrimitiveNode | RepeatNode | RootNode | ProductNode | SumNode | RectNode
-)
+Unsymbolized = PrimitiveNode | RepeatNode | RootNode | ProductNode | SumNode | RectNode
 Uncompressed = PrimitiveNode | ProductNode | SumNode
 
 __all__ = [

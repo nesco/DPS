@@ -5,21 +5,20 @@ This module provides:
 - get_subvalues: Get all BitLengthAware subvalues of a dataclass
 - children: Get child KNodes of a node
 - depth_first_preorder_bitlengthaware: DFS traversal for BitLengthAware
-- breadth_first_preorder_knode: BFS traversal for KNodes
+- preorder_knode: DFS preorder traversal for KNodes
 - next_layer: Get next layer of children (for BFS-like traversal)
 - depth: Calculate tree depth
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Iterator
 
 from localtypes import BitLengthAware
 from utils.tree_functionals import dataclass_subvalues, depth_first_preorder
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
     from kolmogorov_tree.nodes import KNode
     from kolmogorov_tree.primitives import T
 
@@ -54,9 +53,13 @@ def depth_first_preorder_bitlengthaware(
     return depth_first_preorder(get_subvalues, root)
 
 
-def breadth_first_preorder_knode(node: "KNode[T] | None") -> "Iterator[KNode[T]]":
-    """Breadth-first preorder traversal for KNode objects."""
+def preorder_knode(node: "KNode[T] | None") -> "Iterator[KNode[T]]":
+    """Depth-first preorder traversal for KNode objects."""
     return depth_first_preorder(children, node)
+
+
+# Backwards compatibility alias (deprecated)
+breadth_first_preorder_knode = preorder_knode
 
 
 def next_layer(layer: "Iterable[KNode]") -> "tuple[KNode, ...]":
@@ -79,7 +82,8 @@ __all__ = [
     "get_subvalues",
     "children",
     "depth_first_preorder_bitlengthaware",
-    "breadth_first_preorder_knode",
+    "preorder_knode",
+    "breadth_first_preorder_knode",  # Deprecated alias
     "next_layer",
     "depth",
 ]

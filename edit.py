@@ -18,11 +18,11 @@ from typing import Any, Callable, Sequence, TypeVar
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+from kolmogorov_tree.resolution import eq_ref, is_resolvable, resolve
 from localtypes import (
     BitLengthAware,
     KeyValue,
     Primitive,
-    Resolvable,
     ensure_all_instances,
 )
 from utils.tree_functionals import (
@@ -565,32 +565,35 @@ def extended_edit_distance(
 
     """
 
-    # TO-DO: Move this in helper, same for recursive_edit_distance
-    match source, target:
-        case Resolvable(), Resolvable() if source.eq_ref(target):
-            pass
-        case Resolvable(), Resolvable():
+    # Handle resolvable nodes (SymbolNode, NestedNode)
+    source_resolvable = source is not None and is_resolvable(source)
+    target_resolvable = target is not None and is_resolvable(target)
+
+    if source_resolvable and target_resolvable:
+        assert source is not None and target is not None  # For type checker
+        if eq_ref(source, target):
+            pass  # Same reference, continue with normal comparison
+        else:
             d, op = extended_edit_distance(
-                source.resolve(symbol_table),
-                target.resolve(symbol_table),
+                resolve(source, symbol_table),
+                resolve(target, symbol_table),
                 symbol_table,
             )
-            return d, Resolve(None, op)
-        case Resolvable(), _:
-            return extended_edit_distance(
-                source.resolve(symbol_table),
-                target,
-                symbol_table,
-            )
-            return d, Resolve(None, op)
-        case _, Resolvable():
-            return extended_edit_distance(
-                source,
-                target.resolve(symbol_table),
-                symbol_table,
-            )
-        case _, _:
-            pass
+            return d, Resolve(KeyValue(None), op) if op is not None else (d, None)  # type: ignore[return-value]
+    elif source_resolvable:
+        assert source is not None  # For type checker
+        return extended_edit_distance(
+            resolve(source, symbol_table),
+            target,
+            symbol_table,
+        )
+    elif target_resolvable:
+        assert target is not None  # For type checker
+        return extended_edit_distance(
+            source,
+            resolve(target, symbol_table),
+            symbol_table,
+        )
 
     if source is None and target is None:
         return 0, None  # Maybe Identity(tuple())?
@@ -706,35 +709,34 @@ def recursive_edit_distance(
     # Handle the case where the element to compare are reference to a lookup table, possibly with parameters
     # You don't want to compare them literally if they don't point to the same element
     # If both are references then you compute the distance of the resolution of the source to the resolution of the target
-    # TO-DO: Move this in helper, same for extended_edit_distance
-    match source, target:
-        case Resolvable(), Resolvable() if source.eq_ref(target):
-            pass
-        case Resolvable(), Resolvable():
+    source_resolvable = is_resolvable(source)
+    target_resolvable = is_resolvable(target)
+
+    if source_resolvable and target_resolvable:
+        if eq_ref(source, target):
+            pass  # Same reference, continue with normal comparison
+        else:
             d, op = recursive_edit_distance(
-                source.resolve(symbol_table),
-                target.resolve(symbol_table),
+                resolve(source, symbol_table),
+                resolve(target, symbol_table),
                 symbol_table,
                 filter_identities,
             )
-            return d, Resolve(None, op)
-        case Resolvable(), _:
-            return recursive_edit_distance(
-                source.resolve(symbol_table),
-                target,
-                symbol_table,
-                filter_identities,
-            )
-            return d, Resolve(None, op)
-        case _, Resolvable():
-            return recursive_edit_distance(
-                source,
-                target.resolve(symbol_table),
-                symbol_table,
-                filter_identities,
-            )
-        case _, _:
-            pass
+            return d, Resolve(KeyValue(None), op)  # type: ignore[return-value]
+    elif source_resolvable:
+        return recursive_edit_distance(
+            resolve(source, symbol_table),
+            target,
+            symbol_table,
+            filter_identities,
+        )
+    elif target_resolvable:
+        return recursive_edit_distance(
+            source,
+            resolve(target, symbol_table),
+            symbol_table,
+            filter_identities,
+        )
 
     dp = {}
 
