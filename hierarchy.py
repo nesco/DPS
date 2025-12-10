@@ -5,7 +5,7 @@ from typing import cast
 
 from typing_extensions import Iterable
 
-from arc_syntax_tree import component_to_distribution
+from arc import component_to_distribution
 from kolmogorov_tree import (
     MoveValue,
     PaletteValue,

@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 
-from arc_syntax_tree import (
+from arc import (
     component_to_distribution,
     component_to_raw_syntax_tree_distribution,
     decode_root,

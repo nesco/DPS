@@ -13,7 +13,7 @@ from collections.abc import Callable, Set
 from itertools import combinations
 from typing import TypeVar
 
-from arc_syntax_tree import decode_knode
+from arc import decode_knode
 from edit import (
     apply_transformation,
     extended_edit_distance,
