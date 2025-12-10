@@ -12,7 +12,7 @@ regardless of element type or how connectivity was defined.
 from collections.abc import Mapping, Set
 from typing import Callable, TypeVar
 
-from utils.dag_functionals import topological_sort
+from utils.algorithms.dag import topological_sort
 
 Element = TypeVar("Element")
 Object = TypeVar("Object")

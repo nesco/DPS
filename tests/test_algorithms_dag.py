@@ -1,7 +1,7 @@
-"""Tests for utils/dag_functionals.py"""
+"""Tests for utils/algorithms/dag.py"""
 
 import pytest
-from utils.dag_functionals import topological_sort
+from utils.algorithms.dag import topological_sort
 
 
 class TestTopologicalSort:

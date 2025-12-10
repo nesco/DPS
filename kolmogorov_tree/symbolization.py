@@ -28,7 +28,7 @@ import copy
 from collections import Counter, defaultdict
 from typing import Sequence
 
-from utils.dag_functionals import topological_sort
+from utils.algorithms.dag import topological_sort
 
 from kolmogorov_tree.matching import abstract_node, node_to_symbolized_node
 from kolmogorov_tree.nodes import (

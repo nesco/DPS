@@ -14,7 +14,7 @@ from collections.abc import Iterable
 from typing import TYPE_CHECKING, Iterator
 
 from kolmogorov_tree.types import BitLengthAware
-from utils.tree_functionals import dataclass_subvalues, depth_first_preorder
+from utils.algorithms.tree import dataclass_subvalues, depth_first_preorder
 
 if TYPE_CHECKING:
     from kolmogorov_tree.nodes import KNode

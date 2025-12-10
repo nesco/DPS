@@ -2,7 +2,7 @@
 Global constants used throughout the project
 """
 
-from utils.tui import bg_color_24b
+from utils.io.tui import bg_color_24b
 
 
 COLOR_3B = {

@@ -19,13 +19,13 @@ from kolmogorov_tree import (
     unsymbolize_all,
 )
 from arc.types import Colors, Coord, Coords, Proportions
-from utils.display import display_objects_syntax_trees
+from utils.io.display import display_objects_syntax_trees
 from utils.grid import (
     PointsOperations,
     coords_to_points,
     points_to_coords,
 )
-from utils.loader import train_task_to_grids
+from utils.io.loader import train_task_to_grids
 
 
 def test_reconstruction():

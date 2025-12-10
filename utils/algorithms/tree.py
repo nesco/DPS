@@ -24,11 +24,12 @@ Note: For graphs with cycles, add `seen = set()` to avoid infinite loops.
 
 from collections import deque
 from dataclasses import dataclass, field, fields, is_dataclass
-from typing import Callable, Generic, Iterator, Sequence, TypeVar
+from typing import TYPE_CHECKING, Callable, Generic, Iterator, Sequence, TypeVar
 
 from collections.abc import Hashable
 
-from kolmogorov_tree.types import BitLengthAware
+if TYPE_CHECKING:
+    from kolmogorov_tree.types import BitLengthAware
 
 T = TypeVar("T")
 
@@ -183,7 +184,7 @@ def preorder_map(
 # =============================================================================
 
 
-def dataclass_subvalues(obj: object) -> Iterator[BitLengthAware]:
+def dataclass_subvalues(obj: object) -> "Iterator[BitLengthAware]":
     """
     Yields all field values from a dataclass, flattening collections.
 
@@ -200,8 +201,8 @@ def dataclass_subvalues(obj: object) -> Iterator[BitLengthAware]:
 
 
 def breadth_first_preorder_bitlengthaware(
-    root: BitLengthAware,
-) -> Iterator[BitLengthAware]:
+    root: "BitLengthAware",
+) -> "Iterator[BitLengthAware]":
     """BFS traversal for BitLengthAware dataclass trees."""
     return breadth_first_preorder(dataclass_subvalues, root)
 

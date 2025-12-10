@@ -29,10 +29,10 @@ from kolmogorov_tree import (
     unsymbolize,
 )
 from arc.types import ColorGrid
-from utils.cliques import IndexedElement, find_cliques
-from utils.display import display_objects_syntax_trees
+from utils.algorithms.cliques import IndexedElement, find_cliques
+from utils.io.display import display_objects_syntax_trees
 from utils.grid import GridOperations
-from utils.loader import train_task_to_grids
+from utils.io.loader import train_task_to_grids
 
 sys.setrecursionlimit(10**9)
 

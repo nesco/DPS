@@ -27,7 +27,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from typing import Callable, Iterable, Sequence, cast
 
-from utils.tree_functionals import postorder_map, preorder_map
+from utils.algorithms.tree import postorder_map, preorder_map
 
 from kolmogorov_tree.nodes import (
     KNode,

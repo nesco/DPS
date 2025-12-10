@@ -10,7 +10,7 @@ any element type and connectivity definition.
 
 from typing import Callable, TypeVar
 
-from utils.graph import nodes_to_connected_components
+from utils.algorithms.graph import nodes_to_connected_components
 
 E = TypeVar("E")  # Element type
 

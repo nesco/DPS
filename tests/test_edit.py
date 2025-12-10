@@ -19,7 +19,7 @@ from edit import (
     apply_transformation,
 )
 from kolmogorov_tree.types import BitLengthAware, KeyValue, Primitive
-from utils.tree_functionals import (
+from utils.algorithms.tree import (
     RoseNode,
     breadth_first_preorder_bitlengthaware,
 )

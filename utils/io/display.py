@@ -4,7 +4,7 @@ from hierarchy import grid_to_components_by_colors
 from kolmogorov_tree import MoveValue, ProductNode, RootNode, SumNode
 from arc.types import ColorGrid, Colors, Coords, Proportions
 from utils.grid import GridOperations, PointsOperations, coords_to_points
-from utils.loader import train_task_to_grids
+from utils.io.loader import train_task_to_grids
 
 from collections.abc import Sequence
 

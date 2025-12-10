@@ -1,9 +1,9 @@
-"""Tests for utils/tree_functionals.py"""
+"""Tests for utils/algorithms/tree.py"""
 
 import pytest
 from typing import Iterator, Sequence
 
-from utils.tree_functionals import (
+from utils.algorithms.tree import (
     RoseNode,
     breadth_first_preorder,
     breadth_first_postorder,

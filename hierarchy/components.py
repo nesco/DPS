@@ -32,7 +32,7 @@ from arc.types import (
     Coord,
     Coords,
 )
-from utils.graph import nodes_to_connected_components
+from utils.algorithms.graph import nodes_to_connected_components
 from utils.grid import grid_to_coords_by_color
 
 
