@@ -26,7 +26,8 @@ from kolmogorov_tree import (
     SumNode,
     VariableNode,
 )
-from localtypes import BitLengthAware, Coord, Primitive
+from arc.types import Coord
+from kolmogorov_tree.types import BitLengthAware, Primitive
 
 from .tree import extended_edit_distance, recursive_edit_distance
 

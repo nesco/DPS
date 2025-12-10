@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Iterator
 
-from localtypes import BitLengthAware
+from kolmogorov_tree.types import BitLengthAware
 from utils.tree_functionals import dataclass_subvalues, depth_first_preorder
 
 if TYPE_CHECKING:

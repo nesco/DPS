@@ -1,9 +1,9 @@
 from collections.abc import Sequence
 
-from arc import (
-    component_to_distribution,
-    component_to_raw_syntax_tree_distribution,
-    decode_root,
+from arc.decoding import decode_root
+from arc.encoding import (
+    encode_component,
+    encode_component_distribution,
     syntax_tree_at,
 )
 from hierarchy import (
@@ -18,7 +18,7 @@ from kolmogorov_tree import (
     extract_nested_patterns,
     unsymbolize_all,
 )
-from localtypes import Colors, Coord, Coords, Proportions
+from arc.types import Colors, Coord, Coords, Proportions
 from utils.display import display_objects_syntax_trees
 from utils.grid import (
     PointsOperations,
@@ -50,7 +50,7 @@ def test_reconstruction():
     def check_coords_compositional_identity_distribution(
         component: Coords, colors: Colors, start: Coord
     ):
-        syntax_trees = component_to_raw_syntax_tree_distribution(component, colors)
+        syntax_trees = encode_component_distribution(component, colors)
         for i, st in enumerate(syntax_trees):
             coords = points_to_coords(decode_root(st))
             assert isinstance(coords, set | frozenset)
@@ -97,12 +97,10 @@ def test_nested_nodes():
     rect = max(components_by_colors[frozenset({3})], key=len)
     rect_with_hole = next(iter(components_by_colors[frozenset({1, 3})]))
 
-    cross_distribution = component_to_raw_syntax_tree_distribution(
-        cross, frozenset({1})
-    )
+    cross_distribution = encode_component_distribution(cross, frozenset({1}))
 
-    rect_distribution = component_to_raw_syntax_tree_distribution(rect, frozenset({3}))
-    rect_with_hole_distribution = component_to_raw_syntax_tree_distribution(
+    rect_distribution = encode_component_distribution(rect, frozenset({3}))
+    rect_with_hole_distribution = encode_component_distribution(
         rect_with_hole, frozenset({1})
     )
 
@@ -138,8 +136,8 @@ def test_full_symbolisation():
     rect_with_hole = next(iter(components_by_colors[frozenset({1, 3})]))
 
     def check_symbolization_identity(component: Coords, colors: Colors):
-        distribution, symbol_table = component_to_distribution(component, colors)
-        raw_distribution = component_to_raw_syntax_tree_distribution(component, colors)
+        distribution, symbol_table = encode_component(component, colors)
+        raw_distribution = encode_component_distribution(component, colors)
 
         need_to_be_raw = unsymbolize_all(distribution, symbol_table)
 
@@ -189,7 +187,7 @@ if __name__ == "__main__":
     # print("\nRect distribution")
     # display_distribution(a_rect, frozenset({1}))
 
-    # for st in component_to_raw_syntax_tree_distribution(a_rect, frozenset({1})):
+    # for st in encode_component_distribution(a_rect, frozenset({1})):
     #     expanded = expand_repeats(st)
     #     print(f"Expanded: {expanded}")
 

@@ -6,7 +6,7 @@ import json
 import os
 
 from constants import DATA
-from localtypes import ColorGrid, Example, TaskData
+from arc.types import ColorGrid, Example, TaskData
 
 
 def path_to_task(path: str) -> TaskData:

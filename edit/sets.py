@@ -13,7 +13,7 @@ from typing import Callable, Literal, Sequence
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from localtypes import BitLengthAware, KeyValue
+from kolmogorov_tree.types import BitLengthAware, KeyValue
 
 from .operations import (
     Add,

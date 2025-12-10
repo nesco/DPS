@@ -10,7 +10,7 @@ import math
 from functools import cache
 from typing import Callable, Literal, Sequence
 
-from localtypes import BitLengthAware, KeyValue
+from kolmogorov_tree.types import BitLengthAware, KeyValue
 
 from .operations import (
     Add,

@@ -33,7 +33,7 @@ from kolmogorov_tree import (
     reverse_node,
     shift,
 )
-from localtypes import (
+from arc.types import (
     Coord,
     Coords,
     Point,
@@ -314,7 +314,3 @@ def decode_knode(
                 raise ValueError(f"Invalid top-level node: {type(node)}")
 
     return execute(knode)
-
-
-# Backward-compatible alias
-decode_knode_coords = execute_moves

@@ -15,7 +15,7 @@ Functions:
 import functools
 from typing import Sequence
 
-from localtypes import BitLengthAware
+from kolmogorov_tree.types import BitLengthAware
 
 from kolmogorov_tree.nodes import (
     KNode,

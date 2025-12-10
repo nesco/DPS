@@ -23,7 +23,7 @@ from collections.abc import Collection
 from dataclasses import dataclass, field
 from typing import Any, Generic
 
-from localtypes import BitLengthAware
+from kolmogorov_tree.types import BitLengthAware
 
 from kolmogorov_tree.primitives import (
     BitLength,

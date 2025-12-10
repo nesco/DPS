@@ -18,7 +18,7 @@ from edit import (
     extended_edit_distance,
     apply_transformation,
 )
-from localtypes import BitLengthAware, KeyValue, Primitive
+from kolmogorov_tree.types import BitLengthAware, KeyValue, Primitive
 from utils.tree_functionals import (
     RoseNode,
     breadth_first_preorder_bitlengthaware,

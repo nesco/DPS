@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from itertools import chain, combinations
 
 from decomposition import extract_connected_components, king_neighbors
-from localtypes import (
+from arc.types import (
     Color,
     ColorGrid,
     Colors,

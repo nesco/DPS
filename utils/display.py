@@ -1,11 +1,8 @@
-from arc import (
-    component_to_distribution,
-    component_to_raw_syntax_tree_distribution,
-    decode_knode,
-)
+from arc.decoding import decode_knode
+from arc.encoding import encode_component, encode_component_distribution
 from hierarchy import grid_to_components_by_colors
 from kolmogorov_tree import MoveValue, ProductNode, RootNode, SumNode
-from localtypes import ColorGrid, Colors, Coords, Proportions
+from arc.types import ColorGrid, Colors, Coords, Proportions
 from utils.grid import GridOperations, PointsOperations, coords_to_points
 from utils.loader import train_task_to_grids
 
@@ -44,14 +41,14 @@ def display_components(grid: ColorGrid):
 
 
 def display_raw_distribution(component: Coords, colors: Colors):
-    raw_distribution = component_to_raw_syntax_tree_distribution(component, colors)
+    raw_distribution = encode_component_distribution(component, colors)
 
     for st in raw_distribution:
         print(f"\nSyntax tree: {st}, length: {st.bit_length()}")
 
 
 def display_distribution(component: Coords, colors: Colors):
-    distribution, symbol_table = component_to_distribution(component, colors)
+    distribution, symbol_table = encode_component(component, colors)
 
     print("Distribution: ")
     for st in distribution:

@@ -13,7 +13,7 @@ Types:
 
 from typing import cast
 
-from localtypes import BitLengthAware, Primitive
+from kolmogorov_tree.types import BitLengthAware, Primitive
 
 from kolmogorov_tree.nodes import (
     KNode,

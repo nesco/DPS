@@ -6,7 +6,7 @@ from enum import StrEnum
 from typing import Callable, Final, Literal, Optional, cast
 
 # from helpers import *
-from localtypes import Coord, Coords
+from arc.types import Coord, Coords
 
 
 # Directions

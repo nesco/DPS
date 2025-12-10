@@ -9,7 +9,8 @@ Encoding pipeline:
 
 Key functions:
     - syntax_tree_at: Encode a component from a specific starting point
-    - component_to_distribution: Generate distribution of encodings
+    - encode_component: Generate distribution of encodings with symbolization
+    - encode_component_distribution: Generate raw distribution without symbolization
 """
 
 from dataclasses import dataclass
@@ -41,7 +42,7 @@ from kolmogorov_tree import (
     premap,
     symbolize,
 )
-from localtypes import (
+from arc.types import (
     Colors,
     Coord,
     Coords,
@@ -396,12 +397,3 @@ class UnionNode(Generic[T]):
         if self.normalizing_node is not None:
             total += self.normalizing_node.bit_length()
         return total
-
-
-# Backward-compatible aliases
-moves_to_rect = detect_rectangle_pattern
-detect_rect_node = apply_rectangle_detection
-freeman_node_to_root_node = create_root_node
-get_potential_starting_points = find_candidate_start_points
-component_to_raw_syntax_tree_distribution = encode_component_distribution
-component_to_distribution = encode_component

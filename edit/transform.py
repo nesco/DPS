@@ -4,7 +4,7 @@ Apply transformations to BitLengthAware objects.
 
 from dataclasses import is_dataclass, replace
 
-from localtypes import BitLengthAware, Primitive
+from kolmogorov_tree.types import BitLengthAware, Primitive
 
 from .operations import (
     Add,

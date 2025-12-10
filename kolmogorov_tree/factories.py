@@ -11,7 +11,7 @@ Functions:
 
 from __future__ import annotations
 
-from localtypes import Coord
+from arc.types import Coord
 
 from kolmogorov_tree.nodes import (
     KNode,

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any, Sequence, TypeVar
 
-from localtypes import BitLengthAware
+from kolmogorov_tree.types import BitLengthAware
 
 from kolmogorov_tree.nodes import NestedNode, SymbolNode
 

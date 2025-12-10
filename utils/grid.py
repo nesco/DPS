@@ -16,13 +16,13 @@ from collections.abc import Callable, Mapping
 import networkx as nx
 
 from constants import COLORS, BG_COLOR
-from localtypes import (
+from arc.types import (
     Box,
     Color,
     ColorGrid,
     Coord,
     Coords,
-    CoordsGeneralized,
+    CoordsOrPoints,
     Grid,
     Mask,
     Point,
@@ -55,7 +55,7 @@ def matrix_to_proportions(matrix: list[list]) -> Proportions:
 # Functions (basic utils)
 
 
-def unpack_coords(coords: CoordsGeneralized) -> tuple[list[int], list[int]]:
+def unpack_coords(coords: CoordsOrPoints) -> tuple[list[int], list[int]]:
     cols, rows, *_ = zip(*coords)
     return (list(cols), list(rows))
 
@@ -385,7 +385,7 @@ class CoordsOperations:
         return Proportions(width, height)
 
     @staticmethod
-    def box(coords: CoordsGeneralized) -> Box:
+    def box(coords: CoordsOrPoints) -> Box:
         cols, rows = unpack_coords(coords)
         row_min, row_max = min(rows), max(rows)
         col_min, col_max = min(cols), max(cols)

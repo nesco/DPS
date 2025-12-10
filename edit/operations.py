@@ -7,7 +7,7 @@ Extended operations add: Prune, Graft, Inner, Resolve.
 
 from dataclasses import dataclass
 
-from localtypes import BitLengthAware, KeyValue
+from kolmogorov_tree.types import BitLengthAware, KeyValue
 
 
 type Operation = Add | Delete | Identity | Substitute | Inner

@@ -56,7 +56,7 @@ from kolmogorov_tree import (
     create_move_node,
     create_variable_node,
 )
-from localtypes import Coord, ensure_all_instances
+from arc.types import Coord, ensure_all_instances
 
 
 # Helpers for tests

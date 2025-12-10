@@ -163,7 +163,7 @@ def str_to_repr(s: str) -> str:
 
 def str_to_knode(s: str) -> "KNode":
     """Parses a string representation into a KNode object."""
-    from localtypes import Coord  # noqa: F401
+    from arc.types import Coord  # noqa: F401
 
     from kolmogorov_tree.nodes import (  # noqa: F401
         KNode,

@@ -12,11 +12,8 @@ from collections.abc import Mapping, Set
 
 from decomposition import build_hasse_diagram
 from decomposition import sort_by_inclusion as generic_sort_by_inclusion
-from localtypes import (
-    Colors,
-    Coords,
-    GridObject,
-)
+from arc.types import Colors, Coords
+from hierarchy.types import GridObject
 
 
 def components_by_colors_to_grid_object_dag(

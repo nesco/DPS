@@ -16,7 +16,7 @@ Types:
 
 from collections import Counter
 
-from localtypes import BitLengthAware
+from kolmogorov_tree.types import BitLengthAware
 
 from kolmogorov_tree.nodes import (
     KNode,

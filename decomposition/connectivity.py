@@ -15,7 +15,7 @@ from collections.abc import Sequence
 from typing import Callable, TypeVar
 
 from freeman import BISHOP, DIRECTIONS_FREEMAN, KING, TOWER, King
-from localtypes import Coord
+from arc.types import Coord
 
 E = TypeVar("E")
 

@@ -15,7 +15,8 @@ from kolmogorov_tree import (
     RootNode,
     SumNode,
 )
-from localtypes import ColorGrid, GridObject
+from arc.types import ColorGrid
+from hierarchy.types import GridObject
 
 from .components import (
     condition_by_color_couples,

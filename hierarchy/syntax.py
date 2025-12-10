@@ -12,7 +12,7 @@ from typing import cast
 
 from typing_extensions import Iterable
 
-from arc import component_to_distribution
+from arc.encoding import encode_component
 from kolmogorov_tree import (
     MoveValue,
     PaletteValue,
@@ -23,7 +23,7 @@ from kolmogorov_tree import (
     iterable_to_sum,
     unsymbolize,
 )
-from localtypes import GridObject
+from hierarchy.types import GridObject
 
 from .dag import sort_by_inclusion
 
@@ -94,7 +94,7 @@ def dag_to_syntax_trees_linear(
     syntax_trees: list[RootNode[MoveValue]] = []
 
     for grid_object in sorted_grid_objects:
-        distribution, symbol_table = component_to_distribution(
+        distribution, symbol_table = encode_component(
             grid_object.coords, grid_object.colors
         )
         root = unsymbolize(distribution[0], symbol_table)
@@ -190,7 +190,7 @@ def dag_to_syntax_trees(
     root_by_grid_object: dict[GridObject, RootNode[MoveValue]] = dict()
 
     for grid_object in sorted_grid_objects:
-        distribution, symbol_table = component_to_distribution(
+        distribution, symbol_table = encode_component(
             grid_object.coords, grid_object.colors
         )
         root = unsymbolize(distribution[0], symbol_table)

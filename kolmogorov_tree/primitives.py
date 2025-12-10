@@ -22,7 +22,8 @@ from dataclasses import dataclass
 from enum import IntEnum
 from typing import Self, TypeVar
 
-from localtypes import Color, Coord, Primitive
+from arc.types import Color, Coord
+from kolmogorov_tree.types import Primitive
 
 
 class BitLength(IntEnum):

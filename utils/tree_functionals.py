@@ -28,7 +28,7 @@ from typing import Callable, Generic, Iterator, Sequence, TypeVar
 
 from collections.abc import Hashable
 
-from localtypes import BitLengthAware
+from kolmogorov_tree.types import BitLengthAware
 
 T = TypeVar("T")
 

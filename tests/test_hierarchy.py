@@ -15,7 +15,8 @@ from hierarchy import (
     coords_to_connected_components,
     grid_to_components_by_colors,
 )
-from localtypes import Coord, GridObject
+from arc.types import Coord
+from hierarchy.types import GridObject
 
 
 class TestCoordsToConnectedComponents:

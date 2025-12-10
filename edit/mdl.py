@@ -16,7 +16,7 @@ Two distance metrics:
 
 from typing import Literal, Sequence
 
-from localtypes import BitLengthAware
+from kolmogorov_tree.types import BitLengthAware
 
 from .tree import extended_edit_distance, recursive_edit_distance
 

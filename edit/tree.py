@@ -12,7 +12,8 @@ from dataclasses import fields, is_dataclass
 from typing import Any, Literal, Sequence
 
 from kolmogorov_tree.resolution import eq_ref, is_resolvable, resolve
-from localtypes import BitLengthAware, KeyValue, Primitive, ensure_all_instances
+from arc.types import ensure_all_instances
+from kolmogorov_tree.types import BitLengthAware, KeyValue, Primitive
 
 from .operations import (
     Add,
