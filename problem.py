@@ -1,15 +1,20 @@
 """
-Solve ARC-AGI Problems here
+Solve ARC-AGI Problems here.
+
+This module implements clique-finding for matching objects across grids.
+Objects that play the same semantic role should be grouped together.
+
+Distance metrics available:
+- edit: Raw edit distance (transformation cost)
+- nid: Normalized Information Distance (AIT-grounded)
+- structural: Normalized structural distance (ignores position/color)
 """
 
-# TODO: Solve the mapping issue
-# Bug: Distance is not symmetric, I have a 10 between s_22 and s_34 sometimes
-
+import logging
 import sys
-import random
-
-from collections import defaultdict, Counter
+from collections import Counter
 from collections.abc import Callable, Set
+from enum import Enum
 from itertools import combinations
 from typing import TypeVar
 
@@ -17,9 +22,10 @@ from arc import decode_knode
 from edit import (
     apply_transformation,
     extended_edit_distance,
+    normalized_information_distance,
+    structural_distance_value,
 )
-from hierarchy import grid_to_syntax_trees, grid_to_components_by_colors, component_to_distribution, components_by_colors_to_grid_object_dag
-from localtypes import Coord
+from hierarchy import grid_to_syntax_trees
 from kolmogorov_tree import (
     CoordValue,
     CountValue,
@@ -35,11 +41,25 @@ from kolmogorov_tree import (
     full_symbolization,
     unsymbolize,
 )
-from utils.display import display_objects_syntax_trees, display_components
-from utils.grid import GridOperations, PointsOperations, CoordsOperations
+from utils.display import display_objects_syntax_trees
+from utils.grid import GridOperations, PointsOperations
 from utils.loader import train_task_to_grids
 
 sys.setrecursionlimit(10**9)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+class DistanceMetric(Enum):
+    """Available distance metrics for clique finding."""
+    EDIT = "edit"           # Raw edit distance
+    NID = "nid"             # Normalized Information Distance
+    STRUCTURAL = "structural"  # Structural distance (ignores position/color)
 
 
 T = TypeVar("T")
@@ -218,8 +238,23 @@ def find_potential_cliques(
 def find_cliques(
     sets: list[set[T]], distance: Callable[[T | None, T | None], float]
 ) -> list[set[IndexedElement[T]]]:
+    """
+    Find cliques of matching objects across multiple sets.
+
+    Uses k-reciprocal nearest neighbors to find stable pairings,
+    then greedily selects cliques by minimum total distance.
+
+    Args:
+        sets: List of sets, one per grid.
+        distance: Distance function between elements.
+
+    Returns:
+        List of cliques, where each clique is a set of (grid_index, element) pairs.
+    """
     cliques: list[set[IndexedElement[T]]] = []
+
     # Step 1: Compute the distance tensor
+    logger.debug("Computing distance tensor...")
     distance_tensor: dict[tuple[int, int, T, T], float] = dict()
     for i, set1 in enumerate(sets):
         for j, set2 in enumerate(sets):
@@ -229,14 +264,20 @@ def find_cliques(
                 for b in set2:
                     distance_tensor[i, j, a, b] = distance(a, b)
 
-    print("Distance tensor:")
-    for i, j, st1, st2 in distance_tensor:
-        print(f"{i}, {j} - {st1} ° {st2} = {distance_tensor[(i, j, st1, st2)]}")
+    logger.debug(f"Distance tensor has {len(distance_tensor)} entries")
+
+    # Log some sample distances at debug level
+    if logger.isEnabledFor(logging.DEBUG):
+        sample_count = 0
+        for (i, j, st1, st2), dist in distance_tensor.items():
+            if sample_count < 20:  # Only show first 20
+                logger.debug(f"  d({i},{j}): {st1} <-> {st2} = {dist:.3f}")
+                sample_count += 1
 
     taken_elements: set[IndexedElement[T]] = set()
-    # Step 2: Compute potential cliques, while there is a potential clique
-    # take the one with the lowest total distance and marks it's elements as taken
-    # then recompute potential cliques
+
+    # Step 2: Greedily find cliques
+    iteration = 0
     while True:
         potential_cliques = find_potential_cliques(
             sets, distance_tensor, taken_elements
@@ -244,16 +285,18 @@ def find_cliques(
         if not potential_cliques:
             break
 
-        # pick the clique of minimal total distance
+        # Pick the clique of minimal total distance
         clique = min(
             potential_cliques, key=lambda c: total_distance(c, distance)
         )
         cliques.append(clique)
 
-        # mark its members as taken
+        # Mark its members as taken
         taken_elements.update(clique)
-        print(f"taken_elements now = {taken_elements}")
-        print(f"clique now = {clique}")
+
+        iteration += 1
+        logger.debug(f"Iteration {iteration}: found clique with {len(clique)} elements")
+
     return cliques
 
 def find_cliques1(
@@ -440,20 +483,70 @@ def problem1(task="2dc579da.json"):
     return symbol_table
 
 
-# TODO: Debug differences
-# PYTHONHASHSEED=0  python3 problem.py
-# PYTHONHASHSEED=2  python3 problem.py
-def problem(task="2dc579da.json"):
+def create_distance_function(
+    metric: DistanceMetric,
+    symbol_table: tuple,
+) -> Callable[[KNode[MoveValue] | None, KNode[MoveValue] | None], float]:
+    """
+    Create a distance function based on the selected metric.
+
+    Args:
+        metric: Which distance metric to use.
+        symbol_table: Symbol table for resolving references.
+
+    Returns:
+        Distance function that takes two KNodes and returns a float.
+    """
+    def distance_f(a: KNode[MoveValue] | None, b: KNode[MoveValue] | None) -> float:
+        # Always unsymbolize first for consistent comparison
+        node_a = unsymbolize(a, symbol_table)
+        node_b = unsymbolize(b, symbol_table)
+
+        match metric:
+            case DistanceMetric.EDIT:
+                return float(extended_edit_distance(node_a, node_b, symbol_table)[0])
+            case DistanceMetric.NID:
+                return normalized_information_distance(node_a, node_b, symbol_table)
+            case DistanceMetric.STRUCTURAL:
+                return structural_distance_value(node_a, node_b, symbol_table)
+
+    return distance_f
+
+
+def solve_task(
+    task: str = "2dc579da.json",
+    metric: DistanceMetric = DistanceMetric.STRUCTURAL,
+    verbose: bool = True,
+    show_visuals: bool = True,
+) -> dict:
+    """
+    Solve an ARC task by finding cliques of matching objects across grids.
+
+    Args:
+        task: Task filename to solve.
+        metric: Distance metric to use for matching.
+        verbose: Whether to log detailed information.
+        show_visuals: Whether to display visual representations.
+
+    Returns:
+        Dictionary containing:
+        - symbol_table: The shared symbol table
+        - cliques: Found cliques of matching objects
+        - grids: The input/output grids
+        - syntax_trees: Syntax trees per grid
+    """
+    logger.info(f"Solving task: {task}")
+    logger.info(f"Distance metric: {metric.value}")
+
+    # Load grids
     inputs, outputs, input_test, output_test = train_task_to_grids(task)
     grids = inputs + outputs + [input_test]
+    logger.info(f"Loaded {len(inputs)} input-output pairs + 1 test input")
 
-    # In a grid some element is ill transcribed in syntax tree
-    # The issue either come of how the inclusion is computed in the DAG
-    # or during the multicolor transcription
-
+    # Convert grids to syntax trees
     objects_and_syntax_trees = [grid_to_syntax_trees(grid) for grid in grids]
 
-    # Combine all syntax trees to symbolize them together
+    # Combine all syntax trees for co-symbolization
     all_sts = tuple(
         st_by_go[go]
         for st_by_go, go_sorted in objects_and_syntax_trees
@@ -462,104 +555,73 @@ def problem(task="2dc579da.json"):
 
     symbolized, symbol_table = full_symbolization(all_sts)
 
-    print("Symbol Table:")
-    for i, sym in enumerate(symbol_table):
-        print(f"st n°{i}: {sym}")
+    # Log symbol table
+    if verbose:
+        logger.info(f"Symbol table ({len(symbol_table)} symbols):")
+        for i, sym in enumerate(symbol_table):
+            logger.debug(f"  s_{i}: {sym}")
 
-    # Reconstruct each list of components for each grid
+    # Reconstruct syntax trees per grid
     abstracted_sts: list[tuple[KNode[MoveValue], ...]] = []
     offset = 0
     for i, (st_by_go, go_sorted) in enumerate(objects_and_syntax_trees):
-        abstracted_sts.append(symbolized[offset : offset + len(go_sorted)])
-        n = len(go_sorted)
-        print(f"Program n°{i}")
+        grid_sts = symbolized[offset : offset + len(go_sorted)]
+        abstracted_sts.append(grid_sts)
 
-        for st in symbolized[offset : offset + n]:
-            print(f"st: {st}")
-            unsymbolized = unsymbolize(st, symbol_table)
-            # display_objects_syntax_trees(
-            #     [unsymbolized], GridOperations.proportions(grids[i])
-            # )
+        if verbose:
+            grid_type = "input" if i < len(inputs) else ("output" if i < 2 * len(inputs) else "test")
+            logger.info(f"Grid {i} ({grid_type}): {len(grid_sts)} objects")
+            for st in grid_sts:
+                logger.debug(f"  {st}")
 
-        offset += n
+        offset += len(go_sorted)
 
-    d, op = extended_edit_distance(
-        abstracted_sts[-2][-1], abstracted_sts[-1][-1], symbol_table
-    )
+    # Create distance function
+    distance_f = create_distance_function(metric, symbol_table)
 
-    print("\n--- Finding Stable Cliques ---")
+    # Find cliques in input grids only (first N grids where N = len(inputs))
+    logger.info(f"Finding cliques across {len(inputs)} input grids...")
     abstracted_sets = [set(syntax_trees) for syntax_trees in abstracted_sts]
+    cliques = find_cliques(abstracted_sets[:len(inputs)], distance_f)
 
-    def distance_f(a: KNode[MoveValue] | None, b: KNode[MoveValue] | None):
-        """
-        symbolic_distance = extended_edit_distance(a, b, symbol_table)[0]
-        shallow_literal_a = a
-        shallow_literal_b = b
-        compute_literal = False
-        if isinstance(a, SymbolNode):
-            shallow_literal_a = reduce_abstraction(
-                symbol_table[a.index.value], a.parameters
-            )
-        if isinstance(b, SymbolNode):
-            shallow_literal_b = reduce_abstraction(
-                symbol_table[b.index.value], b.parameters
-            )
-        if isinstance(a, SymbolNode) and isinstance(b, SymbolNode):
-            return extended_edit_distance(shallow_literal_a, shallow_literal_b, symbol_table)[
-                0
-            ]
-        elif isinstance(a, SymbolNode) or isinstance(b, SymbolNode):
-            return float(
-                min(
-                    extended_edit_distance(a, b)[0],
-                    extended_edit_distance(
-                        shallow_literal_a, shallow_literal_b
-                    )[0],
-                )
-            )
-        """
-        # Regularize by the unsymbolized version, should not change anything if both contains no symbols
-        c = unsymbolize(a, symbol_table)
-        d = unsymbolize(b, symbol_table)
+    # Log and display cliques
+    logger.info(f"Found {len(cliques)} clique(s)")
 
-        return float(extended_edit_distance(c, d, symbol_table)[0])
+    if verbose and cliques:
+        for clique_idx, clique_data in enumerate(cliques):
+            sorted_elements = sorted(list(clique_data), key=lambda x: x[0])
 
-    # Input cliques
-    cliques = find_cliques(abstracted_sets[:3], distance_f)
+            logger.info(f"Clique {clique_idx}:")
+            for grid_idx, st in sorted_elements:
+                unsym = unsymbolize(st, symbol_table)
+                logger.info(f"  Grid {grid_idx}: {st}")
+                logger.debug(f"    Unsymbolized: {unsym}")
 
-    if cliques:
-        print(f"\nFound {len(cliques)} stable clique(s):")
-        for i, clique_data in enumerate(
-            cliques
-        ):  # clique_data is a set of (set_index, element)
-            print(f"  Clique {i}:")
-            # Sort clique elements by set_idx for consistent printing
-            sorted_clique_elements = sorted(
-                list(clique_data), key=lambda x: x[0]
-            )
-            for i, element in enumerate(sorted_clique_elements):
-                ind, st = element
-                print(f"{ind}: {st}")
-                unsymbolized = unsymbolize(st, symbol_table)
-                print(unsymbolized)
-                for j in range(i):
-                    ind2, st2 = sorted_clique_elements[j]
-                    dist, ops = extended_edit_distance(
-                        unsymbolized,
-                        unsymbolize(st2, symbol_table),
-                        symbol_table,
+                if show_visuals:
+                    display_objects_syntax_trees(
+                        [unsym], GridOperations.proportions(grids[grid_idx])
                     )
-                    print(
-                        f"Distance between {ind}: {i, st}={unsymbolized} and {ind2}: {j, st2}={unsymbolize(st2, symbol_table)}: {float(dist)}\n",
-                        # f"Operations: {ops}",
-                    )
-                display_objects_syntax_trees(
-                    [unsymbolized], GridOperations.proportions(grids[ind])
-                )
 
-            # TO - DO
+            # Log pairwise distances within clique
+            if len(sorted_elements) > 1:
+                logger.debug("  Pairwise distances:")
+                for i, (idx1, st1) in enumerate(sorted_elements):
+                    for idx2, st2 in sorted_elements[:i]:
+                        d = distance_f(st1, st2)
+                        logger.debug(f"    ({idx1},{idx2}): {d:.3f}")
 
-    return symbol_table
+    return {
+        "symbol_table": symbol_table,
+        "cliques": cliques,
+        "grids": grids,
+        "syntax_trees": abstracted_sts,
+    }
+
+
+# Backward compatible alias
+def problem(task="2dc579da.json"):
+    """Legacy interface - use solve_task() for new code."""
+    return solve_task(task, verbose=True, show_visuals=True)["symbol_table"]
 
 
 def test_distance_symmetrical():
@@ -634,5 +696,33 @@ def test_distance_symmetrical():
     print(f"d_2: {d_2}, ops_2: {ops_2}")
 
 if __name__ == "__main__":
-    sym = problem()
-    # test_distance_symmetrical()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Solve ARC tasks")
+    parser.add_argument("--task", default="2dc579da.json", help="Task filename")
+    parser.add_argument(
+        "--metric",
+        choices=["edit", "nid", "structural"],
+        default="structural",
+        help="Distance metric to use",
+    )
+    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--no-visuals", action="store_true", help="Disable visual output")
+
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+    metric_map = {
+        "edit": DistanceMetric.EDIT,
+        "nid": DistanceMetric.NID,
+        "structural": DistanceMetric.STRUCTURAL,
+    }
+
+    result = solve_task(
+        task=args.task,
+        metric=metric_map[args.metric],
+        verbose=True,
+        show_visuals=not args.no_visuals,
+    )
