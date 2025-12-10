@@ -51,6 +51,21 @@ from .tree import (
     extended_edit_distance,
     recursive_edit_distance,
 )
+from .normalized import (
+    # Normalization functions
+    normalize_position,
+    normalize_color,
+    normalize_counts,
+    extract_structure,
+    extract_template,
+    # Normalized distance functions
+    structural_distance,
+    structural_distance_value,
+    template_distance,
+    template_distance_value,
+    scale_normalized_distance,
+    abstract_match_score,
+)
 
 __all__ = [
     # Operations
@@ -95,4 +110,16 @@ __all__ = [
     "collect_all_descendants",
     "build_nested_prune",
     "build_nested_graft",
+    # Normalized distance (abstract matching)
+    "normalize_position",
+    "normalize_color",
+    "normalize_counts",
+    "extract_structure",
+    "extract_template",
+    "structural_distance",
+    "structural_distance_value",
+    "template_distance",
+    "template_distance_value",
+    "scale_normalized_distance",
+    "abstract_match_score",
 ]
