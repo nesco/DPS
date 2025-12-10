@@ -135,7 +135,11 @@ class Primitive(BitLengthAware):
 @dataclass(frozen=True)
 class KeyValue(Primitive):
     """
-    It has 0 value so operations have the length of their edit dsitances
+    Key for identifying positions in tree structures.
+
+    Note: bit_length() returns 0. MDL costs are computed externally
+    in the edit distance algorithms where context (sequence length,
+    field count, etc.) is available.
     """
 
     value: (
