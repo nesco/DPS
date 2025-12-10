@@ -58,22 +58,42 @@ class TestTraversals:
 
         # BFS preorder: level by level from root
         assert [n.value for n in breadth_first_preorder(after, A)] == [
-            "A", "B", "C", "D", "E", "F"
+            "A",
+            "B",
+            "C",
+            "D",
+            "E",
+            "F",
         ]
 
         # BFS postorder: level by level from leaves
         assert [n.value for n in breadth_first_postorder(after, A)] == [
-            "D", "E", "F", "B", "C", "A"
+            "D",
+            "E",
+            "F",
+            "B",
+            "C",
+            "A",
         ]
 
         # DFS preorder: parent before children
         assert [n.value for n in depth_first_preorder(after, A)] == [
-            "A", "B", "D", "E", "C", "F"
+            "A",
+            "B",
+            "D",
+            "E",
+            "C",
+            "F",
         ]
 
         # DFS postorder: children before parent
         assert [n.value for n in depth_first_postorder(after, A)] == [
-            "D", "E", "B", "F", "C", "A"
+            "D",
+            "E",
+            "B",
+            "F",
+            "C",
+            "A",
         ]
 
 

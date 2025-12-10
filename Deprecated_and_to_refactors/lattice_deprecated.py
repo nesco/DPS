@@ -118,9 +118,7 @@ def component_to_object(grid: ColorGrid, component, chebyshev=True):
 
 def construct_lattice_ends(grid: Grid):
     width, height = proportions(grid)
-    mask_supremum = set(
-        [(col, row) for row in range(height) for col in range(width)]
-    )
+    mask_supremum = set([(col, row) for row in range(height) for col in range(width)])
     mask_infinmum = set()
 
     box_supremum = ((0, 0), (width - 1, height - 1))
@@ -175,8 +173,7 @@ def get_potential_starting_points(coordinates: list[Coord]) -> list[Coord]:
     row_centroid = sum(row_coords) // len(row_coords)
 
     distance_to_centroid = (
-        lambda coord: (coord[0] - col_centroid) ** 2
-        + (coord[1] - row_centroid) ** 2
+        lambda coord: (coord[0] - col_centroid) ** 2 + (coord[1] - row_centroid) ** 2
     )
     closest_to_centroid = min(coordinates, key=distance_to_centroid)
     starts.append(closest_to_centroid)
@@ -218,9 +215,7 @@ def mask_to_ast(
         asts = []
         for start in starts:
             for method in TraversalModes:
-                freeman_node = encode_connected_component(
-                    start, is_valid, method
-                )
+                freeman_node = encode_connected_component(start, is_valid, method)
                 freeman_nodes.append((start, freeman_node))
 
         for start, freeman_node in freeman_nodes:
@@ -252,9 +247,7 @@ class Lattice:
         # Retrieve all the connected components, except the entire grid if it is in
 
         component_ls = list_components(mask_dict, proportions(grid))
-        components = list(
-            filter(lambda x: len(x["mask"]) < self.area, component_ls)
-        )
+        components = list(filter(lambda x: len(x["mask"]) < self.area, component_ls))
 
         # Adding the supremum and the infimum as fake component
         component_supremum, component_infimum = construct_lattice_ends(grid)
@@ -285,9 +278,7 @@ class Lattice:
         else:
             self.supremum = len(self.nodes) - 1
             if len(self.depth_to_indices) > 1:
-                self.nodes[self.supremum]["successors"] = self.depth_to_indices[
-                    2
-                ]
+                self.nodes[self.supremum]["successors"] = self.depth_to_indices[2]
 
         if len(self.depth_to_indices) > 1:
             for i in self.depth_to_indices[2]:
@@ -302,9 +293,7 @@ class Lattice:
             indices = self.depth_to_indices[depth]
             for indice in successors:
                 # children are nodes of next rank included in it
-                successors_indice = [
-                    i for i in indices if self.map_contains[indice][i]
-                ]
+                successors_indice = [i for i in indices if self.map_contains[indice][i]]
                 self.nodes[indice]["successors"] = successors_indice
                 for i in successors_indice:
                     self.nodes[i]["predecessors"].append(indice)
@@ -365,17 +354,14 @@ class Lattice:
                     for k in self.unions[j].subindices:
                         codes.append((k, self.codes[k]))
 
-                self.unions[i] = construct_union(
-                    self.codes[i], codes, self.refs, box
-                )
+                self.unions[i] = construct_union(self.codes[i], codes, self.refs, box)
                 # self.unions[i] = construct_union([code for j in self.nodes[i]['successors'] for code in self.unions[j].codes], self.refs)
 
             processed.add(i)
             # Add predecessors that have all their successors processed
             for parent_i in self.nodes[i]["predecessors"]:
                 if all(
-                    child in processed
-                    for child in self.nodes[parent_i]["successors"]
+                    child in processed for child in self.nodes[parent_i]["successors"]
                 ):
                     to_process.add(parent_i)
 
@@ -453,8 +439,7 @@ class Lattice:
             # Add predecessors that have all their successors processed
             for parent_i in self.nodes[i]["predecessors"]:
                 if all(
-                    child in processed
-                    for child in self.nodes[parent_i]["successors"]
+                    child in processed for child in self.nodes[parent_i]["successors"]
                 ):
                     to_process.add(parent_i)
 
@@ -1107,11 +1092,7 @@ def solve_problem(task="2dc579da.json"):
     # print(f'Morphisms In: {morphisms_in}')
     # dists.sort(key= lambda x: x[0], reverse=True)
     category_output = set_to_category(
-        [
-            output.codes | {output.background}
-            for output in output_space
-            if output
-        ],
+        [output.codes | {output.background} for output in output_space if output],
         distance,
     )
     # invariants_out, cliques_out, morphisms_out  = set_to_category([output.codes | {output.background} for output in output_space if output], distance)
@@ -1137,14 +1118,10 @@ def solve_problem(task="2dc579da.json"):
 
         # print(f'Cliques :')
         # list_of_ast_set_print(cliques)
-    natural_transformations = (
-        functor_categories_to_natural_transformation_category(
-            pair_categories, category_input, category_output
-        )
+    natural_transformations = functor_categories_to_natural_transformation_category(
+        pair_categories, category_input, category_output
     )
-    transform = natural_transformation_category_to_callable(
-        natural_transformations
-    )
+    transform = natural_transformation_category_to_callable(natural_transformations)
 
     input_enumeration = {
         (category_input.element_to_class_index(code), code)
@@ -1161,9 +1138,7 @@ def solve_problem(task="2dc579da.json"):
         if input_index is not None and transform(input_index) is not None:
             output_codes.add(transform(input_index)(input_code))
 
-    output_background_index = transform(input_background_index)(
-        min_object.background
-    )
+    output_background_index = transform(input_background_index)(min_object.background)
 
     # output_codes = {output_indices}
     output = UnionNode(codes=output_codes, background=output_background_index)

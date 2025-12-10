@@ -39,9 +39,7 @@ from constants import DATA, DEBUG
 
 # set_to_quotient groups togetherm elements of the set into equivalence classes
 # based on the projection operations
-def set_to_quotient(
-    projection: Callable[[T], U], object_set: set[T]
-) -> Quotient:
+def set_to_quotient(projection: Callable[[T], U], object_set: set[T]) -> Quotient:
     """
     Given a function, represent a set by a couple (quotient set, equivalence classes).
     The quotients are the dict keys and the equivalence classes the values.
@@ -141,10 +139,7 @@ def to_grid(func: Callable[[T], U]) -> Callable[[list[list[T]]], list[list[U]]]:
     @wraps(func)
     def wrapper(arg: list[list[T]]) -> list[list[U]]:
         height, width = len(arg), len(arg[0])
-        return [
-            [func(arg[row][col]) for col in range(width)]
-            for row in range(height)
-        ]
+        return [[func(arg[row][col]) for col in range(width)] for row in range(height)]
 
     return wrapper
 
@@ -174,9 +169,7 @@ def valid_coordinates(
     coordinates: Coord,
 ) -> bool:
     in_borders = 0 <= coordinates[0] < width and 0 <= coordinates[1] < height
-    respecting_constraints = (
-        coordinates in valid_region if valid_region else True
-    )
+    respecting_constraints = coordinates in valid_region if valid_region else True
     return in_borders & respecting_constraints
 
 
@@ -202,9 +195,7 @@ def list_to_grid(height, width, coordinates_ls):
 
 def grid_to_list(grid):
     width, height = proportions(grid)
-    return [
-        (j, i) for i in range(height) for j in range(width) if grid[i][j] == 1
-    ]
+    return [(j, i) for i in range(height) for j in range(width) if grid[i][j] == 1]
 
 
 ### Function
@@ -298,9 +289,7 @@ def distance_jaccard_grid(grid1: Grid, grid2: Grid):
 
 
 def distance_jaccard_optimal_grid(grid1: Grid, grid2: Grid):
-    return distance_jaccard_optimal(
-        grid_to_points(grid1), grid_to_points(grid2)
-    )
+    return distance_jaccard_optimal(grid_to_points(grid1), grid_to_points(grid2))
 
 
 # Distances in grids represented as Points
@@ -310,9 +299,7 @@ def distance_jaccard(points1: Points, points2: Points) -> float:
     return 1 - intersection / union if union else 0
 
 
-def distance_jaccard_optimal(
-    points1: Points, points2: Points
-) -> tuple[float, Coord]:
+def distance_jaccard_optimal(points1: Points, points2: Points) -> tuple[float, Coord]:
     min_distance = float("inf")
     min_shift = (0, 0)
 
@@ -357,9 +344,7 @@ def mask_colors(grid, mask):
 
 def grid_to_color_coords(grid: Grid) -> dict[Color, Coords]:
     width, height = proportions(grid)
-    colors = set(
-        [grid[row][col] for row in range(height) for col in range(width)]
-    )
+    colors = set([grid[row][col] for row in range(height) for col in range(width)])
     colors_coords = {}
     for color in colors:
         color_coords = set()
@@ -596,9 +581,9 @@ def set_to_category1(sets: list[set], distance: Distance) -> Category:
                             to_process.append(associated)
 
                 # Only keep clusters with one element from each set
-                if len(clique) == len(sets) and len(
-                    set(i for i, _ in clique)
-                ) == len(sets):
+                if len(clique) == len(sets) and len(set(i for i, _ in clique)) == len(
+                    sets
+                ):
                     cliques.append(clique)
 
                 processed.update(clique)

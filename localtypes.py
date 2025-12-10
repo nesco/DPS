@@ -78,9 +78,7 @@ class Point(NamedTuple):
 type Points = Set[Point]  # Set of colored points
 
 # Combined types
-type CoordsGeneralized = (
-    Points | Coords
-)  # Either colored or uncolored coordinates
+type CoordsGeneralized = Points | Coords  # Either colored or uncolored coordinates
 
 # Graph traversal
 type Trans = tuple[str, Coord]  # (direction, target_coordinate)

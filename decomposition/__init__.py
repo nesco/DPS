@@ -1,22 +1,28 @@
 """
 AIT-general decomposition primitives.
 
-This package provides algorithmic information theory-grounded primitives
-for decomposing structured data:
+This package provides domain-agnostic primitives for decomposing structured data:
 
-1. **Connectivity**: Defines adjacency relations (reuses freeman directions)
-2. **Objects**: Connected component extraction parameterized by connectivity
-3. **Inclusion**: Hasse diagram (DAG) construction for subset relationships
+**Connectivity** (connectivity.py)
+    Defines adjacency relations. Different connectivities produce different
+    decompositions of the same data.
+    - king_neighbors: 8-connectivity (orthogonal + diagonal)
+    - tower_neighbors: 4-connectivity (orthogonal only)
+    - bishop_neighbors: diagonal-only connectivity
 
-These primitives are domain-agnostic. The ARC-specific instantiation
-(position-based objects with color attributes) lives in the hierarchy/ package.
+**Objects** (objects.py)
+    Connected component extraction parameterized by connectivity.
+    - extract_connected_components(elements, neighbors) -> components
 
-Key insight: The same decomposition algorithm can use different connectivities
-(King moves for position, transitions for color) to define different notions
-of "object". MDL can select the best decomposition.
+**Inclusion** (inclusion.py)
+    Hasse diagram (DAG) construction for subset relationships.
+    - build_hasse_diagram(objects, get_elements) -> DAG
+
+The ARC-specific instantiation (grids, colors, pixels) lives in hierarchy/.
 """
 
 from .connectivity import (
+    CoordNeighborFunc,
     NeighborFunc,
     bishop_neighbors,
     king_neighbors,
@@ -34,6 +40,7 @@ from .objects import (
 __all__ = [
     # Connectivity
     "NeighborFunc",
+    "CoordNeighborFunc",
     "make_coord_neighbors",
     "king_neighbors",
     "tower_neighbors",

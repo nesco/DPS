@@ -229,7 +229,9 @@ class RectNode(KNode):
 
     def bit_length(self) -> int:
         height_bits = (
-            BitLength.COUNT if isinstance(self.height, int) else self.height.bit_length()
+            BitLength.COUNT
+            if isinstance(self.height, int)
+            else self.height.bit_length()
         )
         width_bits = (
             BitLength.COUNT if isinstance(self.width, int) else self.width.bit_length()

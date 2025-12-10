@@ -166,13 +166,9 @@ def normalize_counts(node: KNode) -> KNode:
         # Use canonical count of 1
         return RepeatNode(normalized_inner, CountValue(1))
     elif isinstance(node, ProductNode):
-        return ProductNode(
-            tuple(normalize_counts(child) for child in node.children)
-        )
+        return ProductNode(tuple(normalize_counts(child) for child in node.children))
     elif isinstance(node, SumNode):
-        return SumNode(
-            frozenset(normalize_counts(child) for child in node.children)
-        )
+        return SumNode(frozenset(normalize_counts(child) for child in node.children))
     elif isinstance(node, RootNode):
         inner = node.node
         if inner is not None and not isinstance(inner, NoneValue):
@@ -232,8 +228,8 @@ def abstract_match_score(
     target: BitLengthAware,
     symbol_table: Sequence[BitLengthAware] = (),
     position_weight: float = 0.0,  # Ignore position differences by default
-    color_weight: float = 0.0,     # Ignore color differences by default
-    scale_weight: float = 0.5,     # Partial weight for scale differences
+    color_weight: float = 0.0,  # Ignore color differences by default
+    scale_weight: float = 0.5,  # Partial weight for scale differences
 ) -> float:
     """
     Compute abstract matching score with configurable weights.
@@ -262,6 +258,9 @@ def abstract_match_score(
     # Weighted combination
     # struct_dist captures pattern differences
     # normalization_cost captures position/color/scale differences
-    weighted_dist = struct_dist + (position_weight + color_weight + scale_weight) / 3 * normalization_cost
+    weighted_dist = (
+        struct_dist
+        + (position_weight + color_weight + scale_weight) / 3 * normalization_cost
+    )
 
     return weighted_dist

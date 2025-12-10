@@ -51,11 +51,11 @@ CLIQUE: Final[IndexClique] = 1
 
 ElementClass = Union[IndexInvariant, IndexClique]
 
-T = TypeVar('T')
-S = TypeVar('S')
+T = TypeVar("T")
+S = TypeVar("S")
 
-U = TypeVar('U')
-V = TypeVar('V')
+U = TypeVar("U")
+V = TypeVar("V")
 
 EndoMap = dict[T, Optional[T]]
 LambdaTerm = Callable[[S], Optional[T]]
@@ -66,21 +66,28 @@ LambdaTerm = Callable[[S], Optional[T]]
 def IDENTITY(x: T) -> T:
     return x
 
+
 # Constant Combinator (K)
 def CONSTANT(x: T) -> Callable[[Any], T]:
     return lambda y: x
 
+
 # Substitution Combinator (S)
-def SUBSTITUTION(x: Callable[[T], Callable[[U], V]]) -> Callable[[Callable[[T], U]], Callable[[T], V]]:
+def SUBSTITUTION(
+    x: Callable[[T], Callable[[U], V]],
+) -> Callable[[Callable[[T], U]], Callable[[T], V]]:
     return lambda y: lambda z: x(z)(y(z))
+
 
 # Composition Combinator (B)
 def COMPOSITION(x: Callable[[U], V]) -> Callable[[Callable[[T], U]], Callable[[T], V]]:
     return lambda y: lambda z: x(y(z))
 
+
 # Fixed-point combinator (Y)
 def FIXED_POINT(f: Callable[[Callable[[T], U]], Callable[[T], U]]) -> Callable[[T], U]:
     return (lambda x: f(lambda y: x(x)(y)))(lambda x: f(lambda y: x(x)(y)))
+
 
 ##
 def PARTIAL_IDENTITY(cut_off: int) -> Callable[[int], Optional[int]]:
@@ -89,14 +96,17 @@ def PARTIAL_IDENTITY(cut_off: int) -> Callable[[int], Optional[int]]:
             return index
         else:
             return None
+
     return partial_id
 
-IndexCouple = tuple[int, int] # tuple (i, j)
 
-EnumeratedElement = tuple[int, T] # tuple (index, element)
+IndexCouple = tuple[int, int]  # tuple (i, j)
+
+EnumeratedElement = tuple[int, T]  # tuple (index, element)
 IndexElement = tuple[ElementClass, int]
 
 Distance = Union[Callable[[Any, Any], int], Callable[[Any, Any], float]]
+
 
 @dataclass
 class Morphism(Generic[S, T]):
@@ -111,21 +121,20 @@ class Morphism(Generic[S, T]):
     def __call__(self, element: S) -> Optional[T]:
         return self.mapping(element)
 
-    def compose(self, other: 'Morphism') -> 'Morphism':
-        assert self.target == other.source, "Targets and sources must match for composition."
+    def compose(self, other: "Morphism") -> "Morphism":
+        assert self.target == other.source, (
+            "Targets and sources must match for composition."
+        )
         return Morphism(
-            source = self.source,
-            target = other.target,
-            mapping = lambda x: other.mapping(self.mapping(x))
+            source=self.source,
+            target=other.target,
+            mapping=lambda x: other.mapping(self.mapping(x)),
         )
 
     @staticmethod
     def identity(obj: set[S]):
-        return Morphism(
-            source=obj,
-            target=obj,
-            mapping = IDENTITY
-        )
+        return Morphism(source=obj, target=obj, mapping=IDENTITY)
+
 
 @dataclass
 class Category(Generic[T]):
@@ -141,9 +150,12 @@ class Category(Generic[T]):
     Invariants needs to be treated differently compared to clique. Where invariants directly lead to identity,
     cliques need to lead to an A* search
     """
+
     # Equivalence classes
-    invariants: list[T] # Elements commpon to all object sets
-    cliques: list[set[EnumeratedElement]] # Elements of the different sets that cluster together
+    invariants: list[T]  # Elements commpon to all object sets
+    cliques: list[
+        set[EnumeratedElement]
+    ]  # Elements of the different sets that cluster together
 
     # Traditional categorical definition
     objects: list[set[T]]
@@ -174,9 +186,10 @@ class Category(Generic[T]):
         elif element_class == CLIQUE:
             return self.cliques[element_index]
         else:
-            raise ValueError(f'Element Class is invalid: {element_class}')
+            raise ValueError(f"Element Class is invalid: {element_class}")
 
         # For cliques, you need to get the right el of the cluster, no?
+
 
 @dataclass
 class Category1(Generic[T]):
@@ -192,13 +205,18 @@ class Category1(Generic[T]):
     Invariants needs to be treated differently compared to clique. Where invariants directly lead to identity,
     cliques need to lead to an A* search
     """
+
     # Equivalence classes
-    invariants: list[T] # Elements commpon to all object sets
-    cliques: list[set[EnumeratedElement]] # Elements of the different sets that cluster together
+    invariants: list[T]  # Elements commpon to all object sets
+    cliques: list[
+        set[EnumeratedElement]
+    ]  # Elements of the different sets that cluster together
 
     # Traditional categorical definition
     objects: list[set[T]]
-    morphisms: dict[ IndexCouple, list[Morphism[set[T], set[T]]] ] = field(default_factory=dict)
+    morphisms: dict[IndexCouple, list[Morphism[set[T], set[T]]]] = field(
+        default_factory=dict
+    )
 
     def element_to_class_index(self, element: T) -> Optional[IndexElement]:
         """
@@ -225,11 +243,12 @@ class Category1(Generic[T]):
         elif element_class == CLIQUE:
             return self.cliques[element_index]
         else:
-            raise ValueError(f'Element Class is invalid: {element_class}')
+            raise ValueError(f"Element Class is invalid: {element_class}")
 
         # For cliques, you need to get the right el of the cluster, no?
 
-class Functor():
+
+class Functor:
     """
     Store a functor between two categories.
     If there is an Input category X and an Output category Y, and between them a pair category i based on one example
@@ -251,16 +270,26 @@ class Functor():
         self.cliques: list[set[EnumeratedElement[IndexElement]]] = []
 
         self.objects: list[set[IndexElement]] = []
-        self.morphisms: dict[IndexCouple, EndoMap[IndexElement]] = field(default_factory=dict)
+        self.morphisms: dict[IndexCouple, EndoMap[IndexElement]] = field(
+            default_factory=dict
+        )
 
-        invariants, cliques, morphisms = pair_category.invariants, pair_category.cliques, pair_category.morphisms
+        invariants, cliques, morphisms = (
+            pair_category.invariants,
+            pair_category.cliques,
+            pair_category.morphisms,
+        )
 
         # Step 1: Replace input and output sets elements by their class ids in the Input and Output categories
         input_set = pair_category.objects[0]
         output_set = pair_category.objects[1]
 
-        input_id_set = {self.input.element_to_class_index(element) for element in input_set}
-        output_id_set = {self.output.element_to_class_index(element) for element in output_set}
+        input_id_set = {
+            self.input.element_to_class_index(element) for element in input_set
+        }
+        output_id_set = {
+            self.output.element_to_class_index(element) for element in output_set
+        }
 
         self.objects.extend([input_id_set, output_id_set])
 
@@ -292,17 +321,23 @@ class Functor():
 
             for input_value, output_value in endomap.items():
                 input_class_index = input_category.element_to_class_index(input_value)
-                output_class_index = output_category.element_to_class_index(output_value)
+                output_class_index = output_category.element_to_class_index(
+                    output_value
+                )
 
                 if input_class_index is not None:
                     self.morphisms[(0, 1)][input_class_index] = output_class_index
+
 
 @dataclass
 class Functor1(Generic[S, T]):
     source_category: Category[S]
     target_category: Category[T]
-    object_mapping: Callable[[int], Optional[int]] # object mapping
-    morphism_mappings: dict[IndexCouple, Callable[[int], Optional[int]]] # morphism mapping
+    object_mapping: Callable[[int], Optional[int]]  # object mapping
+    morphism_mappings: dict[
+        IndexCouple, Callable[[int], Optional[int]]
+    ]  # morphism mapping
+
 
 class FunctorCategory(Generic[S, T]):
     """
@@ -317,7 +352,12 @@ class FunctorCategory(Generic[S, T]):
                     Yl = (Xl -> Xi) • (m = (Xi -> Yi)) • (Yi -> Yl)
     """
 
-    def __init__(self, source_category: Category[S], target_category: Category[T], pair_category: Category):
+    def __init__(
+        self,
+        source_category: Category[S],
+        target_category: Category[T],
+        pair_category: Category,
+    ):
         self.input = source_category
         self.output = target_category
         self.link = pair_category
@@ -326,16 +366,26 @@ class FunctorCategory(Generic[S, T]):
         self.cliques: list[set[EnumeratedElement[IndexElement]]] = []
 
         self.objects: list[set[IndexElement]] = []
-        self.morphisms: dict[IndexCouple, EndoMap[IndexElement]] = field(default_factory=dict)
+        self.morphisms: dict[IndexCouple, EndoMap[IndexElement]] = field(
+            default_factory=dict
+        )
 
-        invariants, cliques, morphisms = pair_category.invariants, pair_category.cliques, pair_category.morphisms
+        invariants, cliques, morphisms = (
+            pair_category.invariants,
+            pair_category.cliques,
+            pair_category.morphisms,
+        )
 
         # Step 1: Replace input and output sets elements by their class ids in the Input and Output categories
         input_set = pair_category.objects[0]
         output_set = pair_category.objects[1]
 
-        input_id_set = {self.input.element_to_class_index(element) for element in input_set}
-        output_id_set = {self.output.element_to_class_index(element) for element in output_set}
+        input_id_set = {
+            self.input.element_to_class_index(element) for element in input_set
+        }
+        output_id_set = {
+            self.output.element_to_class_index(element) for element in output_set
+        }
 
         self.objects.extend([input_id_set, output_id_set])
 
@@ -367,25 +417,30 @@ class FunctorCategory(Generic[S, T]):
 
             for input_value, output_value in endomap.items():
                 input_class_index = input_category.element_to_class_index(input_value)
-                output_class_index = output_category.element_to_class_index(output_value)
+                output_class_index = output_category.element_to_class_index(
+                    output_value
+                )
 
                 if input_class_index is not None:
                     self.morphisms[(0, 1)][input_class_index] = output_class_index
 
+
 def print_category(category: Category):
-    print('Invariants:')
+    print("Invariants:")
     for invariant in category.invariants:
-        print(f'{invariant}')
+        print(f"{invariant}")
 
     for i, clique in enumerate(category.cliques):
-        print(f'Clique {i}')
+        print(f"Clique {i}")
         for l, n in clique:
-            print(f'{n}')
+            print(f"{n}")
+
 
 def create_lookup_mapping(source_set_index, target_set_index, invariants, cliques):
     """
     Simplest morphism is a straight lookup table.
     """
+
     def lookup(element):
         if element in invariants:
             return element  # Invariants map to themselves
@@ -397,31 +452,31 @@ def create_lookup_mapping(source_set_index, target_set_index, invariants, clique
                         el for idx, el in clique if idx == target_set_index
                     )
                     return target_element
-            return None # Element doesn't have a mapping
+            return None  # Element doesn't have a mapping
+
     return lookup
 
-def find_cliques(sets: list[set[T]], distance: Distance) -> list[set[EnumeratedElement]]:
 
+def find_cliques(
+    sets: list[set[T]], distance: Distance
+) -> list[set[EnumeratedElement]]:
     # Step 1: Try to make associations through pairwise comparisons
     associations = defaultdict(lambda: defaultdict(set))
     for (i, variant_i), (j, variant_j) in combinations(enumerate(sets), 2):
         if not variant_i or not variant_j:
-                   continue  # No variants to match
+            continue  # No variants to match
 
-        edit_matrix = [
-            [(distance(a, b), a, b) for b in variant_j]
-            for a in variant_i
-        ]
+        edit_matrix = [[(distance(a, b), a, b) for b in variant_j] for a in variant_i]
 
         while edit_matrix and any(edit_matrix):
-            #min_dist, a, b = max(
+            # min_dist, a, b = max(
             #    (item for row in edit_matrix for item in row if item),
             #        key=lambda x: distance(None, x[1]) + distance(None, x[2]) - x[0]
             #    )
             min_dist, a, b = min(
                 (item for row in edit_matrix for item in row if item),
-                    key=lambda x: x[0]
-                )
+                key=lambda x: x[0],
+            )
 
             # If adding the association reduces the total cost, add it
             if min_dist < distance(None, a) + distance(None, b):
@@ -431,7 +486,8 @@ def find_cliques(sets: list[set[T]], distance: Distance) -> list[set[EnumeratedE
             # Remove processed items
             edit_matrix = [
                 [item for item in row if item[1] != a and item[2] != b]
-                for row in edit_matrix if any(item[1] != a for item in row)
+                for row in edit_matrix
+                if any(item[1] != a for item in row)
             ]
 
     # Step 2: Remove associations that violates transitivity
@@ -443,16 +499,34 @@ def find_cliques(sets: list[set[T]], distance: Distance) -> list[set[EnumeratedE
         # Go to the elements it's associated with and check
         # their are only associated with elements its associated with
         for i in associations:
-             for a in list(associations[i].keys()):
+            for a in list(associations[i].keys()):
                 for j, b in list(associations[i][a]):
                     for k, c in list(associations[j][b]):
                         # (i, a) is not in itself as the identity transition is not saved
                         if (k, c) not in associations[i][a] and (k, c) != (i, a):
                             # Transitivity violation found, remove the weakest link
                             links = [
-                                (distance(None, a) + distance(None, b) - distance(a, b), (i, a), (j, b)),
-                                (distance(None, b) + distance(None, c) - distance(b, c), (j, b), (k, c)),
-                                (distance(None, a) + distance(None, c) - distance(a, c), (i, a), (k, c))
+                                (
+                                    distance(None, a)
+                                    + distance(None, b)
+                                    - distance(a, b),
+                                    (i, a),
+                                    (j, b),
+                                ),
+                                (
+                                    distance(None, b)
+                                    + distance(None, c)
+                                    - distance(b, c),
+                                    (j, b),
+                                    (k, c),
+                                ),
+                                (
+                                    distance(None, a)
+                                    + distance(None, c)
+                                    - distance(a, c),
+                                    (i, a),
+                                    (k, c),
+                                ),
                             ]
                             _, (x, y), (z, w) = min(links, key=lambda x: x[0])
                             associations[x][y].discard((z, w))
@@ -482,12 +556,15 @@ def find_cliques(sets: list[set[T]], distance: Distance) -> list[set[EnumeratedE
                             to_process.append(associated)
 
                 # Only keep clusters with one element from each set
-                if len(clique) == len(sets) and len(set(i for i, _ in clique)) == len(sets):
+                if len(clique) == len(sets) and len(set(i for i, _ in clique)) == len(
+                    sets
+                ):
                     cliques.append(clique)
 
                 processed.update(clique)
 
     return cliques
+
 
 def set_to_category2(sets: list[set[T]], distance: Optional[Distance]) -> Category[T]:
     # Hypothesis: distance to None is intrinsic cost
@@ -501,22 +578,19 @@ def set_to_category2(sets: list[set[T]], distance: Optional[Distance]) -> Catego
     associations = defaultdict(lambda: defaultdict(set))
     for (i, variant_i), (j, variant_j) in combinations(enumerate(variants), 2):
         if not variant_i or not variant_j:
-                   continue  # No variants to match
+            continue  # No variants to match
 
-        edit_matrix = [
-            [(distance(a, b), a, b) for b in variant_j]
-            for a in variant_i
-        ]
+        edit_matrix = [[(distance(a, b), a, b) for b in variant_j] for a in variant_i]
 
         while edit_matrix and any(edit_matrix):
-            #min_dist, a, b = max(
+            # min_dist, a, b = max(
             #    (item for row in edit_matrix for item in row if item),
             #        key=lambda x: distance(None, x[1]) + distance(None, x[2]) - x[0]
             #    )
             min_dist, a, b = min(
                 (item for row in edit_matrix for item in row if item),
-                    key=lambda x: x[0]
-                )
+                key=lambda x: x[0],
+            )
 
             # If adding the association reduces the total cost, add it
             if min_dist < distance(None, a) + distance(None, b):
@@ -526,17 +600,18 @@ def set_to_category2(sets: list[set[T]], distance: Optional[Distance]) -> Catego
             # Remove processed items
             edit_matrix = [
                 [item for item in row if item[1] != a and item[2] != b]
-                for row in edit_matrix if any(item[1] != a for item in row)
+                for row in edit_matrix
+                if any(item[1] != a for item in row)
             ]
 
     if DEBUG_CATEGORY and False:
         for i, el in associations.items():
-            print(f'Input {i}:')
+            print(f"Input {i}:")
             for a in el:
-                print(f'Element associated to {a}:')
+                print(f"Element associated to {a}:")
                 for j, b in el[a]:
-                    print(f'For input {j}: element {b}')
-                    print(f'Distance: {distance(a, b)}')
+                    print(f"For input {j}: element {b}")
+                    print(f"Distance: {distance(a, b)}")
     # Step 3: Remove associations that violates transitivity
     # You want to only retains cliques / complete subgraphes
     changed = True
@@ -546,16 +621,34 @@ def set_to_category2(sets: list[set[T]], distance: Optional[Distance]) -> Catego
         # Go to the elements it's associated with and check
         # their are only associated with elements its associated with
         for i in associations:
-             for a in list(associations[i].keys()):
+            for a in list(associations[i].keys()):
                 for j, b in list(associations[i][a]):
                     for k, c in list(associations[j][b]):
                         # (i, a) is not in itself as the identity transition is not saved
                         if (k, c) not in associations[i][a] and (k, c) != (i, a):
                             # Transitivity violation found, remove the weakest link
                             links = [
-                                (distance(None, a) + distance(None, b) - distance(a, b), (i, a), (j, b)),
-                                (distance(None, b) + distance(None, c) - distance(b, c), (j, b), (k, c)),
-                                (distance(None, a) + distance(None, c) - distance(a, c), (i, a), (k, c))
+                                (
+                                    distance(None, a)
+                                    + distance(None, b)
+                                    - distance(a, b),
+                                    (i, a),
+                                    (j, b),
+                                ),
+                                (
+                                    distance(None, b)
+                                    + distance(None, c)
+                                    - distance(b, c),
+                                    (j, b),
+                                    (k, c),
+                                ),
+                                (
+                                    distance(None, a)
+                                    + distance(None, c)
+                                    - distance(a, c),
+                                    (i, a),
+                                    (k, c),
+                                ),
                             ]
                             _, (x, y), (z, w) = min(links, key=lambda x: x[0])
                             associations[x][y].discard((z, w))
@@ -570,12 +663,12 @@ def set_to_category2(sets: list[set[T]], distance: Optional[Distance]) -> Catego
 
     if DEBUG_CATEGORY and False:
         for i, el in associations.items():
-            print(f'Input {i}:')
+            print(f"Input {i}:")
             for a in el:
-                print(f'Element associated to {a}:')
+                print(f"Element associated to {a}:")
                 for j, b in el[a]:
-                    print(f'For input {j}: element {b}')
-                    print(f'Distance: {distance(a, b)}')
+                    print(f"For input {j}: element {b}")
+                    print(f"Distance: {distance(a, b)}")
 
     # Step 4: Cluster the clique elements into equivalence classes
 
@@ -594,22 +687,24 @@ def set_to_category2(sets: list[set[T]], distance: Optional[Distance]) -> Catego
                             to_process.append(associated)
 
                 # Only keep clusters with one element from each set
-                if len(clique) == len(sets) and len(set(i for i, _ in clique)) == len(sets):
+                if len(clique) == len(sets) and len(set(i for i, _ in clique)) == len(
+                    sets
+                ):
                     cliques.append(clique)
 
                 processed.update(clique)
 
     if DEBUG_CATEGORY and False:
         for i, cluster in enumerate(cliques):
-            print(f'\nClique n°{i}')
+            print(f"\nClique n°{i}")
             for j, el in cluster:
-                print(f'- From set n°{j} Element {el}')
+                print(f"- From set n°{j} Element {el}")
 
     # Step 5: Create morphisms
     morphisms = {}
 
     for i, j in combinations(range(len(sets)), 2):
-        morphisms[(i, j)] = morphisms[(j,i)] = {}
+        morphisms[(i, j)] = morphisms[(j, i)] = {}
 
         # Identity on invariants
         for elem in invariants:
@@ -631,11 +726,11 @@ def set_to_category2(sets: list[set[T]], distance: Optional[Distance]) -> Catego
 
         for elem in variants[j]:
             if elem not in morphisms[(j, i)]:
-                 morphisms[(j, i)][elem] = None
-
+                morphisms[(j, i)][elem] = None
 
     category = Category(list(invariants), cliques, sets, morphisms)
     return category
+
 
 def set_to_category(sets: list[set[T]], distance: Optional[Distance]) -> Category[T]:
     # Hypothesis: distance to None is intrinsic cost
@@ -659,14 +754,14 @@ def set_to_category(sets: list[set[T]], distance: Optional[Distance]) -> Categor
     # Find unselected elements for each set
     unselected = [set(s) - selected_elements for s in sets]
 
-    print('Unselected elements:')
+    print("Unselected elements:")
     for uns in unselected:
         print(uns)
     # Step 3: Create morphisms
     morphisms = {}
 
     for i, j in combinations(range(len(sets)), 2):
-        morphisms[(i, j)] = morphisms[(j,i)] = {}
+        morphisms[(i, j)] = morphisms[(j, i)] = {}
 
         # Identity on invariants
         for elem in invariants:
@@ -688,11 +783,11 @@ def set_to_category(sets: list[set[T]], distance: Optional[Distance]) -> Categor
 
         for elem in variants[j]:
             if elem not in morphisms[(j, i)]:
-                 morphisms[(j, i)][elem] = None
-
+                morphisms[(j, i)][elem] = None
 
     category = Category(list(invariants), cliques, sets, morphisms)
     return category
+
 
 def set_to_category1(sets: list[set[T]], distance: Optional[Distance]) -> Category[T]:
     # Hypothesis: distance to None is intrinsic cost
@@ -717,42 +812,36 @@ def set_to_category1(sets: list[set[T]], distance: Optional[Distance]) -> Catego
             source_set_index=i,
             target_set_index=j,
             invariants=invariants,
-            cliques=cliques
+            cliques=cliques,
         )
 
         mapping_j_to_i = create_lookup_mapping(
-                source_set_index=j,
-                target_set_index=i,
-                invariants=invariants,
-                cliques=cliques
+            source_set_index=j,
+            target_set_index=i,
+            invariants=invariants,
+            cliques=cliques,
         )
         # Create the Morphism instances
-        lookup_i_to_j = Morphism(
-            source=sets[i],
-            target=sets[j],
-            mapping=mapping_i_to_j
-        )
+        lookup_i_to_j = Morphism(source=sets[i], target=sets[j], mapping=mapping_i_to_j)
 
-        lookup_j_to_i = Morphism(
-            source=sets[j],
-            target=sets[i],
-            mapping=mapping_j_to_i
-        )
+        lookup_j_to_i = Morphism(source=sets[j], target=sets[i], mapping=mapping_j_to_i)
 
-        morphisms[(i, j)] = morphisms[(j,i)] = {}
+        morphisms[(i, j)] = morphisms[(j, i)] = {}
 
-       # Store the morphisms in the category's morphisms dictionary
+        # Store the morphisms in the category's morphisms dictionary
         morphisms[(i, j)] = [lookup_i_to_j]
         morphisms[(j, i)] = [lookup_j_to_i]
 
     for i, obj in enumerate(sets):
         morphisms[(i, i)] = [Morphism.identity(obj)]
 
-
     category = Category(list(invariants), cliques, sets, morphisms)
     return category
 
-def pair_category_to_functor(pair_category: Category, source_category: Category, target_category: Category):
+
+def pair_category_to_functor(
+    pair_category: Category, source_category: Category, target_category: Category
+):
     """
     Transform a pair category {Xi, Yi} into a functor over X and Y.
     Assumptions:
@@ -764,7 +853,6 @@ def pair_category_to_functor(pair_category: Category, source_category: Category,
         Meaning if k is in source_category.morphisms[(i, j)] and target_category.morphisms[(i, j)],
         then source_category.morphisms[(i, j)][k] <> target_category.morphisms[(i, j)][k]
     """
-
 
     morphism_mapping = {}
 
@@ -783,15 +871,19 @@ def pair_category_to_functor(pair_category: Category, source_category: Category,
             if len(source_morphisms) == len(target_morphisms):
                 morphism_mapping[(source_idx, target_idx)] = IDENTITY
             else:
-                morphism_mapping[(source_idx, target_idx)] = PARTIAL_IDENTITY(len(target_morphisms))
+                morphism_mapping[(source_idx, target_idx)] = PARTIAL_IDENTITY(
+                    len(target_morphisms)
+                )
 
-    ## DEPRECATED
-    # Create a mapping function for the target morphism
-    #def create_target_morphism(source_morphism, source_from_obj, source_to_obj, target_from_obj, target_to_obj):
-    #    def target_mapping(element_in_target_from_obj):
+            ## DEPRECATED
+            # Create a mapping function for the target morphism
+            # def create_target_morphism(source_morphism, source_from_obj, source_to_obj, target_from_obj, target_to_obj):
+            #    def target_mapping(element_in_target_from_obj):
             # Find the corresponding element in source_from_obj
             corresponding_source_elements = [
-                s for s in source_from_obj if object_mapping.get(s) == element_in_target_from_obj
+                s
+                for s in source_from_obj
+                if object_mapping.get(s) == element_in_target_from_obj
             ]
 
             for s in corresponding_source_elements:
@@ -812,7 +904,7 @@ def pair_category_to_functor(pair_category: Category, source_category: Category,
     #    return target_morphism
 
     # Iterate over morphisms in the source category
-    #for (source_idx_pair), source_morphism in source_category.morphisms.items():
+    # for (source_idx_pair), source_morphism in source_category.morphisms.items():
     #    # Unpack source indices
     #    source_from_idx, source_to_idx = source_idx_pair
     #    source_from_obj = source_category.objects[source_from_idx]
@@ -829,16 +921,26 @@ def pair_category_to_functor(pair_category: Category, source_category: Category,
     #    # Add to morphism_mapping
     #    morphism_mapping[source_morphism] = target_morphism
 
-    functor = Functor(source_category, target_category, object_mapping, morphism_mapping)
+    functor = Functor(
+        source_category, target_category, object_mapping, morphism_mapping
+    )
     return functor
 
 
-def functor_categories_to_natural_transformation_category(functor_categories: list[Category], category_input: Category[T], category_output: Category[T]) -> Category[T]:
+def functor_categories_to_natural_transformation_category(
+    functor_categories: list[Category],
+    category_input: Category[T],
+    category_output: Category[T],
+) -> Category[T]:
     # Step 1: for morphisms of comma categories, replace their input / output by the ids
     # in category_input / category_output
     morphisms_translated = []
     for functor_category in functor_categories:
-        invariants, cliques, morphisms = functor_category.invariants, functor_category.cliques, functor_category.morphisms
+        invariants, cliques, morphisms = (
+            functor_category.invariants,
+            functor_category.cliques,
+            functor_category.morphisms,
+        )
         nmorphisms = set()
         # Get all the morphisms of each pairs,
         # and write them in a representation that is independant
@@ -846,11 +948,10 @@ def functor_categories_to_natural_transformation_category(functor_categories: li
 
         print_category(functor_category)
         for endomap in morphisms.values():
-            #nendomap = {}
+            # nendomap = {}
             nendomap = set()
 
             for input_value, output_value in endomap.items():
-
                 if input_value is None:
                     print("input_value is None")
 
@@ -859,20 +960,22 @@ def functor_categories_to_natural_transformation_category(functor_categories: li
                 print(f"input value :{input_value}, output value: {output_value}")
 
                 input_class_index = category_input.element_to_class_index(input_value)
-                output_class_index = category_output.element_to_class_index(output_value)
+                output_class_index = category_output.element_to_class_index(
+                    output_value
+                )
                 pair_class_index = functor_category.element_to_class_index(input_value)
 
                 if pair_class_index == None:
-                   raise ValueError("A morphisms link two non-existant pair objects")
+                    raise ValueError("A morphisms link two non-existant pair objects")
 
                 type, id = pair_class_index
 
                 if input_class_index is not None:
-                    #nendomap[input_class_index] = output_class_index
+                    # nendomap[input_class_index] = output_class_index
                     # the type of way the morphism is obtained is sufficient
                     nendomap.add((input_class_index, output_class_index, type))
 
-            #nmorphisms.add(frozenset(nendomap.items()))
+            # nmorphisms.add(frozenset(nendomap.items()))
             nmorphisms.update(nendomap)
         morphisms_translated.append(nmorphisms)
 
@@ -881,12 +984,20 @@ def functor_categories_to_natural_transformation_category(functor_categories: li
     return natural_transformations
 
 
-def functor_categories_to_natural_transformation_category1(functor_categories: list[Category], category_input: Category[T], category_output: Category[T]) -> Category[T]:
+def functor_categories_to_natural_transformation_category1(
+    functor_categories: list[Category],
+    category_input: Category[T],
+    category_output: Category[T],
+) -> Category[T]:
     # Step 1: for morphisms of comma categories, replace their input / output by the ids
     # in category_input / category_output
     morphisms_translated = []
     for functor_category in functor_categories:
-        invariants, cliques, morphisms = functor_category.invariants, functor_category.cliques, functor_category.morphisms
+        invariants, cliques, morphisms = (
+            functor_category.invariants,
+            functor_category.cliques,
+            functor_category.morphisms,
+        )
         nmorphisms = set()
         # Get all the morphisms of each pairs,
         # and write them in a representation that is independant
@@ -896,10 +1007,12 @@ def functor_categories_to_natural_transformation_category1(functor_categories: l
             nendomap = {}
 
             for element in TODOOOOO:
-            #for input_value, output_value in .items():
+                # for input_value, output_value in .items():
                 input_class_index = category_input.element_to_class_index(input_value)
-                output_class_index = category_output.element_to_class_index(output_value)
-                print(f'Input_class_index: {input_class_index}, value: {input_value}')
+                output_class_index = category_output.element_to_class_index(
+                    output_value
+                )
+                print(f"Input_class_index: {input_class_index}, value: {input_value}")
 
                 if input_class_index is not None:
                     nendomap[input_class_index] = output_class_index

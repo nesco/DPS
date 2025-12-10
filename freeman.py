@@ -60,10 +60,7 @@ def shift4_tower(direction: Tower, shift: int) -> Tower:
 def shift4_bishop(direction: Bishop, shift: int) -> Bishop:
     return cast(
         Bishop,
-        (
-            ((direction - NUM_DIRECTIONS_ORTHOGONAL) + shift)
-            % NUM_DIRECTIONS_ORTHOGONAL
-        )
+        (((direction - NUM_DIRECTIONS_ORTHOGONAL) + shift) % NUM_DIRECTIONS_ORTHOGONAL)
         + NUM_DIRECTIONS_ORTHOGONAL,
     )
 
@@ -92,8 +89,7 @@ def shift8(direction: King, shift: int) -> King:
         # 4 -> 1, 5 -> 2, 6 -> 3, 7 -> 0
         return cast(
             King,
-            (direction - NUM_DIRECTIONS_ORTHOGONAL + 1)
-            % NUM_DIRECTIONS_ORTHOGONAL,
+            (direction - NUM_DIRECTIONS_ORTHOGONAL + 1) % NUM_DIRECTIONS_ORTHOGONAL,
         )
 
 
@@ -128,9 +124,7 @@ class FreemanNode:
         path_str = "".join([str(move) for move in self.path])
         if not self.children:
             return path_str
-        children_str = (
-            "[" + ", ".join([str(child) for child in self.children]) + "]"
-        )
+        children_str = "[" + ", ".join([str(child) for child in self.children]) + "]"
         return f"{path_str}{children_str}"
 
     def __eq__(self, other) -> bool:

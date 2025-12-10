@@ -80,9 +80,7 @@ def root_to_symbolize():
     level3 = ProductNode((move7, repeat3))  # "7(3)*{4}"
     level2 = SumNode(frozenset({repeat2, level3}))  # "[(2)*{4}|7(3)*{4}]"
     level1 = ProductNode((move6, level2))  # "6[(2)*{4}|7(3)*{4}]"
-    level0 = SumNode(
-        frozenset({repeat1, level1})
-    )  # "[(1)*{4}|6[(2)*{4}|7(3)*{4}]]"
+    level0 = SumNode(frozenset({repeat1, level1}))  # "[(1)*{4}|6[(2)*{4}|7(3)*{4}]]"
     level_1 = ProductNode((move5, level0))  # "5[(1)*{4}|6[(2)*{4}|7(3)*{4}]]"
     level_2 = SumNode(
         frozenset({repeat0, level_1})
@@ -92,9 +90,7 @@ def root_to_symbolize():
     )  # "0[(0)*{4}|5[(1)*{4}|6[(2)*{4}|7(3)*{4}]]]"
 
     # Step 4: Create the Root Node
-    root_node = RootNode(
-        program, CoordValue(Coord(5, 5)), PaletteValue(frozenset({1}))
-    )
+    root_node = RootNode(program, CoordValue(Coord(5, 5)), PaletteValue(frozenset({1})))
 
     # Verify the string representation
     # print(
@@ -166,9 +162,7 @@ def test_encode_run_length():
     )
 
     # Test Case 7: Multiple Repeats
-    nodes = [PrimitiveNode(MoveValue(1))] * 3 + [
-        PrimitiveNode(MoveValue(2))
-    ] * 4
+    nodes = [PrimitiveNode(MoveValue(1))] * 3 + [PrimitiveNode(MoveValue(2))] * 4
     result = encode_run_length(nodes)
     expected = ProductNode(
         (
@@ -254,9 +248,7 @@ def test_construct_product_node():
     # Ensures consecutive identical PrimitiveNodes are compressed into a RepeatNode
     nodes = [PrimitiveNode(MoveValue(1))] * 3
     result = construct_product_node(nodes)
-    expected = ProductNode(
-        (RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(3)),)
-    )
+    expected = ProductNode((RepeatNode(PrimitiveNode(MoveValue(1)), CountValue(3)),))
     assert result == expected, (
         "Test 3 Failed: Adjacent PrimitiveNodes should merge into RepeatNode"
     )
@@ -284,9 +276,7 @@ def test_shift():
     # Test 1: Shifting a PrimitiveNode with MoveValue
     node = create_move_node(2)
     shifted = shift(node, 1)
-    assert isinstance(shifted, PrimitiveNode), (
-        "Shifted node should be a PrimitiveNode"
-    )
+    assert isinstance(shifted, PrimitiveNode), "Shifted node should be a PrimitiveNode"
     assert shifted.data == 3, "MoveValue should shift from 2 to 3 with k=1"
 
     # Test 2: Shifting by 0 (no change)
@@ -300,13 +290,9 @@ def test_shift():
     # Test 3: Shifting SumNode
     sum_node = SumNode(frozenset([create_move_node(0), create_move_node(4)]))
     shifted_sum = shift(sum_node, 2)
-    assert isinstance(shifted_sum, SumNode), (
-        "Shifted result should be a SumNode"
-    )
+    assert isinstance(shifted_sum, SumNode), "Shifted result should be a SumNode"
     assert len(shifted_sum.children) == 2, "SumNode should retain 2 children"
-    primitive_children = ensure_all_instances(
-        shifted_sum.children, PrimitiveNode
-    )
+    primitive_children = ensure_all_instances(shifted_sum.children, PrimitiveNode)
 
     data_values = {child.data for child in primitive_children}
     assert data_values == {2, 6}, "Children should have data values 2 and 6"
@@ -333,9 +319,7 @@ def test_shift():
     assert shifted_repeat.node.children[1].data == 4, (
         "Second MoveValue should shift to 4"
     )
-    assert isinstance(shifted_repeat.count, CountValue), (
-        "COunt should be CountValue"
-    )
+    assert isinstance(shifted_repeat.count, CountValue), "COunt should be CountValue"
     assert shifted_repeat.count.value == 3, "Count should remain unchanged"
 
     # Test 5: Shifting SymbolNode
@@ -346,9 +330,7 @@ def test_shift():
     assert isinstance(shifted_symbol, SymbolNode), (
         "Shifted result should be a SymbolNode"
     )
-    assert len(shifted_symbol.parameters) == 2, (
-        "SymbolNode should retain 2 parameters"
-    )
+    assert len(shifted_symbol.parameters) == 2, "SymbolNode should retain 2 parameters"
     assert isinstance(shifted_symbol.parameters[0], PrimitiveNode), (
         "Parameter should be PrimitiveNode"
     )
@@ -361,28 +343,20 @@ def test_shift():
 
     # Test 6: Shifting RootNode
     program = ProductNode((create_move_node(0), create_move_node(1)))
-    root = RootNode(
-        program, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
-    )
+    root = RootNode(program, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
     shifted_root = shift(root, 2)
-    assert isinstance(shifted_root, RootNode), (
-        "Shifted result should be a RootNode"
-    )
+    assert isinstance(shifted_root, RootNode), "Shifted result should be a RootNode"
     assert isinstance(shifted_root.node, ProductNode), (
         "Root program should be a ProductNode"
     )
     assert isinstance(shifted_root.node.children[0], PrimitiveNode), (
         "First child should be PrimitiveNode"
     )
-    assert shifted_root.node.children[0].data == 2, (
-        "First MoveValue should shift to 2"
-    )
+    assert shifted_root.node.children[0].data == 2, "First MoveValue should shift to 2"
     assert isinstance(shifted_root.node.children[1], PrimitiveNode), (
         "Second child should be PrimitiveNode"
     )
-    assert shifted_root.node.children[1].data == 3, (
-        "Second MoveValue should shift to 3"
-    )
+    assert shifted_root.node.children[1].data == 3, "Second MoveValue should shift to 3"
     assert shifted_root.position == CoordValue(Coord(0, 0)), (
         "Position should be unchanged"
     )
@@ -413,35 +387,25 @@ def test_shift():
     shifted_outer = shift(outer_sum, 1)
 
     # Verify the shifted outer node is a SumNode
-    assert isinstance(shifted_outer, SumNode), (
-        "Shifted outer node should be a SumNode"
-    )
+    assert isinstance(shifted_outer, SumNode), "Shifted outer node should be a SumNode"
 
     # Extract children from frozenset based on type
     children_list = list(shifted_outer.children)
-    repeat_nodes = [
-        child for child in children_list if isinstance(child, RepeatNode)
-    ]
+    repeat_nodes = [child for child in children_list if isinstance(child, RepeatNode)]
     primitive_nodes = [
         child for child in children_list if isinstance(child, PrimitiveNode)
     ]
 
     # Ensure the correct number of each type
-    assert len(repeat_nodes) == 1, (
-        "There should be one RepeatNode in the SumNode"
-    )
-    assert len(primitive_nodes) == 1, (
-        "There should be one PrimitiveNode in the SumNode"
-    )
+    assert len(repeat_nodes) == 1, "There should be one RepeatNode in the SumNode"
+    assert len(primitive_nodes) == 1, "There should be one PrimitiveNode in the SumNode"
 
     # Get the single RepeatNode and PrimitiveNode
     shifted_repeat = repeat_nodes[0]
     shifted_primitive = primitive_nodes[0]
 
     # Verify RepeatNode properties
-    assert isinstance(shifted_repeat, RepeatNode), (
-        "Child should be a RepeatNode"
-    )
+    assert isinstance(shifted_repeat, RepeatNode), "Child should be a RepeatNode"
     assert isinstance(shifted_repeat.node, ProductNode), (
         "Repeated node should be ProductNode"
     )
@@ -461,9 +425,7 @@ def test_shift():
     assert isinstance(shifted_primitive, PrimitiveNode), (
         "Child should be a PrimitiveNode"
     )
-    assert shifted_primitive.data == 0, (
-        "Outer MoveValue should shift from 7 to 0"
-    )
+    assert shifted_primitive.data == 0, "Outer MoveValue should shift from 7 to 0"
     # Test 10: Original node remains unchanged
     original_node = create_move_node(2)
     shifted_node = shift(original_node, 1)
@@ -498,9 +460,7 @@ def test_get_iterator():
     nodes_pos = [PrimitiveNode(MoveValue(i)) for i in [0, 1, 2]]
     result_pos = get_iterator(nodes_pos)
     expected_pos_forward = frozenset((RepeatNode(nodes_pos[0], CountValue(3)),))
-    expected_pos_backward = frozenset(
-        (RepeatNode(nodes_pos[2], CountValue(-3)),)
-    )
+    expected_pos_backward = frozenset((RepeatNode(nodes_pos[2], CountValue(-3)),))
     assert result_pos in [expected_pos_forward, expected_pos_backward], (
         "Test Case 3 Failed: Sequence [0,1,2] should be compressed to RepeatNode(0, 3) or RepeatNode(2, -3)"
     )
@@ -510,8 +470,12 @@ def test_get_iterator():
     # Either compression is valid: RepeatNode(0, 3) or RepeatNode(2, -3)
     nodes_neg = [PrimitiveNode(MoveValue(i)) for i in [2, 1, 0]]
     result_neg = get_iterator(nodes_neg)
-    expected_neg_forward = frozenset((RepeatNode(nodes_neg[2], CountValue(3)),))  # Start from 0
-    expected_neg_backward = frozenset((RepeatNode(nodes_neg[0], CountValue(-3)),))  # Start from 2
+    expected_neg_forward = frozenset(
+        (RepeatNode(nodes_neg[2], CountValue(3)),)
+    )  # Start from 0
+    expected_neg_backward = frozenset(
+        (RepeatNode(nodes_neg[0], CountValue(-3)),)
+    )  # Start from 2
     assert result_neg in [expected_neg_forward, expected_neg_backward], (
         "Test Case 4 Failed: Sequence [2,1,0] should be compressed to RepeatNode(0, 3) or RepeatNode(2, -3)"
     )
@@ -526,12 +490,8 @@ def test_get_iterator():
     # Test Case 6: Boundary Conditions (Wrap-around with Increment +1)
     nodes_wrap = [PrimitiveNode(MoveValue(i)) for i in [7, 0, 1]]
     result_wrap = get_iterator(nodes_wrap)
-    expected_wrap_forward = frozenset(
-        (RepeatNode(nodes_wrap[0], CountValue(3)),)
-    )
-    expected_wrap_backward = frozenset(
-        (RepeatNode(nodes_wrap[2], CountValue(-3)),)
-    )
+    expected_wrap_forward = frozenset((RepeatNode(nodes_wrap[0], CountValue(3)),))
+    expected_wrap_backward = frozenset((RepeatNode(nodes_wrap[2], CountValue(-3)),))
     assert result_wrap in [expected_wrap_forward, expected_wrap_backward], (
         "Test Case 6 Failed: Wrap-around sequence [7,0,1] should be compressed"
     )
@@ -543,9 +503,9 @@ def test_get_iterator():
     result_long = get_iterator(nodes_long)
 
     # Add assertion to narrow the type to RepeatNode
-    assert len(result_long) == 1 and isinstance(
-        next(iter(result_long)), RepeatNode
-    ), "Expected a single children"
+    assert len(result_long) == 1 and isinstance(next(iter(result_long)), RepeatNode), (
+        "Expected a single children"
+    )
 
     node = next(iter(result_long))
     assert isinstance(node, RepeatNode) and node.count == CountValue(8), (
@@ -585,9 +545,7 @@ def test_get_iterator():
     )
     assert isinstance(repeat_node.count, CountValue) and abs(
         repeat_node.count.value
-    ) == len(nodes), (
-        "Test Case 10 Failed: The count should equal the number of nodes"
-    )
+    ) == len(nodes), "Test Case 10 Failed: The count should equal the number of nodes"
     # Verify that shifts regenerate the original set
     if repeat_node.count.value > 0:
         shifts = range(repeat_node.count.value)
@@ -619,9 +577,7 @@ def test_find_repeating_pattern():
     # Test Case 3: Simple Repeat
     nodes = [PrimitiveNode(MoveValue(2))] * 3
     pattern, count, is_reversed = find_repeating_pattern(nodes, 0)
-    assert pattern == nodes[0], (
-        "Test Case 3 Failed: Pattern should be MoveValue(2)"
-    )
+    assert pattern == nodes[0], "Test Case 3 Failed: Pattern should be MoveValue(2)"
     assert count == 3, "Test Case 3 Failed: Count should be 3"
     assert not is_reversed, "Test Case 3 Failed: Should not be reversed"
 
@@ -730,9 +686,7 @@ def test_factorize_tuple():
     )
 
     # Test Case 6: SumNode Arithmetic Sequence
-    sum_node = SumNode(
-        frozenset([PrimitiveNode(MoveValue(i)) for i in [0, 1, 2]])
-    )
+    sum_node = SumNode(frozenset([PrimitiveNode(MoveValue(i)) for i in [0, 1, 2]]))
     result = factorize_tuple(sum_node)
     expected_forward = SumNode(
         frozenset((RepeatNode(PrimitiveNode(MoveValue(0)), CountValue(3)),))
@@ -745,9 +699,7 @@ def test_factorize_tuple():
     )
 
     # Test Case 7: SumNode Non-Sequence
-    sum_node = SumNode(
-        frozenset([PrimitiveNode(MoveValue(i)) for i in [0, 5, 1]])
-    )
+    sum_node = SumNode(frozenset([PrimitiveNode(MoveValue(i)) for i in [0, 5, 1]]))
     result = factorize_tuple(sum_node)
     assert result == sum_node, (
         "Test Case 7 Failed: Non-sequence SumNode should remain unchanged"
@@ -826,15 +778,11 @@ def test_arity():
     """
     # Test Case 1: Single variable with index 0
     node1 = VariableNode(VariableValue(0))
-    assert arity(node1) == 1, (
-        "Test Case 1 Failed: Expected arity 1 for VariableNode(0)"
-    )
+    assert arity(node1) == 1, "Test Case 1 Failed: Expected arity 1 for VariableNode(0)"
 
     # Test Case 2: No variables
     node2 = PrimitiveNode(MoveValue(2))
-    assert arity(node2) == 0, (
-        "Test Case 2 Failed: Expected arity 0 for no variables"
-    )
+    assert arity(node2) == 0, "Test Case 2 Failed: Expected arity 0 for no variables"
 
     # Test Case 3: Two variables with indices 0 and 1
     node3 = ProductNode(
@@ -846,39 +794,25 @@ def test_arity():
 
     # Test Case 4: Single variable in a RepeatNode
     node4 = RepeatNode(VariableNode(VariableValue(0)), CountValue(4))
-    assert arity(node4) == 1, (
-        "Test Case 4 Failed: Expected arity 1 for index [0]"
-    )
+    assert arity(node4) == 1, "Test Case 4 Failed: Expected arity 1 for index [0]"
 
     # Test Case 5: Variables with indices 0 and 2 in a SumNode
     node5 = SumNode(
-        frozenset(
-            {VariableNode(VariableValue(0)), VariableNode(VariableValue(2))}
-        )
+        frozenset({VariableNode(VariableValue(0)), VariableNode(VariableValue(2))})
     )
-    assert arity(node5) == 3, (
-        "Test Case 5 Failed: Expected arity 3 for indices [0, 2]"
-    )
+    assert arity(node5) == 3, "Test Case 5 Failed: Expected arity 3 for indices [0, 2]"
 
     # Test Case 6: Variable in a NestedNode
-    node6 = NestedNode(
-        IndexValue(0), VariableNode(VariableValue(1)), CountValue(3)
-    )
-    assert arity(node6) == 2, (
-        "Test Case 6 Failed: Expected arity 2 for index [1]"
-    )
+    node6 = NestedNode(IndexValue(0), VariableNode(VariableValue(1)), CountValue(3))
+    assert arity(node6) == 2, "Test Case 6 Failed: Expected arity 2 for index [1]"
 
     # Test Case 7: Variable in a SymbolNode's parameters
     node7 = SymbolNode(IndexValue(0), (VariableNode(VariableValue(0)),))
-    assert arity(node7) == 1, (
-        "Test Case 7 Failed: Expected arity 1 for index [0]"
-    )
+    assert arity(node7) == 1, "Test Case 7 Failed: Expected arity 1 for index [0]"
 
     # Test Case 8: No variables in a RepeatNode
     node8 = RepeatNode(PrimitiveNode(MoveValue(2)), CountValue(4))
-    assert arity(node8) == 0, (
-        "Test Case 8 Failed: Expected arity 0 for no variables"
-    )
+    assert arity(node8) == 0, "Test Case 8 Failed: Expected arity 0 for no variables"
 
     # Test Case 9: Variables in nested structure
     node9 = ProductNode(
@@ -887,17 +821,13 @@ def test_arity():
             RepeatNode(VariableNode(VariableValue(1)), CountValue(3)),
         )
     )
-    assert arity(node9) == 2, (
-        "Test Case 9 Failed: Expected arity 2 for indices [0, 1]"
-    )
+    assert arity(node9) == 2, "Test Case 9 Failed: Expected arity 2 for indices [0, 1]"
 
     # Test Case 10: Same variable used multiple times
     node10 = ProductNode(
         (VariableNode(VariableValue(0)), VariableNode(VariableValue(0)))
     )
-    assert arity(node10) == 1, (
-        "Test Case 10 Failed: Expected arity 1 for index [0]"
-    )
+    assert arity(node10) == 1, "Test Case 10 Failed: Expected arity 1 for index [0]"
 
     print("All arity tests passed successfully!")
 
@@ -918,12 +848,8 @@ def test_extract_nested_sum_template():
     assert result is not None, "Expected a template and parameter"
     template, parameter = result
     var_node = VariableNode(VariableValue(0))
-    expected_template1 = SumNode(
-        frozenset([ProductNode((a, var_node, d)), prod2])
-    )
-    expected_template2 = SumNode(
-        frozenset([prod1, ProductNode((e, var_node, h))])
-    )
+    expected_template1 = SumNode(frozenset([ProductNode((a, var_node, d)), prod2]))
+    expected_template2 = SumNode(frozenset([prod1, ProductNode((e, var_node, h))]))
     if template.children == expected_template1.children:
         assert parameter == inner_sum1, "Parameter should be inner_sum1"
     elif template.children == expected_template2.children:
@@ -934,9 +860,7 @@ def test_extract_nested_sum_template():
     assert extract_nested_sum_template(sum_no_product) is None, "Expected None"
     prod_no_sum = ProductNode((a, b, c))
     sum_with_prod_no_sum = SumNode(frozenset([prod_no_sum]))
-    assert extract_nested_sum_template(sum_with_prod_no_sum) is None, (
-        "Expected None"
-    )
+    assert extract_nested_sum_template(sum_with_prod_no_sum) is None, "Expected None"
     print("Test extract_nested_sum_template - Passed")
 
 
@@ -968,14 +892,10 @@ def test_extract_nested_product_template():
     else:
         assert False, f"Unexpected template structure: {str(template)}"
     product_no_sum = ProductNode((a, b, c))
-    assert extract_nested_product_template(product_no_sum) is None, (
-        "Expected None"
-    )
+    assert extract_nested_product_template(product_no_sum) is None, "Expected None"
     sum_no_product = SumNode(frozenset([a, b]))
     product_with_sum = ProductNode((sum_no_product, c))
-    assert extract_nested_product_template(product_with_sum) is None, (
-        "Expected None"
-    )
+    assert extract_nested_product_template(product_with_sum) is None, "Expected None"
     print("Test extract_nested_product_template - Passed")
 
 
@@ -1135,9 +1055,7 @@ def test_nested_collection_to_nested_node():
     # Index is a placeholder (0), not critical for this test
 
     # Verify reconstruction
-    expanded = expand_nested(
-        template, nested_node.node, nested_node.count.value
-    )
+    expanded = expand_nested(template, nested_node.node, nested_node.count.value)
     assert expanded == level3, "Expanded node should match original level3"
 
     # Test Case 2: Non-recursive SumNode
@@ -1153,19 +1071,13 @@ def test_nested_collection_to_nested_node():
         "Expected a NestedNode for single-level recursive SumNode"
     )
     nested_node, template = result
-    assert template == expected_template, (
-        "Template mismatch in single-level case"
-    )
+    assert template == expected_template, "Template mismatch in single-level case"
     assert isinstance(nested_node.count, CountValue)
     assert nested_node.count.value == 1, (
         f"Count should be 1, got {nested_node.count.value}"
     )
-    assert nested_node.node == terminal, (
-        "Terminal node mismatch in single-level case"
-    )
-    expanded = expand_nested(
-        template, nested_node.node, nested_node.count.value
-    )
+    assert nested_node.node == terminal, "Terminal node mismatch in single-level case"
+    expanded = expand_nested(template, nested_node.node, nested_node.count.value)
     assert expanded == level1, "Expanded node should match original level1"
 
     print("Test nested_collection_to_nested_node - Passed")
@@ -1215,15 +1127,11 @@ def test_resolve_symbols():
     assert result == node, "Tree with no symbols should remain unchanged"
 
     # Test Case 2: Test resolving a single SymbolNode without parameters.
-    symbol_def = ProductNode(
-        (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)))
-    )
+    symbol_def = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3))))
     symbols = (symbol_def,)
     node = SymbolNode(IndexValue(0), ())
     result = resolve_symbols(node, symbols)
-    assert result == symbol_def, (
-        "SymbolNode should be replaced by its definition"
-    )
+    assert result == symbol_def, "SymbolNode should be replaced by its definition"
 
     # Test Case 3: Test resolving a single SymbolNode with parameters.
     symbol_def = ProductNode(
@@ -1247,15 +1155,11 @@ def test_resolve_symbols():
     expected_inner = ProductNode((param, PrimitiveNode(MoveValue(1))))
     expected = ProductNode((expected_inner, PrimitiveNode(MoveValue(6))))
     result = resolve_symbols(composite, symbols)
-    assert result == expected, (
-        "Composite node should resolve its children correctly"
-    )
+    assert result == expected, "Composite node should resolve its children correctly"
 
     # Test Case 5: Test resolving nested symbols
     symbol0 = PrimitiveNode(MoveValue(7))
-    symbol1 = ProductNode(
-        (SymbolNode(IndexValue(0), ()), PrimitiveNode(MoveValue(8)))
-    )
+    symbol1 = ProductNode((SymbolNode(IndexValue(0), ()), PrimitiveNode(MoveValue(8))))
     symbols = (
         symbol0,
         symbol1,
@@ -1266,9 +1170,7 @@ def test_resolve_symbols():
     assert result == expected, "Nested symbols should be resolved recursively"
 
     # Test Case 6: Test resolving a symbol with parameters in a RepeatNode.
-    symbol_def = RepeatNode(
-        PrimitiveNode(MoveValue(2)), VariableNode(VariableValue(0))
-    )
+    symbol_def = RepeatNode(PrimitiveNode(MoveValue(2)), VariableNode(VariableValue(0)))
     symbols = (symbol_def,)
     param = CountValue(3)
     node = SymbolNode(IndexValue(0), (param,))
@@ -1282,9 +1184,7 @@ def test_resolve_symbols():
     symbols = (PrimitiveNode(MoveValue(1)),)
     node = SymbolNode(IndexValue(1), ())
     result = resolve_symbols(node, symbols)
-    assert result == node, (
-        "SymbolNode with invalid index should remain unchanged"
-    )
+    assert result == node, "SymbolNode with invalid index should remain unchanged"
 
     # Test Case 8: Test resolving a tree with multiple symbols and parameters.
     symbol0 = PrimitiveNode(MoveValue(3))
@@ -1313,25 +1213,13 @@ def test_find_symbol_candidates():
     pattern = ProductNode(
         (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(2)))
     )  # bit_length = 15
-    tree1 = RootNode(
-        pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
-    )
-    tree2 = RootNode(
-        pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2}))
-    )
-    tree3 = RootNode(
-        pattern, CoordValue(Coord(2, 2)), PaletteValue(frozenset({3}))
-    )
-    tree4 = RootNode(
-        pattern, CoordValue(Coord(3, 3)), PaletteValue(frozenset({4}))
-    )
+    tree1 = RootNode(pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
+    tree2 = RootNode(pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2})))
+    tree3 = RootNode(pattern, CoordValue(Coord(2, 2)), PaletteValue(frozenset({3})))
+    tree4 = RootNode(pattern, CoordValue(Coord(3, 3)), PaletteValue(frozenset({4})))
     trees = (tree1, tree2, tree3, tree4)
-    candidates = find_symbol_candidates(
-        trees, min_occurrences=2, max_patterns=5
-    )
-    assert len(candidates) == 2, (
-        "Test Case 1 Failed: Should find exactly two candidate"
-    )
+    candidates = find_symbol_candidates(trees, min_occurrences=2, max_patterns=5)
+    assert len(candidates) == 2, "Test Case 1 Failed: Should find exactly two candidate"
     assert candidates[0] == RootNode(
         pattern, VariableNode(VariableValue(0)), VariableNode(VariableValue(1))
     ), "Test Case 1 Failed: Candidate should be the repeating pattern"
@@ -1344,9 +1232,7 @@ def test_find_symbol_candidates():
         PaletteValue(frozenset({1})),
     )
     trees = (tree1, unique_tree)  # Pattern appears only once
-    candidates = find_symbol_candidates(
-        trees, min_occurrences=2, max_patterns=5
-    )
+    candidates = find_symbol_candidates(trees, min_occurrences=2, max_patterns=5)
     assert len(candidates) == 0, (
         "Test Case 2 Failed: Should find no candidates below frequency threshold"
     )
@@ -1361,9 +1247,7 @@ def test_find_symbol_candidates():
         short_pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2}))
     )
     trees = (tree5, tree6)
-    candidates = find_symbol_candidates(
-        trees, min_occurrences=2, max_patterns=5
-    )
+    candidates = find_symbol_candidates(trees, min_occurrences=2, max_patterns=5)
     # Short pattern (bit_length=6) won't save bits vs. SymbolNode (bit_length=10)
     assert len(candidates) == 0, (
         "Test Case 3 Failed: Should exclude patterns with no bit savings"
@@ -1411,9 +1295,7 @@ def test_find_symbol_candidates():
         PaletteValue(frozenset({3})),
     )
     trees = (tree7, tree8, tree9)
-    candidates = find_symbol_candidates(
-        trees, min_occurrences=2, max_patterns=5
-    )
+    candidates = find_symbol_candidates(trees, min_occurrences=2, max_patterns=5)
     expected_abs = ProductNode(
         (
             VariableNode(VariableValue(0)),
@@ -1447,9 +1329,7 @@ def test_find_symbol_candidates():
         PaletteValue(frozenset({2})),
     )
     trees = (tree10, tree11)
-    candidates = find_symbol_candidates(
-        trees, min_occurrences=2, max_patterns=5
-    )
+    candidates = find_symbol_candidates(trees, min_occurrences=2, max_patterns=5)
     assert len(candidates) == 0, (
         "Test Case 5b Failed: No common patterns should return empty list"
     )
@@ -1457,9 +1337,7 @@ def test_find_symbol_candidates():
 
     # Test Case 6: Interaction with Other Functions - Symbolization and Resolution
     trees = (tree1, tree2, tree3, tree4)
-    candidates = find_symbol_candidates(
-        trees, min_occurrences=2, max_patterns=1
-    )
+    candidates = find_symbol_candidates(trees, min_occurrences=2, max_patterns=1)
     assert len(candidates) == 1, (
         "Test Case 6 Failed: Should find one candidate for symbolization"
     )
@@ -1468,9 +1346,7 @@ def test_find_symbol_candidates():
         abstract_node(symbol_index, candidates[0], tree) for tree in trees
     )
     symbols = (candidates[0],)
-    resolved_trees = tuple(
-        resolve_symbols(tree, symbols) for tree in symbolized_trees
-    )
+    resolved_trees = tuple(resolve_symbols(tree, symbols) for tree in symbolized_trees)
     assert resolved_trees == trees, (
         "Test Case 6 Failed: Resolved trees should match original trees"
     )
@@ -1484,17 +1360,11 @@ def test_matching():
     node = PrimitiveNode(MoveValue(2))
     pattern = node
     bindings = matches(pattern, node)
-    assert bindings == {}, (
-        "Expected empty bindings for exact match without variables"
-    )
+    assert bindings == {}, "Expected empty bindings for exact match without variables"
 
     # Test Case 2: With Variables
-    pattern = ProductNode(
-        (VariableNode(VariableValue(0)), PrimitiveNode(MoveValue(3)))
-    )
-    subtree = ProductNode(
-        (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)))
-    )
+    pattern = ProductNode((VariableNode(VariableValue(0)), PrimitiveNode(MoveValue(3))))
+    subtree = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3))))
     bindings = matches(pattern, subtree)
     expected_bindings = {0: PrimitiveNode(MoveValue(2))}
     assert bindings == expected_bindings, (
@@ -1502,12 +1372,8 @@ def test_matching():
     )
 
     # Test Case 3: No match
-    pattern = ProductNode(
-        (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(4)))
-    )
-    subtree = ProductNode(
-        (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)))
-    )
+    pattern = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(4))))
+    subtree = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3))))
     bindings = matches(pattern, subtree)
     assert bindings is None, "Expected no match, but got bindings"
 
@@ -1515,9 +1381,7 @@ def test_matching():
     original_node = ProductNode(
         (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)))
     )
-    pattern = ProductNode(
-        (VariableNode(VariableValue(0)), PrimitiveNode(MoveValue(3)))
-    )
+    pattern = ProductNode((VariableNode(VariableValue(0)), PrimitiveNode(MoveValue(3))))
     parameters = (PrimitiveNode(MoveValue(2)),)
     index = IndexValue(0)
 
@@ -1526,15 +1390,11 @@ def test_matching():
         "Expected SymbolNode after abstraction"
     )
     assert abstracted_node.index == index, "Index mismatch"
-    assert abstracted_node.parameters == parameters, (
-        f"Expected parameters {parameters}"
-    )
+    assert abstracted_node.parameters == parameters, f"Expected parameters {parameters}"
 
     symbols = (pattern,)
     resolved_node = resolve_symbols(abstracted_node, symbols)
-    assert resolved_node == original_node, (
-        "Resolved node does not match original"
-    )
+    assert resolved_node == original_node, "Resolved node does not match original"
 
     # Test Case 5: Nested Structures
     nested_node = ProductNode(
@@ -1558,17 +1418,13 @@ def test_matching():
 
     symbols = (pattern,)
     resolved_node = resolve_symbols(abstracted_node, symbols)
-    assert resolved_node == nested_node, (
-        "Resolved nested node does not match original"
-    )
+    assert resolved_node == nested_node, "Resolved nested node does not match original"
 
     # Tes Case 6: Multiple Variables
     pattern = ProductNode(
         (VariableNode(VariableValue(0)), VariableNode(VariableValue(1)))
     )
-    subtree = ProductNode(
-        (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)))
-    )
+    subtree = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3))))
     bindings = matches(pattern, subtree)
     expected_bindings = {
         0: PrimitiveNode(MoveValue(2)),
@@ -1582,24 +1438,18 @@ def test_matching():
     pattern = ProductNode(
         (VariableNode(VariableValue(0)), VariableNode(VariableValue(0)))
     )
-    subtree1 = ProductNode(
-        (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(2)))
-    )
+    subtree1 = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(2))))
     bindings1 = matches(pattern, subtree1)
     assert bindings1 == {0: PrimitiveNode(MoveValue(2))}, (
         "Expected binding for identical elements"
     )
 
-    subtree2 = ProductNode(
-        (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)))
-    )
+    subtree2 = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3))))
     bindings2 = matches(pattern, subtree2)
     assert bindings2 is None, "Expected no match for different elements"
 
     # Test Case 8: Integration with extract_template
-    node = ProductNode(
-        (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)))
-    )
+    node = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3))))
     abstractions = extract_template(node)
 
     for pattern, params in abstractions:
@@ -1623,19 +1473,13 @@ def test_unify_sum():
 
     # Test Case 1: Exact Match (No Variables), different frozenset order
     pattern1 = SumNode(
-        frozenset(
-            {create_move_node(1), create_move_node(2), create_move_node(3)}
-        )
+        frozenset({create_move_node(1), create_move_node(2), create_move_node(3)})
     )
     subtree1a = SumNode(
-        frozenset(
-            {create_move_node(3), create_move_node(1), create_move_node(2)}
-        )
+        frozenset({create_move_node(3), create_move_node(1), create_move_node(2)})
     )
     subtree1b = SumNode(
-        frozenset(
-            {create_move_node(1), create_move_node(2), create_move_node(3)}
-        )
+        frozenset({create_move_node(1), create_move_node(2), create_move_node(3)})
     )
     bindings1a: Bindings = {}
     bindings1b: Bindings = {}
@@ -1649,9 +1493,7 @@ def test_unify_sum():
     # Test Case 2: Mismatch - Different Number of Children
     pattern2 = SumNode(frozenset({create_move_node(1), create_move_node(2)}))
     subtree2 = SumNode(
-        frozenset(
-            {create_move_node(1), create_move_node(2), create_move_node(3)}
-        )
+        frozenset({create_move_node(1), create_move_node(2), create_move_node(3)})
     )
     bindings2: Bindings = {}
     assert not unify(pattern2, subtree2, bindings2), (
@@ -1665,9 +1507,7 @@ def test_unify_sum():
     )  # create_move_node(4) instead of create_move_node(2)
     subtree3 = SumNode(frozenset({create_move_node(1), create_move_node(2)}))
     bindings3: Bindings = {}
-    assert not unify(pattern3, subtree3, bindings3), (
-        "Should fail on different content"
-    )
+    assert not unify(pattern3, subtree3, bindings3), "Should fail on different content"
     assert bindings3 == {}, "Bindings should be empty after failed unification"
 
     # Test Case 4: Single Variable - Successful Binding
@@ -1688,9 +1528,7 @@ def test_unify_sum():
 
     # Test Case 5: Single Variable - Binding to a Complex Node
     prod_node = ProductNode((create_move_node(3), create_move_node(4)))
-    pattern5 = SumNode(
-        frozenset({create_move_node(1), create_variable_node(0)})
-    )
+    pattern5 = SumNode(frozenset({create_move_node(1), create_variable_node(0)}))
     subtree5 = SumNode(frozenset({create_move_node(1), prod_node}))
     bindings5: Bindings = {}
     assert unify(pattern5, subtree5, bindings5), (
@@ -1712,14 +1550,10 @@ def test_unify_sum():
         )
     )
     subtree6a = SumNode(
-        frozenset(
-            {create_move_node(3), create_move_node(5), create_move_node(4)}
-        )
+        frozenset({create_move_node(3), create_move_node(5), create_move_node(4)})
     )  # Deliberate order difference
     subtree6b = SumNode(
-        frozenset(
-            {create_move_node(4), create_move_node(3), create_move_node(5)}
-        )
+        frozenset({create_move_node(4), create_move_node(3), create_move_node(5)})
     )  # Another order
     bindings6a: Bindings = {}
     bindings6b: Bindings = {}
@@ -1750,9 +1584,7 @@ def test_unify_sum():
     )
 
     # Test Case 7: Multiple Variables - Failure due to Content Mismatch
-    pattern7 = SumNode(
-        frozenset({create_variable_node(0), create_move_node(2)})
-    )
+    pattern7 = SumNode(frozenset({create_variable_node(0), create_move_node(2)}))
     subtree7 = SumNode(
         frozenset({create_move_node(1), create_move_node(3)})
     )  # No create_move_node(2) to match the concrete part
@@ -1791,9 +1623,7 @@ def test_unify_sum():
     )
 
     # Test Case 9: Nested SumNode Unification
-    inner_p9 = SumNode(
-        frozenset({create_variable_node(1), create_move_node(6)})
-    )
+    inner_p9 = SumNode(frozenset({create_variable_node(1), create_move_node(6)}))
     inner_s9 = SumNode(frozenset({create_move_node(4), create_move_node(6)}))
     pattern9 = SumNode(frozenset({create_variable_node(0), inner_p9}))
     subtree9 = SumNode(frozenset({create_move_node(3), inner_s9}))
@@ -1816,9 +1646,7 @@ def test_unify_sum():
     )
 
     # Test Case 10: Variable bound to different type
-    pattern10 = SumNode(
-        frozenset({create_variable_node(0), create_move_node(1)})
-    )
+    pattern10 = SumNode(frozenset({create_variable_node(0), create_move_node(1)}))
     subtree10 = SumNode(
         frozenset(
             {
@@ -1831,9 +1659,7 @@ def test_unify_sum():
     assert unify(pattern10, subtree10, bindings10), (
         "Variable binding to CoordValue should succeed"
     )
-    assert bindings10 == {
-        0: RepeatNode(create_variable_node(0), CountValue(4))
-    }, (
+    assert bindings10 == {0: RepeatNode(create_variable_node(0), CountValue(4))}, (
         f"Expected Var(0) to bind to {RepeatNode(create_variable_node(0), CountValue(4))}, got {bindings10}"
     )
 
@@ -1889,9 +1715,7 @@ def test_expand_nested_node():
 
     # Count=1: ProductNode((MoveValue(0), SumNode({MoveValue(1), MoveValue(3)}), MoveValue(3)))
     nested1_2 = NestedNode(IndexValue(0), move1, CountValue(1))
-    expected1_2 = ProductNode(
-        (move0, SumNode(frozenset({move1, move3})), move3)
-    )
+    expected1_2 = ProductNode((move0, SumNode(frozenset({move1, move3})), move3))
     result1_2 = expand_nested_node(nested1_2, symbols2)
     assert result1_2 == expected1_2, (
         f"Test Case 2 (count=1) Failed: Expected {expected1_2}, got {result1_2}"
@@ -1915,12 +1739,8 @@ def test_expand_nested_node():
 def test_factor_by_existing_symbols():
     """Tests the factor_by_existing_symbols function for replacing matching patterns with SymbolNodes."""
     # Test Case 1: Basic Pattern Replacement
-    pattern = ProductNode(
-        (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)))
-    )
-    tree = RootNode(
-        pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
-    )
+    pattern = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3))))
+    tree = RootNode(pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
     symbols = (pattern,)
     result = factor_by_existing_symbols(tree, symbols)
     expected = RootNode(
@@ -1955,9 +1775,7 @@ def test_factor_by_existing_symbols():
             PrimitiveNode(MoveValue(4)),
         )
     )
-    assert result == expected, (
-        "Test Case 3 Failed: Should replace nested pattern"
-    )
+    assert result == expected, "Test Case 3 Failed: Should replace nested pattern"
     print("Test Case 3: Nested Pattern - Passed")
 
     # Test Case 4: Multiple Matches
@@ -1965,9 +1783,7 @@ def test_factor_by_existing_symbols():
     result = factor_by_existing_symbols(multi_tree, symbols)
     symbol_node = SymbolNode(IndexValue(0), ())
     expected = RepeatNode(symbol_node, CountValue(2))
-    assert result == expected, (
-        "Test Case 4 Failed: Should replace multiple occurrences"
-    )
+    assert result == expected, "Test Case 4 Failed: Should replace multiple occurrences"
     print("Test Case 4: Multiple Matches - Passed")
 
     # Test Case 5: Empty Symbol Table
@@ -2030,8 +1846,7 @@ def test_substitute():
         if isinstance(node, VariableNode):
             return True
         return any(
-            _contains_var(child)
-            for child in getattr(node, "children", lambda: [])()
+            _contains_var(child) for child in getattr(node, "children", lambda: [])()
         )
 
     assert not _contains_var(expanded), "VariableNode leaked from substitution"
@@ -2048,9 +1863,7 @@ def test_remap_symbol_indices():
     print("Test Case 1: Single Symbol Remap - Passed")
 
     # Test Case 2: No Symbols
-    tree = ProductNode(
-        (PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3)))
-    )
+    tree = ProductNode((PrimitiveNode(MoveValue(2)), PrimitiveNode(MoveValue(3))))
     mapping = [1, 2]
     result = remap_symbol_indices(tree, mapping, 0)
     assert result == tree, (
@@ -2059,9 +1872,7 @@ def test_remap_symbol_indices():
     print("Test Case 2: No Symbols - Passed")
 
     # Test Case 3: Nested Symbols
-    tree = ProductNode(
-        (SymbolNode(IndexValue(0), ()), SymbolNode(IndexValue(1), ()))
-    )
+    tree = ProductNode((SymbolNode(IndexValue(0), ()), SymbolNode(IndexValue(1), ())))
     mapping = [2, 0]
     result = remap_symbol_indices(tree, mapping, 0)
     expected = ProductNode(
@@ -2101,9 +1912,7 @@ def test_remap_sub_symbols():
     original_table = (PrimitiveNode(MoveValue(1)), PrimitiveNode(MoveValue(2)))
     result = remap_sub_symbols(symbol, mapping, original_table)
     expected = SymbolNode(IndexValue(2), (SymbolNode(IndexValue(0), ()),))
-    assert result == expected, (
-        "Test Case 1 Failed: Should remap sub-symbol index"
-    )
+    assert result == expected, "Test Case 1 Failed: Should remap sub-symbol index"
     print("Test Case 1: Simple Symbol with Sub-Symbol - Passed")
 
     # Test Case 2: No Sub-Symbols
@@ -2112,9 +1921,7 @@ def test_remap_sub_symbols():
     original_table = (PrimitiveNode(MoveValue(2)),)
     result = remap_sub_symbols(symbol, mapping, original_table)
     expected = SymbolNode(IndexValue(1), (PrimitiveNode(MoveValue(1)),))
-    assert result == expected, (
-        "Test Case 2 Failed: Should remap outer symbol index"
-    )
+    assert result == expected, "Test Case 2 Failed: Should remap outer symbol index"
     print("Test Case 2: No Sub-Symbols - Passed")
 
     # Test Case 3: Multiple Sub-Symbols
@@ -2129,9 +1936,7 @@ def test_remap_sub_symbols():
         IndexValue(1),
         (SymbolNode(IndexValue(1), ()), SymbolNode(IndexValue(0), ())),
     )
-    assert result == expected, (
-        "Test Case 3 Failed: Should remap multiple sub-symbols"
-    )
+    assert result == expected, "Test Case 3 Failed: Should remap multiple sub-symbols"
     print("Test Case 3: Multiple Sub-Symbols - Passed")
 
     # Test Case 4: Empty Mapping
@@ -2150,9 +1955,7 @@ def test_remap_sub_symbols():
 def test_merge_symbol_tables():
     """Tests the merge_symbol_tables function for combining symbol tables."""
     # Test Case 1: Merging Identical Tables
-    symbol = ProductNode(
-        (PrimitiveNode(MoveValue(1)), PrimitiveNode(MoveValue(2)))
-    )
+    symbol = ProductNode((PrimitiveNode(MoveValue(1)), PrimitiveNode(MoveValue(2))))
     table1 = (symbol,)
     table2 = (symbol,)
     unified, mappings = merge_symbol_tables([table1, table2])
@@ -2173,8 +1976,12 @@ def test_merge_symbol_tables():
         "Test Case 2 Failed: Unified table should contain both symbols"
     )
     # Verify mappings point to correct indices regardless of order
-    assert unified[mappings[0][0]] == symbol1, "Test Case 2 Failed: Mapping for table1 incorrect"
-    assert unified[mappings[1][0]] == symbol2, "Test Case 2 Failed: Mapping for table2 incorrect"
+    assert unified[mappings[0][0]] == symbol1, (
+        "Test Case 2 Failed: Mapping for table1 incorrect"
+    )
+    assert unified[mappings[1][0]] == symbol2, (
+        "Test Case 2 Failed: Mapping for table2 incorrect"
+    )
     print("Test Case 2: Merging Distinct Tables - Passed")
 
     # Test Case 3: Merging with Nested Symbols
@@ -2206,12 +2013,8 @@ def test_merge_symbol_tables():
 
     # Test Case 4: Empty Tables
     unified, mappings = merge_symbol_tables([(), ()])
-    assert unified == (), (
-        "Test Case 4 Failed: Should return empty unified table"
-    )
-    assert mappings == [[], []], (
-        "Test Case 4 Failed: Should return empty mappings"
-    )
+    assert unified == (), "Test Case 4 Failed: Should return empty unified table"
+    assert mappings == [[], []], "Test Case 4 Failed: Should return empty mappings"
     print("Test Case 4: Empty Tables - Passed")
 
     print("Test merge_symbol_tables - Passed")
@@ -2228,12 +2031,8 @@ def test_symbolize_together():
             PrimitiveNode(MoveValue(4)),
         )
     )
-    tree1 = RootNode(
-        pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
-    )
-    tree2 = RootNode(
-        pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2}))
-    )
+    tree1 = RootNode(pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
+    tree2 = RootNode(pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2})))
     trees = (tree1, tree2)
     symbol_tables = [(), ()]
     final_trees, final_symbols = symbolize_together(trees, symbol_tables)
@@ -2261,9 +2060,7 @@ def test_symbolize_together():
     assert final_trees == expected_trees, (
         f"Test Case 1 Failed: Trees incorrect, got {final_trees}"
     )
-    assert final_symbols == expected_symbols, (
-        "Test Case 1 Failed: Symbols incorrect"
-    )
+    assert final_symbols == expected_symbols, "Test Case 1 Failed: Symbols incorrect"
     print("Test Case 1: Identical Trees with Empty Symbol Tables - Passed")
 
     # Test Case 2: Trees with Pre-existing Symbols
@@ -2271,9 +2068,7 @@ def test_symbolize_together():
     tree1 = SymbolNode(IndexValue(0), ())
     tree2 = SymbolNode(IndexValue(0), ())
     symbol_tables = [(symbol_def,), (symbol_def,)]
-    final_trees, final_symbols = symbolize_together(
-        (tree1, tree2), symbol_tables
-    )
+    final_trees, final_symbols = symbolize_together((tree1, tree2), symbol_tables)
     assert final_trees == (tree1, tree2), (
         "Test Case 2 Failed: Trees should remain unchanged"
     )
@@ -2284,12 +2079,8 @@ def test_symbolize_together():
 
     # Test Case 3: Empty Input
     final_trees, final_symbols = symbolize_together((), [])
-    assert final_trees == (), (
-        "Test Case 3 Failed: Empty trees should return empty"
-    )
-    assert final_symbols == (), (
-        "Test Case 3 Failed: Empty symbols should return empty"
-    )
+    assert final_trees == (), "Test Case 3 Failed: Empty trees should return empty"
+    assert final_symbols == (), "Test Case 3 Failed: Empty symbols should return empty"
     print("Test Case 3: Empty Input - Passed")
 
     # Test Case 4: Integration Test with Resolution
@@ -2301,18 +2092,12 @@ def test_symbolize_together():
             PrimitiveNode(MoveValue(4)),
         )
     )
-    tree1 = RootNode(
-        pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
-    )
-    tree2 = RootNode(
-        pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2}))
-    )
+    tree1 = RootNode(pattern, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
+    tree2 = RootNode(pattern, CoordValue(Coord(1, 1)), PaletteValue(frozenset({2})))
     trees = (tree1, tree2)
     symbol_tables = [(), ()]  # Empty symbol tables to start fresh
     final_trees, final_symbols = symbolize_together(trees, symbol_tables)
-    resolved_trees = tuple(
-        resolve_symbols(tree, final_symbols) for tree in final_trees
-    )
+    resolved_trees = tuple(resolve_symbols(tree, final_symbols) for tree in final_trees)
     expected_resolved = (
         tree1,
         tree2,
@@ -2329,16 +2114,12 @@ def run_tests():
     """Runs simple tests to verify KolmogorovTree functionality."""
     # Test 1: Basic node creation and bit length
     move_right = PrimitiveNode(MoveValue(2))
-    assert (
-        move_right.bit_length()
-        == BitLength.NODE_TYPE + MoveValue(2).bit_length()
-    ), (
+    assert move_right.bit_length() == BitLength.NODE_TYPE + MoveValue(2).bit_length(), (
         f"PrimitiveNode bit length should be {BitLength.NODE_TYPE + MoveValue(2).bit_length()} ( {BitLength.NODE_TYPE} + {MoveValue(2).bit_length()})"
     )
     product = ProductNode((move_right, move_right))
     assert (
-        product.bit_length()
-        == BitLength.NODE_TYPE + 2 + 2 * move_right.bit_length()
+        product.bit_length() == BitLength.NODE_TYPE + 2 + 2 * move_right.bit_length()
     ), (
         f"ProductNode bit length should be {BitLength.NODE_TYPE + 2 + 2 * move_right.bit_length()} ({BitLength.NODE_TYPE} + 2 + 2 * {move_right.bit_length()})"
     )
@@ -2346,10 +2127,7 @@ def run_tests():
     sum_node = SumNode(frozenset((move_right, move_down)))
     assert (
         sum_node.bit_length()
-        == BitLength.NODE_TYPE
-        + 2
-        + move_right.bit_length()
-        + move_down.bit_length()
+        == BitLength.NODE_TYPE + 2 + move_right.bit_length() + move_down.bit_length()
     ), (
         f"SumNode bit length should be {BitLength.NODE_TYPE + 2 + move_right.bit_length() + move_down.bit_length()} ({BitLength.NODE_TYPE} + 2 + {move_right.bit_length()} + {move_down.bit_length()})"
     )
@@ -2363,10 +2141,7 @@ def run_tests():
     nested = NestedNode(IndexValue(0), repeat, CountValue(3))
     assert (
         nested.bit_length()
-        == BitLength.NODE_TYPE
-        + BitLength.COUNT
-        + BitLength.INDEX
-        + repeat.bit_length()
+        == BitLength.NODE_TYPE + BitLength.COUNT + BitLength.INDEX + repeat.bit_length()
     ), f"RepeatNode bit length should be {
         BitLength.NODE_TYPE
         + BitLength.INDEX
@@ -2380,9 +2155,7 @@ def run_tests():
     assert symbol.bit_length() == BitLength.NODE_TYPE + BitLength.INDEX, (
         f"SymbolNode bit length should be {BitLength.NODE_TYPE + BitLength.INDEX} ({BitLength.NODE_TYPE} + {BitLength.INDEX})"
     )
-    root = RootNode(
-        product, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1}))
-    )
+    root = RootNode(product, CoordValue(Coord(0, 0)), PaletteValue(frozenset({1})))
     assert (
         root.bit_length()
         == BitLength.NODE_TYPE
@@ -2410,9 +2183,9 @@ def run_tests():
     print("Test 2: String representations - Passed")
 
     # Test 3: Operator overloads
-    assert (move_right | move_down) == SumNode(
-        frozenset((move_right, move_down))
-    ), "Operator | failed"
+    assert (move_right | move_down) == SumNode(frozenset((move_right, move_down))), (
+        "Operator | failed"
+    )
     assert (move_right & move_down) == ProductNode((move_right, move_down)), (
         "Operator & failed"
     )

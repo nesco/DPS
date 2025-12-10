@@ -139,8 +139,12 @@ def unify(pattern: BitLengthAware, subtree: BitLengthAware, bindings: Bindings) 
 
             initial_bindings = bindings.copy()
             result = unify_sum_children(
-                0, sorted_pattern, sorted_subtree, subtree_used,
-                initial_bindings, compatibility,
+                0,
+                sorted_pattern,
+                sorted_subtree,
+                subtree_used,
+                initial_bindings,
+                compatibility,
             )
 
             if result is not None:

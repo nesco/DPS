@@ -29,9 +29,7 @@ from utils.loader import train_task_to_grids
 
 
 def test_reconstruction():
-    inputs, outputs, input_test, output_test = train_task_to_grids(
-        "2dc579da.json"
-    )
+    inputs, outputs, input_test, output_test = train_task_to_grids("2dc579da.json")
     input = inputs[2]
 
     components_by_colors = grid_to_components_by_colors(input)
@@ -52,9 +50,7 @@ def test_reconstruction():
     def check_coords_compositional_identity_distribution(
         component: Coords, colors: Colors, start: Coord
     ):
-        syntax_trees = component_to_raw_syntax_tree_distribution(
-            component, colors
-        )
+        syntax_trees = component_to_raw_syntax_tree_distribution(component, colors)
         for i, st in enumerate(syntax_trees):
             coords = points_to_coords(decode_root(st))
             assert isinstance(coords, set | frozenset)
@@ -66,14 +62,8 @@ def test_reconstruction():
             } with decoding giving: {coords}. Differences: {
                 component.difference(coords)
             } {coords.difference(component)}, {
-                PointsOperations.print(
-                    coords_to_points(component), Proportions(11, 11)
-                )
-            }, {
-                PointsOperations.print(
-                    coords_to_points(coords), Proportions(11, 11)
-                )
-            }"
+                PointsOperations.print(coords_to_points(component), Proportions(11, 11))
+            }, {PointsOperations.print(coords_to_points(coords), Proportions(11, 11))}"
 
     # Inputing fake unicolors so can be decoded
     # Test Case 1: Simple start point
@@ -81,12 +71,8 @@ def test_reconstruction():
         rect_with_hole, frozenset({1}), next(iter(rect_with_hole))
     )
 
-    check_coords_compositional_identity(
-        cross, frozenset({1}), next(iter(cross))
-    )
-    check_coords_compositional_identity(
-        a_rect, frozenset({1}), next(iter(a_rect))
-    )
+    check_coords_compositional_identity(cross, frozenset({1}), next(iter(cross)))
+    check_coords_compositional_identity(a_rect, frozenset({1}), next(iter(a_rect)))
 
     # Test Case 2: Whole distribution
     check_coords_compositional_identity_distribution(
@@ -102,9 +88,7 @@ def test_reconstruction():
 
 
 def test_nested_nodes():
-    inputs, outputs, input_test, output_test = train_task_to_grids(
-        "2dc579da.json"
-    )
+    inputs, outputs, input_test, output_test = train_task_to_grids("2dc579da.json")
     input = inputs[2]
 
     components_by_colors = grid_to_components_by_colors(input)
@@ -117,9 +101,7 @@ def test_nested_nodes():
         cross, frozenset({1})
     )
 
-    rect_distribution = component_to_raw_syntax_tree_distribution(
-        rect, frozenset({3})
-    )
+    rect_distribution = component_to_raw_syntax_tree_distribution(rect, frozenset({3}))
     rect_with_hole_distribution = component_to_raw_syntax_tree_distribution(
         rect_with_hole, frozenset({1})
     )
@@ -146,9 +128,7 @@ def test_nested_nodes():
 
 
 def test_full_symbolisation():
-    inputs, outputs, input_test, output_test = train_task_to_grids(
-        "2dc579da.json"
-    )
+    inputs, outputs, input_test, output_test = train_task_to_grids("2dc579da.json")
     input = inputs[2]
 
     components_by_colors = grid_to_components_by_colors(input)
@@ -158,12 +138,8 @@ def test_full_symbolisation():
     rect_with_hole = next(iter(components_by_colors[frozenset({1, 3})]))
 
     def check_symbolization_identity(component: Coords, colors: Colors):
-        distribution, symbol_table = component_to_distribution(
-            component, colors
-        )
-        raw_distribution = component_to_raw_syntax_tree_distribution(
-            component, colors
-        )
+        distribution, symbol_table = component_to_distribution(component, colors)
+        raw_distribution = component_to_raw_syntax_tree_distribution(component, colors)
 
         need_to_be_raw = unsymbolize_all(distribution, symbol_table)
 
@@ -181,9 +157,7 @@ if __name__ == "__main__":
     test_nested_nodes()
     test_full_symbolisation()
     # display_training_task("2dc579da.json")
-    inputs, outputs, input_test, output_test = train_task_to_grids(
-        "2dc579da.json"
-    )
+    inputs, outputs, input_test, output_test = train_task_to_grids("2dc579da.json")
     input = inputs[2]
 
     components_by_colors = grid_to_components_by_colors(input)
@@ -221,9 +195,7 @@ if __name__ == "__main__":
 
     # print("\nRect with a hole distribution")
     # display_distribution(rect_with_hole, frozenset({1}))
-    grid_object_dag = components_by_colors_to_grid_object_dag(
-        components_by_colors
-    )
+    grid_object_dag = components_by_colors_to_grid_object_dag(components_by_colors)
     syntax_by_object, sorted_grid_object = dag_to_syntax_trees(grid_object_dag)
 
     display_objects_syntax_trees(

@@ -63,9 +63,7 @@ def grid_to_syntax_trees(
     components_by_colors = grid_to_components_by_colors(grid)
 
     # Step 2: Convert components to inclusion DAG
-    grid_object_dag = components_by_colors_to_grid_object_dag(
-        components_by_colors
-    )
+    grid_object_dag = components_by_colors_to_grid_object_dag(components_by_colors)
 
     # Step 3: Convert DAG to syntax trees
     syntax_trees, sorted_grid_objects = dag_to_syntax_trees(grid_object_dag)

@@ -44,10 +44,12 @@ class TestCoordsToConnectedComponents:
     def test_two_separate_lines(self):
         coords = {(0, 0), (0, 1), (0, 2), (2, 0), (2, 1), (2, 2)}
         result = coords_to_connected_components(coords)
-        expected = frozenset([
-            frozenset({(0, 0), (0, 1), (0, 2)}),
-            frozenset({(2, 0), (2, 1), (2, 2)}),
-        ])
+        expected = frozenset(
+            [
+                frozenset({(0, 0), (0, 1), (0, 2)}),
+                frozenset({(2, 0), (2, 1), (2, 2)}),
+            ]
+        )
         assert result == expected
 
     def test_diagonal_connectivity(self):
@@ -124,15 +126,20 @@ class TestGridToComponentsByColors:
     def test_2x2_three_colors(self):
         grid = [[0, 1], [2, 0]]
         result = grid_to_components_by_colors(grid)
-        expected = defaultdict(set, {
-            frozenset({0}): {frozenset({Coord(0, 0), Coord(1, 1)})},
-            frozenset({1}): {frozenset({Coord(1, 0)})},
-            frozenset({2}): {frozenset({Coord(0, 1)})},
-            frozenset({0, 1}): {frozenset({Coord(0, 0), Coord(1, 0), Coord(1, 1)})},
-            frozenset({0, 2}): {frozenset({Coord(0, 0), Coord(0, 1), Coord(1, 1)})},
-            frozenset({1, 2}): {frozenset({Coord(1, 0), Coord(0, 1)})},
-            frozenset({0, 1, 2}): {frozenset({Coord(0, 0), Coord(1, 0), Coord(0, 1), Coord(1, 1)})},
-        })
+        expected = defaultdict(
+            set,
+            {
+                frozenset({0}): {frozenset({Coord(0, 0), Coord(1, 1)})},
+                frozenset({1}): {frozenset({Coord(1, 0)})},
+                frozenset({2}): {frozenset({Coord(0, 1)})},
+                frozenset({0, 1}): {frozenset({Coord(0, 0), Coord(1, 0), Coord(1, 1)})},
+                frozenset({0, 2}): {frozenset({Coord(0, 0), Coord(0, 1), Coord(1, 1)})},
+                frozenset({1, 2}): {frozenset({Coord(1, 0), Coord(0, 1)})},
+                frozenset({0, 1, 2}): {
+                    frozenset({Coord(0, 0), Coord(1, 0), Coord(0, 1), Coord(1, 1)})
+                },
+            },
+        )
 
         assert set(result.keys()) == set(expected.keys())
         for key in expected:
@@ -150,11 +157,16 @@ class TestGridToComponentsByColors:
     def test_2x2_diagonal_pattern(self):
         grid = [[0, 1], [1, 0]]
         result = grid_to_components_by_colors(grid)
-        expected = defaultdict(set, {
-            frozenset({0}): {frozenset({Coord(0, 0), Coord(1, 1)})},
-            frozenset({1}): {frozenset({Coord(0, 1), Coord(1, 0)})},
-            frozenset({0, 1}): {frozenset({Coord(0, 0), Coord(0, 1), Coord(1, 0), Coord(1, 1)})},
-        })
+        expected = defaultdict(
+            set,
+            {
+                frozenset({0}): {frozenset({Coord(0, 0), Coord(1, 1)})},
+                frozenset({1}): {frozenset({Coord(0, 1), Coord(1, 0)})},
+                frozenset({0, 1}): {
+                    frozenset({Coord(0, 0), Coord(0, 1), Coord(1, 0), Coord(1, 1)})
+                },
+            },
+        )
 
         assert set(result.keys()) == set(expected.keys())
         for key in expected:
@@ -163,9 +175,14 @@ class TestGridToComponentsByColors:
     def test_2x2_single_color(self):
         grid = [[0, 0], [0, 0]]
         result = grid_to_components_by_colors(grid)
-        expected = defaultdict(set, {
-            frozenset({0}): {frozenset({Coord(0, 0), Coord(0, 1), Coord(1, 0), Coord(1, 1)})}
-        })
+        expected = defaultdict(
+            set,
+            {
+                frozenset({0}): {
+                    frozenset({Coord(0, 0), Coord(0, 1), Coord(1, 0), Coord(1, 1)})
+                }
+            },
+        )
 
         assert set(result.keys()) == set(expected.keys())
         for key in expected:
@@ -184,7 +201,9 @@ class TestComponentsByColorsToGridObjectDag:
             frozenset({0, 1}): frozenset({frozenset({Coord(0, 0), Coord(1, 1)})}),
             frozenset({0, 2}): frozenset({frozenset({Coord(0, 0), Coord(2, 2)})}),
             frozenset({1, 2}): frozenset({frozenset({Coord(1, 1), Coord(2, 2)})}),
-            frozenset({0, 1, 2}): frozenset({frozenset({Coord(0, 0), Coord(1, 1), Coord(2, 2)})}),
+            frozenset({0, 1, 2}): frozenset(
+                {frozenset({Coord(0, 0), Coord(1, 1), Coord(2, 2)})}
+            ),
         }
 
         result = components_by_colors_to_grid_object_dag(components_by_colors)
@@ -196,7 +215,9 @@ class TestComponentsByColorsToGridObjectDag:
         GO01 = GridObject(frozenset({0, 1}), frozenset({Coord(0, 0), Coord(1, 1)}))
         GO02 = GridObject(frozenset({0, 2}), frozenset({Coord(0, 0), Coord(2, 2)}))
         GO12 = GridObject(frozenset({1, 2}), frozenset({Coord(1, 1), Coord(2, 2)}))
-        GO012 = GridObject(frozenset({0, 1, 2}), frozenset({Coord(0, 0), Coord(1, 1), Coord(2, 2)}))
+        GO012 = GridObject(
+            frozenset({0, 1, 2}), frozenset({Coord(0, 0), Coord(1, 1), Coord(2, 2)})
+        )
 
         expected = {
             GO012: {GO01, GO02, GO12},

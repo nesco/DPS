@@ -190,7 +190,9 @@ def find_repeating_pattern(
     def get_segment(start: int, end: int) -> KNode[T]:
         if (start, end) not in segment_cache:
             seg = nodes[start:end]
-            segment_cache[(start, end)] = iterable_to_product(seg) if len(seg) > 1 else seg[0]
+            segment_cache[(start, end)] = (
+                iterable_to_product(seg) if len(seg) > 1 else seg[0]
+            )
         return segment_cache[(start, end)]
 
     def get_reversed(node: KNode[T]) -> KNode[T]:
@@ -206,7 +208,11 @@ def find_repeating_pattern(
             pos = offset + pattern_len
 
             while pos + pattern_len <= len(nodes):
-                expected = get_reversed(pattern) if (alternating and count % 2 == 1) else pattern
+                expected = (
+                    get_reversed(pattern)
+                    if (alternating and count % 2 == 1)
+                    else pattern
+                )
                 actual = get_segment(pos, pos + pattern_len)
                 if actual != expected:
                     break
@@ -217,7 +223,9 @@ def find_repeating_pattern(
                 span = nodes[offset : offset + pattern_len * count]
                 original_bits = sum(n.bit_length() for n in span)
                 signed_count = -count if alternating else count
-                compressed_bits = RepeatNode(pattern, CountValue(signed_count)).bit_length()
+                compressed_bits = RepeatNode(
+                    pattern, CountValue(signed_count)
+                ).bit_length()
                 bit_gain = original_bits - compressed_bits
 
                 if bit_gain > best[2]:
@@ -254,11 +262,17 @@ def get_iterator(knodes: Collection[KNode[T]]) -> frozenset[KNode[T]]:
         return nodes
 
     is_shiftable = (
-        all(isinstance(n, PrimitiveNode) and isinstance(n.value, MoveValue) for n in nodes)
+        all(
+            isinstance(n, PrimitiveNode) and isinstance(n.value, MoveValue)
+            for n in nodes
+        )
         or all(isinstance(n, RepeatNode) for n in nodes)
         or all(
             isinstance(n, ProductNode)
-            and all(isinstance(p, PrimitiveNode) and isinstance(p.value, MoveValue) for p in n.children)
+            and all(
+                isinstance(p, PrimitiveNode) and isinstance(p.value, MoveValue)
+                for p in n.children
+            )
             for n in nodes
         )
     )
@@ -403,7 +417,9 @@ def factorize_tuple(node: KNode[T]) -> KNode[T]:
         pattern, count, _ = find_repeating_pattern(children_list, i)
         if pattern is not None and abs(count) > 1:
             result.append(RepeatNode(pattern, CountValue(count)))
-            pattern_len = len(pattern.children) if isinstance(pattern, ProductNode) else 1
+            pattern_len = (
+                len(pattern.children) if isinstance(pattern, ProductNode) else 1
+            )
             i += abs(count) * pattern_len
         else:
             result.append(children_list[i])
@@ -424,7 +440,10 @@ def expand_repeats(node: KNode[T]) -> KNode[T]:
             return ProductNode((knode.node,) * knode.count.value)
         return knode
 
-    return cast(SumNode[T] | ProductNode[T] | PrimitiveNode[T], postmap(node, expand, factorize=False))
+    return cast(
+        SumNode[T] | ProductNode[T] | PrimitiveNode[T],
+        postmap(node, expand, factorize=False),
+    )
 
 
 __all__ = [

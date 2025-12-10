@@ -110,7 +110,10 @@ class UnionNode:
     def bit_length(self) -> int:
         # Maybe remove the cost of the shadowed nodes
         len_nodes = sum(node.bit_length() for node in self.nodes)
-        return len_nodes + (0 if self.normalizing_node is None else self.normalizing_node.bit_length())
+        return len_nodes + (
+            0 if self.normalizing_node is None else self.normalizing_node.bit_length()
+        )
+
 
 @dataclass()
 class UnionNode1:
@@ -136,7 +139,7 @@ class UnionNode1:
     def __str__(self):
         msg = ""
         if self.background is not None:
-            msg += f"{self.background } < "
+            msg += f"{self.background} < "
         if self.codes is None:
             msg += "Ø"
         else:
@@ -716,6 +719,7 @@ def factorize_moves(node: Node):
 # Symbol n°8:  s_13( s_2( s_0(6)))
 # Could be symbolized in Var
 
+
 # TO Refactor
 @handle_elements
 def unsymbolize(ast_ls: list[Node], refs: SymbolTable):
@@ -765,6 +769,7 @@ def unsymbolize(ast_ls: list[Node], refs: SymbolTable):
 
     # Resolved each ASTs using the resolved copy
     return [ast_map(resolve, ast) for ast in ast_ls]
+
 
 def construct_union(
     code: Optional[Node],

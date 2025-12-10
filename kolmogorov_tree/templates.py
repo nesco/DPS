@@ -116,61 +116,79 @@ def extract_template(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
                 abstractions.append((SumNode(nodes3), tuple(top_children)))
 
         case RepeatNode(node, count):
-            abstractions.extend([
-                (RepeatNode(VariableNode(VariableValue(0)), count), (node,)),
-                (RepeatNode(node, VariableNode(VariableValue(0))), (count,)),
-            ])
+            abstractions.extend(
+                [
+                    (RepeatNode(VariableNode(VariableValue(0)), count), (node,)),
+                    (RepeatNode(node, VariableNode(VariableValue(0))), (count,)),
+                ]
+            )
 
         case NestedNode(index, node, count):
-            abstractions.extend([
-                (NestedNode(index, VariableNode(VariableValue(0)), count), (node,)),
-                (NestedNode(index, node, VariableNode(VariableValue(0))), (count,)),
-                (
-                    NestedNode(
-                        index,
-                        VariableNode(VariableValue(0)),
-                        VariableNode(VariableValue(1)),
+            abstractions.extend(
+                [
+                    (NestedNode(index, VariableNode(VariableValue(0)), count), (node,)),
+                    (NestedNode(index, node, VariableNode(VariableValue(0))), (count,)),
+                    (
+                        NestedNode(
+                            index,
+                            VariableNode(VariableValue(0)),
+                            VariableNode(VariableValue(1)),
+                        ),
+                        (node, count),
                     ),
-                    (node, count),
-                ),
-            ])
+                ]
+            )
 
         case RootNode(node, position, colors):
-            abstractions.extend([
-                (RootNode(VariableNode(VariableValue(0)), position, colors), (node,)),
-                (RootNode(node, VariableNode(VariableValue(0)), colors), (position,)),
-                (
-                    RootNode(
-                        VariableNode(VariableValue(0)),
-                        position,
-                        VariableNode(VariableValue(1)),
+            abstractions.extend(
+                [
+                    (
+                        RootNode(VariableNode(VariableValue(0)), position, colors),
+                        (node,),
                     ),
-                    (node, colors),
-                ),
-            ])
+                    (
+                        RootNode(node, VariableNode(VariableValue(0)), colors),
+                        (position,),
+                    ),
+                    (
+                        RootNode(
+                            VariableNode(VariableValue(0)),
+                            position,
+                            VariableNode(VariableValue(1)),
+                        ),
+                        (node, colors),
+                    ),
+                ]
+            )
             if len(colors.value) == 1:  # type: ignore
-                abstractions.append((
-                    RootNode(
-                        node,
-                        VariableNode(VariableValue(0)),
-                        VariableNode(VariableValue(1)),
-                    ),
-                    (position, colors),
-                ))
+                abstractions.append(
+                    (
+                        RootNode(
+                            node,
+                            VariableNode(VariableValue(0)),
+                            VariableNode(VariableValue(1)),
+                        ),
+                        (position, colors),
+                    )
+                )
 
         case RectNode(height, width):
             if height == width:
-                abstractions.append((
-                    RectNode(
-                        VariableNode(VariableValue(0)),
-                        VariableNode(VariableValue(0)),
-                    ),
-                    (height,),
-                ))
-            abstractions.extend([
-                (RectNode(VariableNode(VariableValue(0)), width), (height,)),
-                (RectNode(height, VariableNode(VariableValue(0))), (width,)),
-            ])
+                abstractions.append(
+                    (
+                        RectNode(
+                            VariableNode(VariableValue(0)),
+                            VariableNode(VariableValue(0)),
+                        ),
+                        (height,),
+                    )
+                )
+            abstractions.extend(
+                [
+                    (RectNode(VariableNode(VariableValue(0)), width), (height,)),
+                    (RectNode(height, VariableNode(VariableValue(0))), (width,)),
+                ]
+            )
 
         case _:
             pass

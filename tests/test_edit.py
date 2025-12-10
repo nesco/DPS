@@ -130,7 +130,9 @@ def test_recursive_edit_distance():
     # Test Case 2: One Leaf Value Changed
     distance, transformation = recursive_edit_distance(root1, root3)
     # MDL: substitute costs target.bit_length() = 1
-    assert distance == 1, "Distance should be 1 (substitute leaf2.value with leaf3.value)"
+    assert distance == 1, (
+        "Distance should be 1 (substitute leaf2.value with leaf3.value)"
+    )
     assert any(
         isinstance(operation, Substitute)
         for operation in breadth_first_preorder_bitlengthaware(transformation)
@@ -148,7 +150,9 @@ def test_recursive_edit_distance():
     distance, transformation = recursive_edit_distance(root1, root5)
     # MDL: substitute value costs 1, delete 2 children costs log2(2)=1 each = 2
     # Total: 1 + 2 = 3
-    assert distance == 3, "Distance should be 3 (substitute value + delete two children)"
+    assert distance == 3, (
+        "Distance should be 3 (substitute value + delete two children)"
+    )
     assert any(
         isinstance(op, Substitute)
         for op in breadth_first_preorder_bitlengthaware(transformation)
@@ -216,12 +220,8 @@ def test_apply_transformations():
     assert result_2 == target_2, f"Test 2 failed: {result_2} != {target_2}"
 
     # Test Case 3: Dataclass with Tuple Field
-    source_3 = TreeNode(
-        MockValue(1), (TreeNode(MockValue(2)), TreeNode(MockValue(3)))
-    )
-    target_3 = TreeNode(
-        MockValue(1), (TreeNode(MockValue(2)), TreeNode(MockValue(4)))
-    )
+    source_3 = TreeNode(MockValue(1), (TreeNode(MockValue(2)), TreeNode(MockValue(3))))
+    target_3 = TreeNode(MockValue(1), (TreeNode(MockValue(2)), TreeNode(MockValue(4))))
     _, transform_3 = recursive_edit_distance(source_3, target_3)
     result_3 = apply_transformation(source_3, transform_3)
     assert result_3 == target_3, f"Test 3 failed: {result_3} != {target_3}"

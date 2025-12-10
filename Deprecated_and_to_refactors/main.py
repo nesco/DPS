@@ -139,11 +139,7 @@ def cross_correlation(mask1, mask2):
                     sum_prod += large[x][y] * kernel[k][l]
 
             sum_kernel = sum(
-                [
-                    kernel[i][j]
-                    for i in range(kernel_rows)
-                    for j in range(kernel_cols)
-                ]
+                [kernel[i][j] for i in range(kernel_rows) for j in range(kernel_cols)]
             )
             # sum_large = sum([large[i][j] for i in range(large_rows) for j in range(large_cols)])
             if sum_kernel == 0:
@@ -287,10 +283,7 @@ def get_sizes():
             masks = extract_masks_bicolors(input)
             component_ls = list_components(masks, proportions(input))
             l_propins.append(
-                [
-                    CoordsOperations.proportions(comp["mask"])
-                    for comp in component_ls
-                ]
+                [CoordsOperations.proportions(comp["mask"]) for comp in component_ls]
             )
 
         l_propouts = [proportions(output) for output in outputs]
@@ -419,9 +412,7 @@ def test_fuse_refs():
         print(f"Symbols of lattice n°{i}")
         for j, ref in enumerate(refs):
             print(f"Reference n°{j} == {ref}")
-            print(
-                f"Mapped to reference n°{mappings[i][j]} == {nrefs[mappings[i][j]]}"
-            )
+            print(f"Mapped to reference n°{mappings[i][j]} == {nrefs[mappings[i][j]]}")
             print(f"By the mapping {j} --> {mappings[i][j]}")
             print("\n")
             if nrefs[mappings[i][j]] != ref:
@@ -452,9 +443,7 @@ def test_factor_by_refs():
                 print(
                     f"Original factorized code: {lattices[i].codes[j]}, of lenght: {len(lattices[i].codes[j])}"
                 )
-                print(
-                    f"Independently factorized code: {code}, of lenght: {len(code)}"
-                )
+                print(f"Independently factorized code: {code}, of lenght: {len(code)}")
                 errors += 1
 
         print("\n")
@@ -504,9 +493,7 @@ def test_update_asts():
                 print("Issue during single lattice symbolization")
                 print(f"For lattice n°{i}, code n°{j}: ")
                 print(f"{c} is unsymbolized to:")
-                print(
-                    f"{unsymbolize([c], l.refs)[0]} which is different from: "
-                )
+                print(f"{unsymbolize([c], l.refs)[0]} which is different from: ")
                 print(f"{codes[i][j]}")
 
     refs_ls = [l.refs for l in lattices]
@@ -514,9 +501,7 @@ def test_update_asts():
 
     for i, refs in enumerate(refs_ls):
         for j, ref in enumerate(refs):
-            if unsymbolize([ref], refs) != unsymbolize(
-                [nrefs[mappings[i][j]]], nrefs
-            ):
+            if unsymbolize([ref], refs) != unsymbolize([nrefs[mappings[i][j]]], nrefs):
                 print("Issue during fusing: ")
                 print(f"For lattice n°{i}, reference n°{j} is")
                 print(f"{ref} which was mapped to")

@@ -365,9 +365,7 @@ def unsymbolize_all(
     Assumes no cycles in symbol table (symbols only reference later symbols).
     """
     symbol_table = tuple(symbol_table)
-    resolved_table = tuple(
-        resolve_symbols(symb, symbol_table) for symb in symbol_table
-    )
+    resolved_table = tuple(resolve_symbols(symb, symbol_table) for symb in symbol_table)
     return tuple(unsymbolize(tree, resolved_table) for tree in trees)
 
 

@@ -57,13 +57,15 @@ logger = logging.getLogger(__name__)
 
 class DistanceMetric(Enum):
     """Available distance metrics for clique finding."""
-    EDIT = "edit"           # Raw edit distance
-    NID = "nid"             # Normalized Information Distance
+
+    EDIT = "edit"  # Raw edit distance
+    NID = "nid"  # Normalized Information Distance
     STRUCTURAL = "structural"  # Structural distance (ignores position/color)
 
 
 T = TypeVar("T")
 type IndexedElement[T] = tuple[int, T]
+
 
 # Ideas: not only the minimum but the two-minimuma so it blocks less?
 def get_pairings_old(
@@ -127,19 +129,18 @@ def get_pairings_old(
                     if (j, b) in taken_elements:
                         continue
                     if a in min_to_2[b] and b in min_to_1[a]:
-                        print(
-                            f" pairing ({i},{a!r}) ↔ ({j},{b!r}) "
-                        )
+                        print(f" pairing ({i},{a!r}) ↔ ({j},{b!r}) ")
                         pairings[i, j].append((a, b))
 
     return pairings
+
 
 def get_pairings(
     sets: list[Set[T]],
     distance_tensor: dict[tuple[int, int, T, T], float],
     taken_elements: Set[tuple[int, T]] = set(),
-    *,                                 # ← keyword-only from here on
-    k: int = 1,              # k-reciprocal nearest neighbours
+    *,  # ← keyword-only from here on
+    k: int = 1,  # k-reciprocal nearest neighbours
 ) -> dict[tuple[int, int], list[tuple[T, T]]]:
     """
     Return, for every unordered pair of distinct sets (i,j)  with i < j,
@@ -156,8 +157,9 @@ def get_pairings(
     # -----------------------------------------------------------------
     # helper: k-nearest (with tie inclusion) from src_set to dst_set
     # -----------------------------------------------------------------
-    def knearest(src_id: int, dst_id: int,
-                 src_set: Set[T], dst_set: Set[T]) -> dict[T, Set[T]]:
+    def knearest(
+        src_id: int, dst_id: int, src_set: Set[T], dst_set: Set[T]
+    ) -> dict[T, Set[T]]:
         res: dict[T, Set[T]] = {}
         for a in src_set:
             if (src_id, a) in taken_elements:
@@ -174,9 +176,9 @@ def get_pairings(
             dlist.sort(key=lambda x: x[0])  # ascending by distance
 
             if k <= 0 or k >= len(dlist):
-                cutoff = dlist[-1][0]        # keep them all
+                cutoff = dlist[-1][0]  # keep them all
             else:
-                cutoff = dlist[k - 1][0]      # distance of the k-th element
+                cutoff = dlist[k - 1][0]  # distance of the k-th element
 
             res[a] = {b for dist, b in dlist if dist <= cutoff}
         return res
@@ -203,6 +205,7 @@ def get_pairings(
             pairings[(i, j)] = pij
     return pairings
 
+
 def find_potential_cliques(
     sets, distance_tensor, taken_elements
 ) -> list[set[IndexedElement[T]]]:
@@ -216,9 +219,7 @@ def find_potential_cliques(
         # At step i all the possible cliques of elements from set 0 to set i are formed
         for clique in cliques:
             valid_elements = set(
-                element
-                for element in sets[i]
-                if (i, element) not in taken_elements
+                element for element in sets[i] if (i, element) not in taken_elements
             )
             for j in range(i):
                 if not valid_elements:  # loop is doomed
@@ -286,9 +287,7 @@ def find_cliques(
             break
 
         # Pick the clique of minimal total distance
-        clique = min(
-            potential_cliques, key=lambda c: total_distance(c, distance)
-        )
+        clique = min(potential_cliques, key=lambda c: total_distance(c, distance))
         cliques.append(clique)
 
         # Mark its members as taken
@@ -298,6 +297,7 @@ def find_cliques(
         logger.debug(f"Iteration {iteration}: found clique with {len(clique)} elements")
 
     return cliques
+
 
 def find_cliques1(
     sets: list[set[T]], distance: Callable[[T | None, T | None], float]
@@ -331,14 +331,13 @@ def find_cliques1(
         # -------- 1️⃣  original criterion: minimal total distance
         min_dist = min(total_distance(c, distance) for c in potential_cliques)
         best_by_dist = [
-            c for c in potential_cliques
-            if total_distance(c, distance) == min_dist
+            c for c in potential_cliques if total_distance(c, distance) == min_dist
         ]
         best_by_dist = potential_cliques
 
         # -------- 2️⃣  tie-breaker: edge-rarity (variant #3)
         if len(best_by_dist) == 1:
-                clique = best_by_dist[0]
+            clique = best_by_dist[0]
         else:
             pair_freq = Counter()
             for C in best_by_dist:
@@ -348,12 +347,10 @@ def find_cliques1(
             def rarity_score(C, *, eps=1e-9):
                 # smaller is better
                 base = sum(1.0 / pair_freq[(u, v)] for u, v in combinations(C, 2))
-                return base + random.random() * eps   # tiny ε to break exact ties
+                return base + random.random() * eps  # tiny ε to break exact ties
 
             print(f"\nsorted cliques = {sorted(best_by_dist, key=rarity_score)}\n")
             clique = min(best_by_dist, key=rarity_score)
-
-
 
         cliques.append(clique)
 
@@ -362,6 +359,7 @@ def find_cliques1(
         print(f"taken_elements now = {taken_elements}")
         print(f"clique now = {clique}")
     return cliques
+
 
 def total_distance(
     elements: Set[IndexedElement[T]], distance: Callable[[T, T], float]
@@ -397,8 +395,7 @@ def top_level_only_problem(task="2dc579da.json"):
 
     objects_and_syntax_trees = [grid_to_syntax_trees(grid) for grid in grids]
     final_st = tuple(
-        st_by_go[go_sorted[-1]]
-        for st_by_go, go_sorted in objects_and_syntax_trees
+        st_by_go[go_sorted[-1]] for st_by_go, go_sorted in objects_and_syntax_trees
     )
     symbolized, symbol_table = full_symbolization(final_st)
 
@@ -497,6 +494,7 @@ def create_distance_function(
     Returns:
         Distance function that takes two KNodes and returns a float.
     """
+
     def distance_f(a: KNode[MoveValue] | None, b: KNode[MoveValue] | None) -> float:
         # Always unsymbolize first for consistent comparison
         node_a = unsymbolize(a, symbol_table)
@@ -569,7 +567,11 @@ def solve_task(
         abstracted_sts.append(grid_sts)
 
         if verbose:
-            grid_type = "input" if i < len(inputs) else ("output" if i < 2 * len(inputs) else "test")
+            grid_type = (
+                "input"
+                if i < len(inputs)
+                else ("output" if i < 2 * len(inputs) else "test")
+            )
             logger.info(f"Grid {i} ({grid_type}): {len(grid_sts)} objects")
             for st in grid_sts:
                 logger.debug(f"  {st}")
@@ -582,7 +584,7 @@ def solve_task(
     # Find cliques in input grids only (first N grids where N = len(inputs))
     logger.info(f"Finding cliques across {len(inputs)} input grids...")
     abstracted_sets = [set(syntax_trees) for syntax_trees in abstracted_sts]
-    cliques = find_cliques(abstracted_sets[:len(inputs)], distance_f)
+    cliques = find_cliques(abstracted_sets[: len(inputs)], distance_f)
 
     # Log and display cliques
     logger.info(f"Found {len(cliques)} clique(s)")
@@ -628,11 +630,7 @@ def test_distance_symmetrical():
     # Regression issue
     node_6 = SumNode(
         children=frozenset(
-            [
-                RepeatNode(
-                    node=PrimitiveNode(value=MoveValue(0)), count=CountValue(8)
-                )
-            ]
+            [RepeatNode(node=PrimitiveNode(value=MoveValue(0)), count=CountValue(8))]
         )
     )
 
@@ -654,9 +652,9 @@ def test_distance_symmetrical():
     )
 
     node_34 = RootNode(
-        node = NoneValue(None),
-        position = CoordValue(Coord(1, 2)),
-        colors = PaletteValue(frozenset({8})),
+        node=NoneValue(None),
+        position=CoordValue(Coord(1, 2)),
+        colors=PaletteValue(frozenset({8})),
     )
 
     print(node_22, node_34)
@@ -667,26 +665,31 @@ def test_distance_symmetrical():
 
     # Test 2
     node_19 = RootNode(
-        node = SumNode(
+        node=SumNode(
             children=frozenset(
                 [
                     RepeatNode(
-                        node=RepeatNode(node=PrimitiveNode(value=MoveValue(0)), count=CountValue(3)), count=CountValue(4)
+                        node=RepeatNode(
+                            node=PrimitiveNode(value=MoveValue(0)), count=CountValue(3)
+                        ),
+                        count=CountValue(4),
                     )
                 ]
             )
         ),
-        position = CoordValue(Coord(3, 3)),
-        colors = PaletteValue(frozenset({2})),
+        position=CoordValue(Coord(3, 3)),
+        colors=PaletteValue(frozenset({2})),
     )
 
     node_9 = RootNode(
-        node = ProductNode(children=(
-            PrimitiveNode(value=MoveValue(0)),
-            PrimitiveNode(value=MoveValue(6)),
-        )),
-        position = CoordValue(Coord(1, 3)),
-        colors = PaletteValue(frozenset({8})),
+        node=ProductNode(
+            children=(
+                PrimitiveNode(value=MoveValue(0)),
+                PrimitiveNode(value=MoveValue(6)),
+            )
+        ),
+        position=CoordValue(Coord(1, 3)),
+        colors=PaletteValue(frozenset({8})),
     )
 
     print(node_19, node_9)
@@ -694,6 +697,7 @@ def test_distance_symmetrical():
     d_2, ops_2 = extended_edit_distance(node_9, node_19, tuple())
     print(f"d_1: {d_1}, ops_1: {ops_1}")
     print(f"d_2: {d_2}, ops_2: {ops_2}")
+
 
 if __name__ == "__main__":
     import argparse
@@ -707,7 +711,9 @@ if __name__ == "__main__":
         help="Distance metric to use",
     )
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--no-visuals", action="store_true", help="Disable visual output")
+    parser.add_argument(
+        "--no-visuals", action="store_true", help="Disable visual output"
+    )
 
     args = parser.parse_args()
 

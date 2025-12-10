@@ -221,7 +221,10 @@ def extract_nested_patterns(
             result = nested_collection_to_nested_node(node)
             if result is not None:
                 nested_node, template = result
-                if nested_node.bit_length() + template.bit_length() <= node.bit_length():
+                if (
+                    nested_node.bit_length() + template.bit_length()
+                    <= node.bit_length()
+                ):
                     if template in symbol_table:
                         index = symbol_table.index(template)
                     else:

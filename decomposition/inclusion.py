@@ -1,11 +1,12 @@
 """
 Inclusion DAG (Hasse diagram) construction.
 
-Builds a DAG representing the inclusion relation between objects.
-Each edge represents direct inclusion (no intermediate objects).
+A Hasse diagram is the minimal DAG representing a partial order.
+For set inclusion: an edge A → B means "B is directly contained in A"
+(B ⊂ A with no C such that B ⊂ C ⊂ A).
 
-This is AIT-general - it works with any objects that have a subset relation,
-regardless of what the elements are or how connectivity was defined.
+This is AIT-general: works with any objects having a subset relation,
+regardless of element type or how connectivity was defined.
 """
 
 from collections.abc import Mapping, Set
@@ -13,62 +14,74 @@ from typing import Callable, TypeVar
 
 from utils.dag_functionals import topological_sort
 
-E = TypeVar("E")  # Element type
-O = TypeVar("O")  # Object type (typically has elements + attributes)
+Element = TypeVar("Element")
+Object = TypeVar("Object")
 
 
 def build_hasse_diagram(
-    objects: tuple[O, ...],
-    get_elements: Callable[[O], frozenset[E]],
-) -> dict[O, set[O]]:
+    objects: tuple[Object, ...],
+    get_elements: Callable[[Object], frozenset[Element]],
+) -> dict[Object, set[Object]]:
     """
-    Build the inclusion DAG (Hasse diagram) from objects.
+    Build the Hasse diagram for subset inclusion among objects.
 
-    Constructs a DAG where:
-    - Nodes are objects
-    - Edges represent direct inclusion (A -> B means B is directly contained in A)
+    For each object, finds its "direct children": objects that are
+    immediately contained with no intermediate objects between them.
+
+    Algorithm (O(n² × k) where n=objects, k=avg elements):
+        1. Sort objects by size (largest first)
+        2. For each object, scan smaller objects for direct children
+        3. A child is "direct" if no other child contains it
 
     Args:
-        objects: Tuple of objects to organize.
-        get_elements: Function to extract the element set from an object.
+        objects: Objects to organize into a hierarchy.
+        get_elements: Extracts the element set defining inclusion.
+                     Object A contains B iff get_elements(B) ⊆ get_elements(A).
 
     Returns:
-        DAG mapping each object to its direct children (included objects).
+        DAG where graph[parent] = {direct children of parent}.
     """
-    # Build subsets and supersets dictionaries
-    subsets = {
-        a: frozenset(b for b in objects if get_elements(b) <= get_elements(a))
-        for a in objects
-    }
-    supersets = {
-        b: frozenset(c for c in objects if get_elements(b) <= get_elements(c))
-        for b in objects
+    if not objects:
+        return {}
+
+    elements_of: dict[Object, frozenset[Element]] = {
+        obj: get_elements(obj) for obj in objects
     }
 
-    # Initialize the DAG
-    graph: dict[O, set[O]] = {a: set() for a in objects}
+    largest_first = sorted(objects, key=lambda obj: len(elements_of[obj]), reverse=True)
 
-    # For each object a, find direct children (proper subsets with no intermediate)
-    for a in objects:
-        for b in subsets[a]:
-            if b != a:  # Ensure b is a proper subset of a
-                intersection = subsets[a] & supersets[b]
-                if len(intersection) == 2:  # Only a and b, no intermediate c
-                    graph[a].add(b)
+    graph: dict[Object, set[Object]] = {obj: set() for obj in objects}
+
+    for i, parent in enumerate(largest_first):
+        parent_elements = elements_of[parent]
+        direct_children: list[Object] = []
+
+        # Only smaller objects (later in sorted order) can be children
+        for candidate in largest_first[i + 1 :]:
+            candidate_elements = elements_of[candidate]
+
+            is_proper_subset = candidate_elements < parent_elements
+            if not is_proper_subset:
+                continue
+
+            # Direct child = not contained in any already-found child
+            is_covered_by_existing_child = any(
+                candidate_elements < elements_of[child] for child in direct_children
+            )
+
+            if not is_covered_by_existing_child:
+                direct_children.append(candidate)
+
+        graph[parent] = set(direct_children)
 
     return graph
 
 
-def sort_by_inclusion(dag: Mapping[O, Set[O]]) -> tuple[O, ...]:
+def sort_by_inclusion(dag: Mapping[Object, Set[Object]]) -> tuple[Object, ...]:
     """
-    Topologically sort objects by inclusion.
+    Topologically sort objects so children come before parents.
 
-    Returns objects sorted such that included objects come before their containers.
-
-    Args:
-        dag: The inclusion DAG.
-
-    Returns:
-        Tuple of objects in topological order.
+    Useful for bottom-up processing: process contained objects
+    before the objects that contain them.
     """
     return topological_sort(dag)

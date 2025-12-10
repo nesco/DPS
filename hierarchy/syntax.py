@@ -118,10 +118,7 @@ def dag_to_syntax_trees_linear(
             flat_syntax_by_object[grid_object] = set({syntax_trees[i]})
         else:
             flat_syntax_by_object[grid_object] = set.union(
-                *[
-                    flat_syntax_by_object[dependency]
-                    for dependency in dependencies
-                ]
+                *[flat_syntax_by_object[dependency] for dependency in dependencies]
             )
 
     # Step 4: For each object, construct the final object
@@ -131,15 +128,12 @@ def dag_to_syntax_trees_linear(
     for i, grid_object in enumerate(sorted_grid_objects):
         unicolor_roots = list(flat_syntax_by_object[grid_object])
         bit_lengthes = [
-            symbolized[syntax_trees.index(root)].bit_length()
-            for root in unicolor_roots
+            symbolized[syntax_trees.index(root)].bit_length() for root in unicolor_roots
         ]
 
         syntax_tree = syntax_trees[i]
 
-        max_index, max_bit_length = max(
-            enumerate(bit_lengthes), key=lambda x: x[1]
-        )
+        max_index, max_bit_length = max(enumerate(bit_lengthes), key=lambda x: x[1])
 
         if max_bit_length > symbolized[i].bit_length():
             new_syntax_tree = RootNode(
@@ -217,9 +211,7 @@ def dag_to_syntax_trees(
         # If an object has no dependency, its syntax tree is its standard root
         if not dependencies:
             if not isinstance(current_root.colors, PaletteValue):
-                raise ValueError(
-                    f"Root has no palette value: {current_root.colors}"
-                )
+                raise ValueError(f"Root has no palette value: {current_root.colors}")
             if len(current_root.colors.value) != 1:
                 raise ValueError(
                     f"Object without dependency: {object} has a multicolored root: {current_root.colors.value}"
@@ -229,8 +221,7 @@ def dag_to_syntax_trees(
 
         # Retrieve all dependencies syntax trees
         dependencies_syntax_trees = set(
-            syntax_tree_by_grid_object[dependency]
-            for dependency in dependencies
+            syntax_tree_by_grid_object[dependency] for dependency in dependencies
         )
 
         # Unpack them (flatten SumNodes)
@@ -242,8 +233,7 @@ def dag_to_syntax_trees(
 
         # Keep only the background of product nodes before symbolizing
         to_symbolize = tuple(
-            st.children[0] if isinstance(st, ProductNode) else st
-            for st in syntax_trees
+            st.children[0] if isinstance(st, ProductNode) else st for st in syntax_trees
         )
 
         # Symbolize with the current object syntax tree
