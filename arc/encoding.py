@@ -14,6 +14,7 @@ Key functions:
 """
 
 from dataclasses import dataclass
+from functools import cache
 from typing import Generic, cast
 
 from freeman import (
@@ -96,6 +97,7 @@ def extract_moves_from_product(knode: KNode) -> str | None:
     return "".join(moves)
 
 
+@cache
 def apply_rectangle_detection(node: KNode) -> KNode:
     """
     Replace a ProductNode with RectNode if it encodes a rectangle.

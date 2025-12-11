@@ -10,6 +10,8 @@ Functions:
 
 from __future__ import annotations
 
+from functools import cache
+
 from kolmogorov_tree.nodes import KNode, SymbolNode, VariableNode
 from kolmogorov_tree.primitives import IndexValue, VariableValue
 from kolmogorov_tree.traversal import (
@@ -19,15 +21,17 @@ from kolmogorov_tree.traversal import (
 )
 
 
+@cache
 def is_symbolized(node: KNode) -> bool:
     """True if node or any descendant is a SymbolNode."""
     subnodes = breadth_first_preorder_knode(node)
     return any(isinstance(n, SymbolNode) for n in subnodes)
 
 
+@cache
 def is_abstraction(node: KNode) -> bool:
-    """True if node or any subvalue is a VariableNode."""
-    sub_values = get_subvalues(node)
+    """True if node or any descendant is a VariableNode/VariableValue."""
+    sub_values = depth_first_preorder_bitlengthaware(node)
     return any(
         isinstance(value, VariableNode) or isinstance(value, VariableValue)
         for value in sub_values

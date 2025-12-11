@@ -319,7 +319,7 @@ class PointsOperations:
     @staticmethod
     def print(points: Points, proportions: Proportions):
         width, height = proportions
-        grid = GridOperations.from_points(points, width, height)
+        grid = GridOperations.from_points(points, height, width)
         GridOperations.print(grid)
 
 

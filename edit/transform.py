@@ -72,8 +72,19 @@ def _apply_none_key(
         ):
             raise TransformationError(f"Inner operation on a non tree node: {source}")
         case Inner(_, operations):
+            # Sort operations: tuple-keyed Deletes must be applied in descending
+            # index order to preserve index validity as elements are removed
+            def sort_key(op: ExtendedOperation) -> tuple[int, str, int]:
+                if isinstance(op, Delete) and isinstance(op.key.value, tuple):
+                    field_name, index = op.key.value
+                    # Priority 0 for deletes, negative index for descending order
+                    return (0, field_name, -index)
+                # Other operations come after deletes
+                return (1, "", 0)
+
+            sorted_ops = sorted(operations, key=sort_key)
             result = source
-            for op in operations:
+            for op in sorted_ops:
                 result = apply_transformation(result, op)
             return result
         case _:
@@ -198,12 +209,18 @@ def _apply_tuple_key(
                 **{field_name: source_field + (value,)},
             )
         case Delete(_, value) if (
-            index == len(source_field) - 1 and source_field[-1] == value
+            index < len(source_field) and source_field[index] == value
         ):
-            return replace(source, **{field_name: source_field[:-1]})
+            # Delete element at the given index (operations must be applied
+            # in descending index order to preserve index validity)
+            return replace(
+                source,
+                **{field_name: source_field[:index] + source_field[index + 1 :]},
+            )
         case Delete(_, value):
             raise TransformationError(
-                f"Delete at index {index} invalid: expected last element {value}"
+                f"Delete at index {index} invalid: element mismatch "
+                f"(expected {value}, got {source_field[index] if index < len(source_field) else 'out of bounds'})"
             )
         case Prune(_, then):
             assert isinstance(source_field[index], BitLengthAware)

@@ -43,43 +43,47 @@ def compute_bit_length(obj: Any) -> int:
 
 def collect_links(
     bla: BitLengthAware,
-    hash_to_object: dict[int, BitLengthAware],
+    id_to_object: dict[int, BitLengthAware],
     parent_to_children: defaultdict[int, set[int]],
     parent_field: dict[int, KeyValue],
 ):
-    """Collect topological structure of a BitLengthAware tree via preorder traversal."""
-    bla_hash = hash(bla)
-    hash_to_object[bla_hash] = bla
+    """Collect topological structure of a BitLengthAware tree via preorder traversal.
+
+    Uses id() for node identification to preserve tree structure even when
+    subtrees are structurally equal (have the same hash).
+    """
+    bla_id = id(bla)
+    id_to_object[bla_id] = bla
 
     if is_dataclass(bla) and not isinstance(bla, Primitive):
         for field in fields(bla):
             attr = getattr(bla, field.name)
             if isinstance(attr, BitLengthAware):
-                field_hash = hash(attr)
-                parent_to_children[bla_hash].add(field_hash)
-                parent_field[field_hash] = KeyValue(field.name)
-                collect_links(attr, hash_to_object, parent_to_children, parent_field)
+                field_id = id(attr)
+                parent_to_children[bla_id].add(field_id)
+                parent_field[field_id] = KeyValue(field.name)
+                collect_links(attr, id_to_object, parent_to_children, parent_field)
             if isinstance(attr, tuple):
                 attr = ensure_all_instances(attr, BitLengthAware)
                 for i, elem in enumerate(attr):
-                    field_hash = hash(elem)
-                    parent_to_children[bla_hash].add(field_hash)
-                    parent_field[field_hash] = KeyValue((field.name, i))
+                    field_id = id(elem)
+                    parent_to_children[bla_id].add(field_id)
+                    parent_field[field_id] = KeyValue((field.name, i))
                     collect_links(
                         elem,
-                        hash_to_object,
+                        id_to_object,
                         parent_to_children,
                         parent_field,
                     )
             if isinstance(attr, frozenset):
                 attr = ensure_all_instances(attr, BitLengthAware)
                 for elem in attr:
-                    field_hash = hash(elem)
-                    parent_to_children[bla_hash].add(field_hash)
-                    parent_field[field_hash] = KeyValue(field.name)
+                    field_id = id(elem)
+                    parent_to_children[bla_id].add(field_id)
+                    parent_field[field_id] = KeyValue(field.name)
                     collect_links(
                         elem,
-                        hash_to_object,
+                        id_to_object,
                         parent_to_children,
                         parent_field,
                     )
@@ -203,15 +207,16 @@ def extended_edit_distance(
         # (MDL log2 cost applies to collection elements, not root deletion)
         return (compute_bit_length(source), Delete(KeyValue(None), source))
 
-    # Collect the object topological structure
-    hash_to_object: dict[int, BitLengthAware] = {}
+    # Collect the object topological structure using id() for node identification
+    # (hash() would collapse structurally equal subtrees at different positions)
+    id_to_object: dict[int, BitLengthAware] = {}
     parent_to_children_source: defaultdict[int, set[int]] = defaultdict(set)
     parent_to_children_target: defaultdict[int, set[int]] = defaultdict(set)
     parent_field: dict[int, KeyValue] = {}
     child_to_parent: dict[int, int] = {}
 
-    collect_links(source, hash_to_object, parent_to_children_source, parent_field)
-    collect_links(target, hash_to_object, parent_to_children_target, parent_field)
+    collect_links(source, id_to_object, parent_to_children_source, parent_field)
+    collect_links(target, id_to_object, parent_to_children_target, parent_field)
 
     # Build child -> parent mapping for ancestor chain construction
     for parent, children in parent_to_children_target.items():
@@ -224,13 +229,13 @@ def extended_edit_distance(
         current = node
         while current in child_to_parent and current != root:
             parent = child_to_parent[current]
-            ancestors.append(hash_to_object[parent])
+            ancestors.append(id_to_object[parent])
             current = parent
         return list(reversed(ancestors))
 
     def helper(source_node: int, target_node: int) -> tuple[int, ExtendedOperation]:
-        source_obj = hash_to_object[source_node]
-        target_obj = hash_to_object[target_node]
+        source_obj = id_to_object[source_node]
+        target_obj = id_to_object[target_node]
 
         min_distance, min_operation = recursive_edit_distance(
             source_obj, target_obj, symbol_table, True, metric
@@ -241,8 +246,8 @@ def extended_edit_distance(
             source_node, parent_to_children_source, parent_field
         )
 
-        for desc_hash, key_path in source_descendants:
-            desc_obj = hash_to_object[desc_hash]
+        for desc_id, key_path in source_descendants:
+            desc_obj = id_to_object[desc_id]
             desc_distance, desc_operation = recursive_edit_distance(
                 desc_obj, target_obj, symbol_table, True, metric
             )
@@ -271,8 +276,8 @@ def extended_edit_distance(
             target_node, parent_to_children_target, parent_field
         )
 
-        for desc_hash, key_path in target_descendants:
-            desc_obj = hash_to_object[desc_hash]
+        for desc_id, key_path in target_descendants:
+            desc_obj = id_to_object[desc_id]
             desc_distance, desc_operation = recursive_edit_distance(
                 source_obj, desc_obj, symbol_table, True, metric
             )
@@ -282,14 +287,14 @@ def extended_edit_distance(
             distance = graft_cost + desc_distance
 
             if distance < min_distance:
-                ancestors = get_ancestor_chain(desc_hash, target_node)
+                ancestors = get_ancestor_chain(desc_id, target_node)
                 all_ancestors = [target_obj] + ancestors
                 operation = build_nested_graft(key_path, all_ancestors, desc_operation)
                 min_distance, min_operation = distance, operation
 
         return min_distance, min_operation
 
-    return helper(hash(source), hash(target))
+    return helper(id(source), id(target))
 
 
 def recursive_edit_distance(
@@ -350,12 +355,14 @@ def recursive_edit_distance(
     def helper(
         a: BitLengthAware, b: BitLengthAware, key: KeyValue = KeyValue(None)
     ) -> tuple[int, Operation]:
+        # Use (hash, hash) as memoization key for performance,
+        # but use structural equality for correctness (hash collisions possible)
         ha = hash(a)
         hb = hash(b)
         if (ha, hb) in dp:
             return dp[(ha, hb)]
 
-        if ha == hb:
+        if a == b:  # Structural equality, not hash equality
             result = (0, Identity(key))
         elif (
             not (is_dataclass(a) and is_dataclass(b))

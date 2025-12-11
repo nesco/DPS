@@ -21,6 +21,7 @@ import math
 from abc import ABC
 from collections.abc import Collection
 from dataclasses import dataclass, field
+from functools import cache
 from typing import Any, Generic
 
 from kolmogorov_tree.types import BitLengthAware
@@ -49,6 +50,7 @@ class KNode(Generic[T], BitLengthAware, ABC):
             return False
         return self.__dict__ == other.__dict__
 
+    @cache
     def bit_length(self) -> int:
         return BitLength.NODE_TYPE
 
@@ -98,6 +100,7 @@ class PrimitiveNode(KNode[T]):
         """Unwraps the underlying raw value."""
         return self.value.value
 
+    @cache
     def bit_length(self) -> int:
         return super().bit_length() + self.value.bit_length()
 
@@ -111,6 +114,7 @@ class VariableNode(KNode[T]):
 
     index: VariableValue
 
+    @cache
     def bit_length(self) -> int:
         return super().bit_length() + self.index.bit_length()
 
@@ -124,6 +128,7 @@ class CollectionNode(KNode[T], ABC):
 
     children: Collection[KNode[T]]
 
+    @cache
     def bit_length(self) -> int:
         child_count = len(self.children)
         count_bits = math.ceil(math.log2(child_count + 1)) if child_count else 0
@@ -137,6 +142,7 @@ class ProductNode(CollectionNode[T]):
 
     children: tuple[KNode[T], ...] = field(default_factory=tuple)
 
+    @cache
     def bit_length(self) -> int:
         return super().bit_length()
 
@@ -150,6 +156,7 @@ class SumNode(CollectionNode[T]):
 
     children: frozenset[KNode[T]] = field(default_factory=frozenset)
 
+    @cache
     def bit_length(self) -> int:
         return super().bit_length()
 
@@ -164,6 +171,7 @@ class RepeatNode(KNode[T]):
     node: KNode[T]
     count: CountValue | VariableNode
 
+    @cache
     def bit_length(self) -> int:
         return super().bit_length() + self.node.bit_length() + self.count.bit_length()
 
@@ -187,6 +195,7 @@ class NestedNode(KNode[T]):
     node: KNode[T]
     count: CountValue | VariableNode
 
+    @cache
     def bit_length(self) -> int:
         return (
             super().bit_length()
@@ -210,6 +219,7 @@ class SymbolNode(KNode[T]):
     index: IndexValue
     parameters: tuple[BitLengthAware, ...] = field(default_factory=tuple)
 
+    @cache
     def bit_length(self) -> int:
         params_bits = sum(p.bit_length() for p in self.parameters)
         return super().bit_length() + self.index.bit_length() + params_bits
@@ -227,6 +237,7 @@ class RectNode(KNode):
     height: CountValue | VariableNode
     width: CountValue | VariableNode
 
+    @cache
     def bit_length(self) -> int:
         height_bits = (
             BitLength.COUNT
@@ -250,6 +261,7 @@ class RootNode(KNode[T]):
     position: CoordValue | VariableNode
     colors: PaletteValue | VariableNode
 
+    @cache
     def bit_length(self) -> int:
         return (
             super().bit_length()

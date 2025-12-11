@@ -1,14 +1,15 @@
 """
 Symbolization for Kolmogorov Tree.
 
+Uses DAG-based pattern discovery for efficient symbolization.
+
 Functions:
     Discovery:
         find_symbol_candidates(trees)   - Find frequent patterns ranked by bit savings
 
     Symbolization:
         symbolize_pattern(trees, symbols, pattern) - Replace pattern with SymbolNode
-        greedy_symbolization(trees, symbols)       - Iteratively symbolize best patterns
-        symbolize(trees, symbols)                  - Full multi-phase symbolization
+        symbolize(trees, symbols)                  - DAG-based greedy symbolization
         full_symbolization(trees)                  - Complete pipeline with nesting
 
     Symbol Table Operations:
@@ -26,6 +27,7 @@ Functions:
 
 import copy
 from collections import Counter, defaultdict
+from dataclasses import dataclass, field
 from typing import Sequence
 
 from utils.algorithms.dag import topological_sort
@@ -33,15 +35,12 @@ from utils.algorithms.dag import topological_sort
 from kolmogorov_tree.matching import abstract_node, node_to_symbolized_node
 from kolmogorov_tree.nodes import (
     KNode,
-    RootNode,
     SymbolNode,
-    VariableNode,
 )
 from kolmogorov_tree.predicates import (
     arity,
     contained_symbols,
     is_abstraction,
-    is_symbolized,
 )
 from kolmogorov_tree.primitives import BitLength, IndexValue, T
 from kolmogorov_tree.substitution import (
@@ -52,6 +51,293 @@ from kolmogorov_tree.substitution import (
 from kolmogorov_tree.templates import extract_template
 from kolmogorov_tree.transformations import postmap
 from kolmogorov_tree.traversal import breadth_first_preorder_knode
+from kolmogorov_tree.anti_unification import discover_templates_pairwise
+
+
+@dataclass
+class _PatternInfo:
+    """Information about a pattern for bit-gain calculation."""
+
+    pattern: KNode
+    count: int
+    matches: list[KNode]
+    avg_param_bits: float = 0.0
+
+    def bit_gain(self) -> float:
+        """Calculate bit savings from symbolizing this pattern."""
+        current_len = sum(m.bit_length() for m in self.matches)
+        symbol_overhead = BitLength.NODE_TYPE + BitLength.INDEX + int(self.avg_param_bits)
+        return current_len - (self.count * symbol_overhead + self.pattern.bit_length())
+
+
+@dataclass
+class _SymbolizationDAG:
+    """DAG for efficient pattern discovery and symbolization."""
+
+    pattern_info: dict[KNode, _PatternInfo] = field(default_factory=dict)
+    subtree_templates: dict[KNode, list[tuple[KNode, tuple]]] = field(default_factory=dict)
+    # Per-tree subtree lists for incremental updates
+    _tree_subtrees: list[list[KNode]] = field(default_factory=list)
+
+    @classmethod
+    def from_trees(cls, trees: Sequence[KNode[T]]) -> "_SymbolizationDAG":
+        """Build DAG from trees in a single pass."""
+        dag = cls()
+        dag._build_from_trees(trees)
+        return dag
+
+    def _build_from_trees(self, trees: Sequence[KNode[T]]) -> None:
+        """Build pattern info from trees."""
+        self._tree_subtrees = []
+        pattern_counter: Counter[KNode[T]] = Counter()
+        pattern_matches: defaultdict[KNode[T], list[KNode[T]]] = defaultdict(list)
+
+        for tree in trees:
+            tree_subtrees = list(breadth_first_preorder_knode(tree))
+            self._tree_subtrees.append(tree_subtrees)
+
+            for subtree in tree_subtrees:
+                pattern_counter[subtree] += 1
+                pattern_matches[subtree].append(subtree)
+
+                if subtree not in self.subtree_templates:
+                    self.subtree_templates[subtree] = list(extract_template(subtree))
+
+                for template, _ in self.subtree_templates[subtree]:
+                    pattern_counter[template] += 1
+                    pattern_matches[template].append(subtree)
+
+        self._build_pattern_info(pattern_counter, pattern_matches)
+
+    def _build_pattern_info(
+        self,
+        pattern_counter: Counter[KNode[T]],
+        pattern_matches: defaultdict[KNode[T], list[KNode[T]]],
+    ) -> None:
+        """Build PatternInfo from counters."""
+        self.pattern_info.clear()
+        for pattern, count in pattern_counter.items():
+            matches = pattern_matches[pattern]
+
+            avg_param_bits = 0.0
+            if is_abstraction(pattern) and matches:
+                total_param_bits = 0
+                for match in matches:
+                    for tmpl, params in self.subtree_templates.get(match, []):
+                        if tmpl == pattern:
+                            total_param_bits += sum(p.bit_length() for p in params)
+                            break
+                avg_param_bits = total_param_bits / len(matches)
+
+            self.pattern_info[pattern] = _PatternInfo(
+                pattern=pattern,
+                count=count,
+                matches=matches,
+                avg_param_bits=avg_param_bits,
+            )
+
+    def update_trees(
+        self,
+        old_trees: Sequence[KNode[T]],
+        new_trees: Sequence[KNode[T]],
+    ) -> None:
+        """
+        Incrementally update DAG when trees change.
+
+        Only reprocesses trees that actually changed (different hash).
+        Reuses template cache for unchanged subtrees.
+        """
+        if len(old_trees) != len(new_trees):
+            # Structure changed, full rebuild
+            self._build_from_trees(new_trees)
+            return
+
+        # Find which trees changed
+        changed_indices = [
+            i for i, (old, new) in enumerate(zip(old_trees, new_trees))
+            if old != new
+        ]
+
+        if not changed_indices:
+            return
+
+        # If most trees changed, full rebuild is faster
+        if len(changed_indices) > len(old_trees) // 2:
+            self._build_from_trees(new_trees)
+            return
+
+        # Incremental update: remove old counts, add new counts
+        pattern_counter: Counter[KNode[T]] = Counter()
+        pattern_matches: defaultdict[KNode[T], list[KNode[T]]] = defaultdict(list)
+
+        # Rebuild from existing pattern_info
+        for pattern, info in self.pattern_info.items():
+            pattern_counter[pattern] = info.count
+            pattern_matches[pattern] = list(info.matches)
+
+        # Remove counts from changed trees
+        for idx in changed_indices:
+            if idx < len(self._tree_subtrees):
+                for subtree in self._tree_subtrees[idx]:
+                    pattern_counter[subtree] -= 1
+                    if subtree in pattern_matches:
+                        try:
+                            pattern_matches[subtree].remove(subtree)
+                        except ValueError:
+                            pass
+
+                    for template, _ in self.subtree_templates.get(subtree, []):
+                        pattern_counter[template] -= 1
+                        if template in pattern_matches:
+                            try:
+                                pattern_matches[template].remove(subtree)
+                            except ValueError:
+                                pass
+
+        # Add counts from new trees
+        for idx in changed_indices:
+            new_tree = new_trees[idx]
+            tree_subtrees = list(breadth_first_preorder_knode(new_tree))
+
+            if idx < len(self._tree_subtrees):
+                self._tree_subtrees[idx] = tree_subtrees
+            else:
+                self._tree_subtrees.append(tree_subtrees)
+
+            for subtree in tree_subtrees:
+                pattern_counter[subtree] += 1
+                pattern_matches[subtree].append(subtree)
+
+                if subtree not in self.subtree_templates:
+                    self.subtree_templates[subtree] = list(extract_template(subtree))
+
+                for template, _ in self.subtree_templates[subtree]:
+                    pattern_counter[template] += 1
+                    pattern_matches[template].append(subtree)
+
+        # Clean up zero counts
+        pattern_counter = Counter({k: v for k, v in pattern_counter.items() if v > 0})
+        pattern_matches = defaultdict(list, {k: v for k, v in pattern_matches.items() if v})
+
+        self._build_pattern_info(pattern_counter, pattern_matches)
+
+    def get_best_candidates(
+        self,
+        min_occurrences: int = 2,
+        max_patterns: int = 10,
+    ) -> list[KNode]:
+        """Get patterns ranked by bit gain."""
+        candidates = []
+
+        for pattern, info in self.pattern_info.items():
+            if info.count < min_occurrences:
+                continue
+
+            if is_abstraction(pattern) and len(info.matches) < min_occurrences:
+                continue
+
+            gain = info.bit_gain()
+            if gain > 0:
+                candidates.append((pattern, gain))
+
+        candidates.sort(key=lambda x: (-x[1], -x[0].bit_length()))
+        return [p for p, _ in candidates[:max_patterns]]
+
+    def enhance_with_anti_unification(
+        self,
+        max_subtrees: int = 100,
+        min_occurrences: int = 3,
+        max_variables: int = 2,
+    ) -> None:
+        """
+        Discover additional templates using pairwise anti-unification.
+
+        This finds patterns that span different subtree structures which
+        hardcoded template extraction might miss. O(n^2) so uses sampling.
+
+        Only adds patterns that:
+        - Are not already known from hardcoded extraction
+        - Have significant bit savings (high pattern cost, low variable count)
+        - Occur frequently enough to justify the symbol overhead
+        """
+        from kolmogorov_tree.matching import matches as pattern_matches
+
+        # Collect unique subtrees that haven't been abstracted yet
+        concrete_subtrees = [
+            s for s in self.subtree_templates.keys()
+            if not is_abstraction(s)
+        ]
+
+        # Sample if too many - prefer larger subtrees (more compression potential)
+        if len(concrete_subtrees) > max_subtrees:
+            size_sorted = sorted(
+                concrete_subtrees,
+                key=lambda s: s.bit_length(),
+                reverse=True,
+            )
+            concrete_subtrees = size_sorted[:max_subtrees]
+
+        # Discover templates via anti-unification
+        discovered = discover_templates_pairwise(
+            concrete_subtrees,
+            min_occurrences=min_occurrences,
+            max_variables=max_variables,
+        )
+
+        # Filter and add only beneficial templates
+        for template, template_matches in discovered.items():
+            if template in self.pattern_info:
+                continue  # Already known
+
+            # Check if this template is already covered by hardcoded templates
+            already_covered = False
+            for existing_template in list(self.pattern_info.keys()):
+                if is_abstraction(existing_template) and pattern_matches(existing_template, template):
+                    already_covered = True
+                    break
+            if already_covered:
+                continue
+
+            # Calculate actual average parameter bits from matches
+            total_param_bits = 0
+            valid_matches = []
+            for match in template_matches:
+                bindings = pattern_matches(template, match)
+                if bindings:
+                    param_bits = sum(v.bit_length() for v in bindings.values())
+                    total_param_bits += param_bits
+                    valid_matches.append(match)
+
+            if len(valid_matches) < min_occurrences:
+                continue
+
+            avg_param_bits = total_param_bits / len(valid_matches)
+
+            # Only add if estimated bit gain is positive
+            template_bits = template.bit_length()
+            symbol_overhead = BitLength.NODE_TYPE + BitLength.INDEX + avg_param_bits
+            match_bits = sum(m.bit_length() for m in valid_matches)
+            estimated_gain = match_bits - (len(valid_matches) * symbol_overhead + template_bits)
+
+            if estimated_gain <= 0:
+                continue
+
+            # Register this template for each matching subtree
+            for match in valid_matches:
+                if match in self.subtree_templates:
+                    bindings = pattern_matches(template, match)
+                    if bindings:
+                        params = tuple(bindings.get(i) for i in sorted(bindings.keys()))
+                        existing_templates = [t for t, _ in self.subtree_templates[match]]
+                        if template not in existing_templates:
+                            self.subtree_templates[match].append((template, params))
+
+            self.pattern_info[template] = _PatternInfo(
+                pattern=template,
+                count=len(valid_matches),
+                matches=list(valid_matches),
+                avg_param_bits=avg_param_bits,
+            )
 
 
 def find_symbol_candidates(
@@ -62,69 +348,12 @@ def find_symbol_candidates(
     """
     Finds frequent subtrees ranked by bit-length savings.
 
+    Uses DAG-based pattern discovery for efficiency.
     Returns top patterns where symbolization reduces total bit length.
     Considers both concrete matches and abstracted patterns (with variables).
     """
-    all_subtrees: list[KNode[T]] = []
-    for tree in trees:
-        all_subtrees.extend(breadth_first_preorder_knode(tree))
-
-    pattern_counter: Counter[KNode[T]] = Counter()
-    pattern_matches: defaultdict[KNode[T], list[KNode[T]]] = defaultdict(list)
-    template_cache: dict[KNode[T], list[tuple[KNode[T], tuple]]] = {}
-
-    for subtree in all_subtrees:
-        pattern_counter[subtree] += 1
-        pattern_matches[subtree].append(subtree)
-
-        if subtree not in template_cache:
-            template_cache[subtree] = list(extract_template(subtree))
-
-        for abs_pattern, params in template_cache[subtree]:
-            pattern_counter[abs_pattern] += 1
-            pattern_matches[abs_pattern].append(subtree)
-
-    common_patterns: list[KNode[T]] = []
-    seen_patterns: set[KNode[T]] = set()
-
-    for pattern, count in pattern_counter.items():
-        if count < min_occurrences or pattern in seen_patterns:
-            continue
-
-        has_variables = any(
-            isinstance(n, VariableNode) for n in breadth_first_preorder_knode(pattern)
-        )
-
-        if has_variables:
-            if len(pattern_matches[pattern]) >= min_occurrences:
-                common_patterns.append(pattern)
-                seen_patterns.add(pattern)
-        else:
-            common_patterns.append(pattern)
-            seen_patterns.add(pattern)
-
-    # Pre-compute average parameter bit length per pattern
-    pattern_param_len: dict[KNode[T], float] = {}
-    for pat in common_patterns:
-        count = pattern_counter[pat]
-        total_param_bits = 0
-        for s in pattern_matches[pat]:
-            for cached_pat, ps in template_cache.get(s, []):
-                if pat == cached_pat:
-                    total_param_bits += sum(p.bit_length() for p in ps)
-        pattern_param_len[pat] = total_param_bits / count if count > 0 else 0
-
-    def bit_gain(pat: KNode[T]) -> float:
-        count = pattern_counter[pat]
-        current_len = sum(s.bit_length() for s in pattern_matches[pat])
-        param_len = pattern_param_len.get(pat, 0)
-        symbol_overhead = BitLength.NODE_TYPE + BitLength.INDEX + int(param_len)
-        return current_len - (count * symbol_overhead + pat.bit_length())
-
-    # Filter to patterns with positive bit savings
-    common_patterns = [pat for pat in common_patterns if bit_gain(pat) > 0]
-    common_patterns.sort(key=lambda p: (-bit_gain(p), -p.bit_length()))
-    return common_patterns[:max_patterns]
+    dag = _SymbolizationDAG.from_trees(trees)
+    return dag.get_best_candidates(min_occurrences, max_patterns)
 
 
 def symbolize_pattern(
@@ -141,62 +370,54 @@ def symbolize_pattern(
     return trees, symbols
 
 
-def greedy_symbolization(
-    trees: tuple[KNode[T], ...], symbols: tuple[KNode[T], ...]
-) -> tuple[tuple[KNode[T], ...], tuple[KNode[T], ...]]:
-    """
-    Repeatedly symbolizes the highest-gain pattern until no savings remain.
-
-    Only symbolizes one pattern per iteration since each symbolization
-    changes bit-length calculations for remaining candidates.
-    """
-    common_patterns = find_symbol_candidates(trees + symbols)
-    while common_patterns:
-        new_symbol = common_patterns[0]
-        trees, symbols = symbolize_pattern(trees, symbols, new_symbol)
-        common_patterns = find_symbol_candidates(trees + symbols)
-
-    return (trees, symbols)
-
-
 def symbolize(
-    trees: tuple[KNode[T], ...], symbols: tuple[KNode[T], ...]
+    trees: tuple[KNode[T], ...],
+    symbols: tuple[KNode[T], ...],
+    max_iterations: int = 100,
+    use_anti_unification: bool = False,
 ) -> tuple[tuple[KNode[T], ...], tuple[KNode[T], ...]]:
     """
-    Multi-phase symbolization with increasing pattern complexity.
+    DAG-based greedy symbolization with incremental updates.
 
-    Phase 1: Non-symbolic patterns (primitives, products, sums)
-    Phase 2: Patterns containing SymbolNodes
-    Phase 3: RootNode patterns
+    Builds a DAG to efficiently discover patterns, then iteratively
+    symbolizes the highest-gain pattern until no savings remain.
+    Uses incremental DAG updates to avoid full rebuilds when few trees change.
+
+    Args:
+        trees: Trees to symbolize.
+        symbols: Existing symbol table.
+        max_iterations: Safety limit on iterations.
+        use_anti_unification: If True, enhance template discovery with
+            pairwise anti-unification. Finds more patterns but O(n^2).
     """
-    # Phase 1: Non-symbolic patterns
-    while True:
-        candidates = [
-            c
-            for c in find_symbol_candidates(trees + symbols)
-            if not is_symbolized(c) and not isinstance(c, RootNode)
-        ]
-        if not candidates:
-            break
-        trees, symbols = symbolize_pattern(trees, symbols, candidates[0])
+    # Initial DAG build
+    all_nodes = trees + symbols
+    dag = _SymbolizationDAG.from_trees(all_nodes)
 
-    # Phase 2: Symbolic patterns
-    while True:
-        candidates = [
-            c
-            for c in find_symbol_candidates(trees + symbols)
-            if not isinstance(c, RootNode)
-        ]
-        if not candidates:
-            break
-        trees, symbols = symbolize_pattern(trees, symbols, candidates[0])
+    # Optionally enhance with anti-unification
+    if use_anti_unification:
+        dag.enhance_with_anti_unification()
 
-    # Phase 3: RootNode patterns
-    while True:
-        candidates = find_symbol_candidates(trees + symbols)
+    for _ in range(max_iterations):
+        candidates = dag.get_best_candidates()
         if not candidates:
             break
-        trees, symbols = symbolize_pattern(trees, symbols, candidates[0])
+
+        new_symbol = candidates[0]
+        index = IndexValue(len(symbols))
+
+        # Apply symbolization
+        old_trees = trees
+        old_symbols = symbols
+        trees = tuple(node_to_symbolized_node(index, new_symbol, tree) for tree in trees)
+        symbols = tuple(
+            node_to_symbolized_node(index, new_symbol, s) for s in symbols
+        ) + (new_symbol,)
+
+        # Incremental DAG update
+        old_all = old_trees + old_symbols
+        new_all = trees + symbols
+        dag.update_trees(old_all, new_all)
 
     return trees, symbols
 

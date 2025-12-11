@@ -11,6 +11,7 @@ Types:
     Bindings = dict[int, BitLengthAware]  - Variable index -> bound value
 """
 
+from collections import Counter
 from typing import cast
 
 from kolmogorov_tree.types import BitLengthAware, Primitive
@@ -26,6 +27,7 @@ from kolmogorov_tree.nodes import (
     SymbolNode,
     VariableNode,
 )
+from kolmogorov_tree.predicates import is_abstraction
 from kolmogorov_tree.primitives import IndexValue, T
 from kolmogorov_tree.transformations import postmap
 
@@ -49,13 +51,13 @@ def _can_potentially_unify(pattern: KNode[T], subtree: KNode[T]) -> bool:
     return isinstance(subtree, type(pattern))
 
 
-def unify_sum_children(
+def _unify_sum_children_backtrack(
     p_idx: int,
     pattern_list: list[KNode[T]],
     subtree_list: list[KNode[T]],
     subtree_used: list[bool],
     bindings: Bindings,
-    compatibility: list[list[bool]] | None = None,
+    compatibility: list[list[bool]],
 ) -> Bindings | None:
     """
     Backtracking search for bijective matching between SumNode children.
@@ -72,7 +74,7 @@ def unify_sum_children(
         if subtree_used[s_idx]:
             continue
 
-        if compatibility is not None and not compatibility[p_idx][s_idx]:
+        if not compatibility[p_idx][s_idx]:
             continue
 
         s_child = subtree_list[s_idx]
@@ -81,7 +83,7 @@ def unify_sum_children(
         if unify(p_child, s_child, current_bindings):
             subtree_used[s_idx] = True
 
-            result = unify_sum_children(
+            result = _unify_sum_children_backtrack(
                 p_idx + 1,
                 pattern_list,
                 subtree_list,
@@ -96,6 +98,116 @@ def unify_sum_children(
             subtree_used[s_idx] = False
 
     return None
+
+
+def unify_sum_children(
+    p_idx: int,
+    pattern_list: list[KNode[T]],
+    subtree_list: list[KNode[T]],
+    subtree_used: list[bool],
+    bindings: Bindings,
+    compatibility: list[list[bool]] | None = None,
+) -> Bindings | None:
+    """
+    Optimized matching between SumNode children.
+
+    Uses two-phase approach:
+    1. Hash-based matching for concrete patterns (no variables) - O(n)
+    2. Backtracking only for patterns containing variables - O(k!) where k << n
+
+    Falls back to full backtracking if hash-based phase fails.
+    """
+    n = len(pattern_list)
+    if p_idx == n:
+        return bindings
+
+    # Build compatibility matrix if not provided
+    if compatibility is None:
+        compatibility = [
+            [_can_potentially_unify(p, s) for s in subtree_list]
+            for p in pattern_list
+        ]
+
+    # Partition patterns into concrete (no variables) and variable (has variables)
+    concrete_indices = []
+    variable_indices = []
+    for i in range(p_idx, n):
+        if is_abstraction(pattern_list[i]):
+            variable_indices.append(i)
+        else:
+            concrete_indices.append(i)
+
+    # Phase 1: Match concrete patterns using hash lookup
+    # Build multiset of available subtrees
+    available_subtrees: Counter[KNode[T]] = Counter()
+    for s_idx, used in enumerate(subtree_used):
+        if not used:
+            available_subtrees[subtree_list[s_idx]] += 1
+
+    # Try to match each concrete pattern exactly
+    concrete_matched: dict[int, int] = {}  # pattern_idx -> subtree_idx
+    for p_i in concrete_indices:
+        p_child = pattern_list[p_i]
+        if available_subtrees[p_child] > 0:
+            # Find the actual subtree index
+            for s_idx in range(len(subtree_list)):
+                if (
+                    not subtree_used[s_idx]
+                    and s_idx not in concrete_matched.values()
+                    and subtree_list[s_idx] == p_child
+                ):
+                    concrete_matched[p_i] = s_idx
+                    available_subtrees[p_child] -= 1
+                    break
+            else:
+                # No match found, fall back to full backtracking
+                return _unify_sum_children_backtrack(
+                    p_idx, pattern_list, subtree_list, subtree_used, bindings, compatibility
+                )
+        else:
+            # Concrete pattern not in subtrees, fall back to backtracking
+            # (might still match via structural equality in edge cases)
+            return _unify_sum_children_backtrack(
+                p_idx, pattern_list, subtree_list, subtree_used, bindings, compatibility
+            )
+
+    # Mark concrete matches as used
+    new_subtree_used = subtree_used.copy()
+    for s_idx in concrete_matched.values():
+        new_subtree_used[s_idx] = True
+
+    # Phase 2: Backtrack only for variable patterns
+    if not variable_indices:
+        return bindings
+
+    # Build reduced lists for variable patterns only
+    var_patterns = [pattern_list[i] for i in variable_indices]
+    remaining_subtrees = [
+        (s_idx, subtree_list[s_idx])
+        for s_idx in range(len(subtree_list))
+        if not new_subtree_used[s_idx]
+    ]
+
+    if len(var_patterns) != len(remaining_subtrees):
+        return None
+
+    # Build compatibility for reduced problem
+    var_compatibility = [
+        [_can_potentially_unify(p, s) for _, s in remaining_subtrees]
+        for p in var_patterns
+    ]
+
+    var_used = [False] * len(remaining_subtrees)
+    result = _unify_sum_children_backtrack(
+        0,
+        var_patterns,
+        [s for _, s in remaining_subtrees],
+        var_used,
+        bindings.copy(),
+        var_compatibility,
+    )
+
+    return result
 
 
 def unify(pattern: BitLengthAware, subtree: BitLengthAware, bindings: Bindings) -> bool:

@@ -246,3 +246,126 @@ def test_apply_transformations():
     assert transform_5 is not None, "The transformation should not be None"
     result_5 = apply_transformation(source_5, transform_5)
     assert result_5 == target_5, f"Test 5 failed: {result_5} != {target_5}"
+
+
+def test_tuple_deletion_roundtrip():
+    """Tests that deletions from tuples can be computed and applied correctly.
+    
+    This is a regression test for the issue where sequence_edit_distance()
+    produces Delete operations at arbitrary indices, but apply_transformation()
+    previously only allowed deletion at the last index.
+    """
+
+    @dataclass(frozen=True)
+    class TupleWrapper(BitLengthAware):
+        items: tuple[MockValue, ...]
+
+        def bit_length(self) -> int:
+            return sum(item.bit_length() for item in self.items)
+
+        def __str__(self) -> str:
+            return f"TupleWrapper({', '.join(str(item) for item in self.items)})"
+
+    # Test Case 1: Delete middle element
+    # Source: (1, 2, 3) -> Target: (1, 3)
+    source_1 = TupleWrapper((MockValue(1), MockValue(2), MockValue(3)))
+    target_1 = TupleWrapper((MockValue(1), MockValue(3)))
+    _, transform_1 = recursive_edit_distance(source_1, target_1)
+    result_1 = apply_transformation(source_1, transform_1)
+    assert result_1 == target_1, f"Middle deletion failed: {result_1} != {target_1}"
+
+    # Test Case 2: Delete first element
+    # Source: (1, 2, 3) -> Target: (2, 3)
+    source_2 = TupleWrapper((MockValue(1), MockValue(2), MockValue(3)))
+    target_2 = TupleWrapper((MockValue(2), MockValue(3)))
+    _, transform_2 = recursive_edit_distance(source_2, target_2)
+    result_2 = apply_transformation(source_2, transform_2)
+    assert result_2 == target_2, f"First element deletion failed: {result_2} != {target_2}"
+
+    # Test Case 3: Delete multiple elements (keep only first and last)
+    # Source: (1, 2, 3, 4) -> Target: (1, 4)
+    source_3 = TupleWrapper((MockValue(1), MockValue(2), MockValue(3), MockValue(4)))
+    target_3 = TupleWrapper((MockValue(1), MockValue(4)))
+    _, transform_3 = recursive_edit_distance(source_3, target_3)
+    result_3 = apply_transformation(source_3, transform_3)
+    assert result_3 == target_3, f"Multiple deletion failed: {result_3} != {target_3}"
+
+    # Test Case 4: Delete all but one (keep middle)
+    # Source: (1, 2, 3) -> Target: (2,)
+    source_4 = TupleWrapper((MockValue(1), MockValue(2), MockValue(3)))
+    target_4 = TupleWrapper((MockValue(2),))
+    _, transform_4 = recursive_edit_distance(source_4, target_4)
+    result_4 = apply_transformation(source_4, transform_4)
+    assert result_4 == target_4, f"Keep middle only failed: {result_4} != {target_4}"
+
+    # Test Case 5: TreeNode children deletion (nested structure)
+    source_5 = TreeNode(
+        MockValue(1),
+        (TreeNode(MockValue(2)), TreeNode(MockValue(3)), TreeNode(MockValue(4))),
+    )
+    target_5 = TreeNode(MockValue(1), (TreeNode(MockValue(2)), TreeNode(MockValue(4))))
+    _, transform_5 = recursive_edit_distance(source_5, target_5)
+    result_5 = apply_transformation(source_5, transform_5)
+    assert result_5 == target_5, f"Nested deletion failed: {result_5} != {target_5}"
+
+
+def test_duplicate_subtrees():
+    """Tests that trees with structurally equal subtrees are handled correctly.
+
+    This is a regression test for the issue where collect_links() used hash()
+    for node identification, causing distinct but equal subtrees to be merged.
+    """
+    # Create a tree with two identical subtrees at different positions:
+    #        root(1)
+    #       /       \
+    #    leaf(2)   leaf(2)   <- These are structurally equal but distinct nodes
+    #
+    leaf1 = TreeNode(MockValue(2))
+    leaf2 = TreeNode(MockValue(2))  # Same value, different object
+
+    # Verify they are equal but not identical
+    assert leaf1 == leaf2, "Leaves should be structurally equal"
+    assert leaf1 is not leaf2, "Leaves should be distinct objects"
+    assert hash(leaf1) == hash(leaf2), "Equal objects should have equal hashes"
+
+    source = TreeNode(MockValue(1), (leaf1, leaf2))
+
+    # Target: change only the second child
+    target = TreeNode(MockValue(1), (TreeNode(MockValue(2)), TreeNode(MockValue(3))))
+
+    # This should produce a transformation that only affects the second child
+    _, transform = recursive_edit_distance(source, target)
+    result = apply_transformation(source, transform)
+    assert result == target, f"Duplicate subtrees failed: {result} != {target}"
+
+    # Also test with extended_edit_distance (which uses collect_links)
+    _, ext_transform = extended_edit_distance(source, target, tuple())
+    assert ext_transform is not None
+    ext_result = apply_transformation(source, ext_transform)
+    assert ext_result == target, f"Extended with duplicates failed: {ext_result} != {target}"
+
+
+def test_prune_graft_with_duplicate_subtrees():
+    """Tests prune/graft operations on trees with equal subtrees.
+
+    Ensures the topology is correctly preserved when using id() for identification.
+    """
+    # Source tree:
+    #        A(1)
+    #       /    \
+    #    B(2)    C(2)    <- B and C are equal
+    #    |
+    #  D(3)
+    #
+    leaf_D = TreeNode(MockValue(3))
+    node_B = TreeNode(MockValue(2), (leaf_D,))
+    node_C = TreeNode(MockValue(2))  # Equal to node_B's value but different structure
+    source = TreeNode(MockValue(1), (node_B, node_C))
+
+    # Target: just the leaf D (should use Prune to get to D)
+    target = leaf_D
+
+    dist, transform = extended_edit_distance(source, target, tuple())
+    assert transform is not None, "Should find a transformation"
+    result = apply_transformation(source, transform)
+    assert result == target, f"Prune with duplicates failed: {result} != {target}"

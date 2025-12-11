@@ -15,6 +15,7 @@ Types:
 """
 
 from collections import Counter
+from functools import cache
 
 from kolmogorov_tree.types import BitLengthAware
 
@@ -39,17 +40,18 @@ from kolmogorov_tree.primitives import (
 type Parameters = tuple[BitLengthAware, ...]
 
 
-def extract_template(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
+@cache
+def extract_template(knode: KNode[T]) -> tuple[tuple[KNode[T], Parameters], ...]:
     """
     Generates abstracted versions of a node by replacing subparts with variables.
 
-    Returns list of (abstracted_node, parameters) pairs.
+    Returns tuple of (abstracted_node, parameters) pairs.
     Does not abstract nodes that already contain variables.
     """
     abstractions: list[tuple[KNode[T], Parameters]] = []
 
     if is_abstraction(knode):
-        return abstractions
+        return tuple()
 
     match knode:
         case ProductNode(children) if len(children) > 2:
@@ -193,7 +195,7 @@ def extract_template(knode: KNode[T]) -> list[tuple[KNode[T], Parameters]]:
         case _:
             pass
 
-    return abstractions
+    return tuple(abstractions)
 
 
 def extract_nested_sum_template(

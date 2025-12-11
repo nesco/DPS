@@ -12,14 +12,15 @@ Distance metrics:
 
 import logging
 import sys
+import time
 from collections.abc import Callable, Sequence
 from enum import Enum
 from typing import TypedDict
 
 from edit import (
-    extended_edit_distance,
     normalized_information_distance,
     structural_distance_value,
+    symmetric_edit_distance,
 )
 from hierarchy import grid_to_syntax_trees
 from kolmogorov_tree import (
@@ -79,7 +80,9 @@ def create_distance_function(
 
         match metric:
             case DistanceMetric.EDIT:
-                return float(extended_edit_distance(node_a, node_b, symbol_table)[0])
+                # Use symmetric edit distance for clique finding
+                # (directional distance causes unstable reciprocal nearest neighbors)
+                return float(symmetric_edit_distance(node_a, node_b, symbol_table))
             case DistanceMetric.NID:
                 return normalized_information_distance(node_a, node_b, symbol_table)
             case DistanceMetric.STRUCTURAL:
@@ -176,14 +179,19 @@ def solve_task(
     Returns:
         TaskResult with symbol_table, cliques, grids, and syntax_trees_by_grid.
     """
+    t_start = time.perf_counter()
     logger.info(f"Solving task: {task}, metric: {metric.value}")
 
+    t0 = time.perf_counter()
     inputs, outputs, input_test, _ = train_task_to_grids(task)
     grids = inputs + outputs + [input_test]
     num_inputs = len(inputs)
     logger.info(f"Loaded {num_inputs} input-output pairs + 1 test input")
+    logger.debug(f"  [timing] load: {time.perf_counter() - t0:.3f}s")
 
+    t0 = time.perf_counter()
     trees_by_grid, symbol_table = _grids_to_symbolized_syntax_trees(grids)
+    logger.debug(f"  [timing] decompose+symbolize: {time.perf_counter() - t0:.3f}s")
 
     if verbose:
         logger.info(f"Symbol table: {len(symbol_table)} symbols")
@@ -198,13 +206,17 @@ def solve_task(
 
     distance = create_distance_function(metric, symbol_table)
 
+    t0 = time.perf_counter()
     logger.info(f"Finding cliques across {num_inputs} input grids...")
     input_sets = [set(trees) for trees in trees_by_grid[:num_inputs]]
     cliques = find_cliques(input_sets, distance)
+    logger.debug(f"  [timing] find_cliques: {time.perf_counter() - t0:.3f}s")
 
     logger.info(f"Found {len(cliques)} clique(s)")
     if verbose and cliques:
         _log_cliques(cliques, symbol_table, grids, distance, show_visuals)
+
+    logger.debug(f"  [timing] total: {time.perf_counter() - t_start:.3f}s")
 
     return {
         "symbol_table": symbol_table,

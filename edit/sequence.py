@@ -7,7 +7,6 @@ Cost models:
 """
 
 import math
-from functools import cache
 from typing import Callable, Literal, Sequence
 
 from kolmogorov_tree.types import BitLengthAware, KeyValue
@@ -20,7 +19,6 @@ from .operations import (
 )
 
 
-@cache
 def sequence_edit_distance(
     source_sequence: Sequence[BitLengthAware],
     target_sequence: Sequence[BitLengthAware],

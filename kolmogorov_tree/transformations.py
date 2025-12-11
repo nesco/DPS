@@ -25,6 +25,7 @@ Key functions:
 from __future__ import annotations
 
 from collections.abc import Collection
+from functools import cache
 from typing import Callable, Iterable, Sequence, cast
 
 from utils.algorithms.tree import postorder_map, preorder_map
@@ -401,6 +402,7 @@ def iterable_to_sum(
     return SumNode(nodes)
 
 
+@cache
 def factorize_tuple(node: KNode[T]) -> KNode[T]:
     """Compresses ProductNode/SumNode by finding repeating patterns."""
     if isinstance(node, SumNode):
@@ -430,6 +432,7 @@ def factorize_tuple(node: KNode[T]) -> KNode[T]:
     return cast(KNode, iterable_to_product(result))
 
 
+@cache
 def expand_repeats(node: KNode[T]) -> KNode[T]:
     """Expands all RepeatNodes into explicit ProductNodes."""
 
